@@ -39,7 +39,11 @@ import { InventoryManager } from './components/InventoryManager';
 import { FinanceDashboard } from './components/FinanceDashboard';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { ClinicSettingsPanel } from './components/ClinicSettingsPanel';
-import { CloudAccountModal, DirectClinicSession } from './components/CloudAccountModal';
+import {
+  CloudAccountModal,
+  DirectAuthOptions,
+  DirectClinicSession,
+} from './components/CloudAccountModal';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
 import {
   User,
@@ -115,6 +119,8 @@ export default function App() {
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const lastDirectSyncTimestamp = useRef<string>('');
+  const hasPromptedInitialAuth = useRef<boolean>(false);
+  const hasBootstrappedDirectSession = useRef<boolean>(false);
 
   const [settings, setSettings] = useState<ClinicSettings>(() =>
     loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
@@ -208,9 +214,34 @@ export default function App() {
     }
   };
 
-  // Real-time Firestore listener (onSnapshot) for Direct Cloud Workspace + reconnect sync
+  // Real-time Firestore listener (onSnapshot) + initial cloud handshake for Direct Cloud Workspace
   useEffect(() => {
     if (!directSession) return;
+
+    if (!hasBootstrappedDirectSession.current) {
+      hasBootstrappedDirectSession.current = true;
+      authenticateDirectWorkspaceInCloud(
+        directSession.clinicId,
+        directSession.password,
+        {
+          settings,
+          receipts,
+          inventory,
+          expenses,
+        },
+        'auto'
+      )
+        .then((res) => {
+          if (res.ok && res.data) {
+            lastDirectSyncTimestamp.current = res.updatedAt;
+            if (res.data.settings) setSettings(res.data.settings);
+            if (Array.isArray(res.data.receipts)) setReceipts(res.data.receipts);
+            if (Array.isArray(res.data.inventory)) setInventory(res.data.inventory);
+            if (Array.isArray(res.data.expenses)) setExpenses(res.data.expenses);
+          }
+        })
+        .catch(() => {});
+    }
 
     const unsubDirect = subscribeToDirectWorkspaceInCloud(
       directSession.clinicId,
@@ -256,6 +287,15 @@ export default function App() {
     });
     return () => unsubAuth();
   }, []);
+
+  // Automatically open Login / Create Account screen on first open when not connected
+  useEffect(() => {
+    if (!authReady) return;
+    if (!currentUser && !directSession && !hasPromptedInitialAuth.current) {
+      hasPromptedInitialAuth.current = true;
+      setIsCloudModalOpen(true);
+    }
+  }, [authReady, currentUser, directSession]);
 
   useEffect(() => {
     if (!authReady || !currentUser) return;
@@ -322,16 +362,39 @@ export default function App() {
 
   const handleDirectClinicLogin = async (
     clinicId: string,
-    password: string
+    password: string,
+    options?: DirectAuthOptions
   ): Promise<boolean> => {
     setIsSyncingCloud(true);
     try {
-      const result = await authenticateDirectWorkspaceInCloud(clinicId, password, {
-        settings,
-        receipts,
-        inventory,
-        expenses,
-      });
+      const updatedSettings: ClinicSettings =
+        options?.mode === 'register' && (options.clinicNameAr || options.doctorNameAr)
+          ? {
+              ...settings,
+              identity: {
+                ...settings.identity,
+                clinicAr: options.clinicNameAr || settings.identity.clinicAr,
+                systemTitleAr: options.clinicNameAr || settings.identity.systemTitleAr,
+                doctorAr: options.doctorNameAr || settings.identity.doctorAr,
+              },
+            }
+          : settings;
+
+      if (updatedSettings !== settings) {
+        setSettings(updatedSettings);
+      }
+
+      const result = await authenticateDirectWorkspaceInCloud(
+        clinicId,
+        password,
+        {
+          settings: updatedSettings,
+          receipts,
+          inventory,
+          expenses,
+        },
+        options?.mode || 'auto'
+      );
 
       if (!result.ok) {
         notify(result.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
@@ -343,17 +406,31 @@ export default function App() {
         password,
         updatedAt: result.updatedAt,
       };
+      hasBootstrappedDirectSession.current = true;
       lastDirectSyncTimestamp.current = result.updatedAt;
       setDirectSession(sessionObj);
 
       if (result.status === 'authenticated' && result.data) {
-        if (result.data.settings) setSettings(result.data.settings);
-        if (Array.isArray(result.data.receipts)) setReceipts(result.data.receipts);
-        if (Array.isArray(result.data.inventory)) setInventory(result.data.inventory);
-        if (Array.isArray(result.data.expenses)) setExpenses(result.data.expenses);
-        notify(`تم ربط حساب العيادة (${result.clinicId}) وجلب البيانات السحابية بنجاح`, 'success');
+        const nextSettings =
+          options?.mode === 'register' && (options.clinicNameAr || options.doctorNameAr)
+            ? updatedSettings
+            : result.data.settings || updatedSettings;
+        const nextReceipts = Array.isArray(result.data.receipts) ? result.data.receipts : receipts;
+        const nextInventory = Array.isArray(result.data.inventory)
+          ? result.data.inventory
+          : inventory;
+        const nextExpenses = Array.isArray(result.data.expenses) ? result.data.expenses : expenses;
+
+        setSettings(nextSettings);
+        setReceipts(nextReceipts);
+        setInventory(nextInventory);
+        setExpenses(nextExpenses);
+
+        await pushToDirectCloud(sessionObj, nextSettings, nextReceipts, nextInventory, nextExpenses);
+        notify(`تم تسجيل الدخول لحساب العيادة (${result.clinicId}) ومزامنة البيانات بنجاح`, 'success');
       } else {
-        notify(`تم إنشاء وربط حساب العيادة السحابي (${result.clinicId}) بنجاح`, 'success');
+        await pushToDirectCloud(sessionObj, updatedSettings, receipts, inventory, expenses);
+        notify(`تم إنشاء الحساب السحابي (${result.clinicId}) وحفظ البيانات بنجاح`, 'success');
       }
       return true;
     } catch {
@@ -364,17 +441,20 @@ export default function App() {
     }
   };
 
-  const handleSignInWithGoogle = async () => {
+  const handleSignInWithGoogle = async (): Promise<boolean> => {
     try {
       const user = await signInWithGoogleAccount();
       notify(`تم تسجيل الدخول بنجاح (${user.email}) وتفعيل المزامنة السحابية`, 'success');
+      return true;
     } catch {
       notify('استخدم تسجيل الدخول بمعرّف العيادة وكلمة المرور في الأعلى للعمل مباشرة بدون نوافذ منبثقة', 'info');
+      return false;
     }
   };
 
   const handleSignOut = async () => {
     try {
+      hasBootstrappedDirectSession.current = false;
       setDirectSession(null);
       if (currentUser) {
         await signOutAccount();
@@ -869,8 +949,11 @@ export default function App() {
       <CloudAccountModal
         isOpen={isCloudModalOpen}
         onClose={() => setIsCloudModalOpen(false)}
+        isFirstOpenGate={!isCloudConnected}
         user={currentUser}
         directSession={directSession}
+        defaultClinicName={settings.identity.clinicAr}
+        defaultDoctorName={settings.identity.doctorAr}
         isSyncing={isSyncingCloud}
         onSignInGoogle={handleSignInWithGoogle}
         onDirectLogin={handleDirectClinicLogin}
@@ -884,6 +967,23 @@ export default function App() {
 
       {/* ==================== MAIN PAGE VIEWPORT ==================== */}
       <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 pb-24 md:pb-6">
+        {!isCloudConnected && (
+          <div className="mb-4 rounded-2xl border border-sky-500/35 bg-sky-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 no-print">
+            <div className="flex items-center gap-2 min-w-0">
+              <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                لم يتم ربط الحساب السحابي بعد — سجّل الدخول أو أنشئ حساباً لحفظ البيانات ومزامنتها تلقائياً.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsCloudModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black transition-colors shrink-0"
+            >
+              تسجيل الدخول / إنشاء حساب
+            </button>
+          </div>
+        )}
         {activeSection === 'receipt' && (
           <ReceiptStudio
             settings={settings}

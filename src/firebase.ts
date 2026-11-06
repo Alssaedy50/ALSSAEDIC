@@ -679,7 +679,8 @@ export interface DirectWorkspacePayload {
 export async function authenticateDirectWorkspaceInCloud(
   clinicId: string,
   password: string,
-  initialData: DirectWorkspacePayload
+  initialData: DirectWorkspacePayload,
+  mode: 'login' | 'register' | 'auto' = 'auto'
 ): Promise<{
   ok: boolean;
   status?: 'authenticated' | 'created';
@@ -689,10 +690,74 @@ export async function authenticateDirectWorkspaceInCloud(
   data?: DirectWorkspacePayload;
 }> {
   const safeId = normalizeClinicWorkspaceId(clinicId);
-  const passwordHash = await hashClinicPassword(password);
+  const cleanPass = String(password || '').trim();
   const nowIso = new Date().toISOString();
+
+  if (!safeId || safeId.length < 3) {
+    return {
+      ok: false,
+      clinicId: safeId,
+      updatedAt: nowIso,
+      error: 'يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف أو أرقام على الأقل).',
+    };
+  }
+  if (cleanPass.length < 4) {
+    return {
+      ok: false,
+      clinicId: safeId,
+      updatedAt: nowIso,
+      error: 'يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.',
+    };
+  }
+
+  const passwordHash = await hashClinicPassword(cleanPass);
   const ref = doc(db, 'clinic_workspaces', safeId);
 
+  // 1. Try Server Cloud Endpoint (/api/cloud/auth)
+  let serverResult: {
+    ok: boolean;
+    status?: 'authenticated' | 'created';
+    clinicId?: string;
+    updatedAt?: string;
+    error?: string;
+    data?: DirectWorkspacePayload;
+  } | null = null;
+
+  try {
+    const res = await fetch('/api/cloud/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clinicId: safeId,
+        password: cleanPass,
+        mode,
+        initialData,
+      }),
+    });
+    const text = await res.text();
+    if (text && !text.trim().startsWith('<')) {
+      const parsed = JSON.parse(text);
+      if (!res.ok || parsed.ok === false) {
+        return {
+          ok: false,
+          clinicId: safeId,
+          updatedAt: nowIso,
+          error: parsed.error || 'كلمة المرور غير صحيحة لهذا الحساب السحابي.',
+        };
+      }
+      serverResult = {
+        ok: true,
+        status: parsed.status === 'authenticated' ? 'authenticated' : 'created',
+        clinicId: parsed.clinicId || safeId,
+        updatedAt: parsed.updatedAt || nowIso,
+        data: parsed.data || initialData,
+      };
+    }
+  } catch {
+    // Continue to Firestore check
+  }
+
+  // 2. Also sync with Firestore clinic_workspaces/{safeId} if accessible
   try {
     const snap = await getDoc(ref);
     if (snap.exists()) {
@@ -702,79 +767,70 @@ export async function authenticateDirectWorkspaceInCloud(
           ok: false,
           clinicId: safeId,
           updatedAt: nowIso,
-          error: 'كلمة المرور غير صحيحة لمعرّف العيادة هذا',
+          error:
+            mode === 'register'
+              ? 'معرّف العيادة هذا مسجل مسبقاً بكلمة مرور مختلفة. اختر "تسجيل الدخول" أو استخدم معرّفاً آخر.'
+              : 'كلمة المرور غير صحيحة لمعرّف العيادة هذا.',
         };
       }
       const updatedAt = d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : nowIso;
+      const firestoreData: DirectWorkspacePayload = {
+        settings: (d.settings as ClinicSettings) || initialData.settings,
+        receipts: Array.isArray(d.receipts) ? (d.receipts as ReceiptRecord[]) : initialData.receipts,
+        inventory: Array.isArray(d.inventory)
+          ? (d.inventory as InventoryItem[])
+          : initialData.inventory,
+        expenses: Array.isArray(d.expenses) ? (d.expenses as ExpenseRecord[]) : initialData.expenses,
+      };
+
+      // Mirror to server backup if needed
+      fetch('/api/cloud/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clinicId: safeId, password: cleanPass, data: firestoreData }),
+      }).catch(() => {});
+
       return {
         ok: true,
         status: 'authenticated',
         clinicId: safeId,
         updatedAt,
-        data: {
-          settings: (d.settings as ClinicSettings) || initialData.settings,
-          receipts: Array.isArray(d.receipts) ? (d.receipts as ReceiptRecord[]) : initialData.receipts,
-          inventory: Array.isArray(d.inventory) ? (d.inventory as InventoryItem[]) : initialData.inventory,
-          expenses: Array.isArray(d.expenses) ? (d.expenses as ExpenseRecord[]) : initialData.expenses,
-        },
+        data: firestoreData,
       };
     }
 
+    const seedData = serverResult?.data || initialData;
     await setDoc(ref, {
       clinicId: safeId,
       passwordHash,
-      settings: initialData.settings,
-      receipts: (initialData.receipts || []).slice(0, 500),
-      inventory: (initialData.inventory || []).slice(0, 500),
-      expenses: (initialData.expenses || []).slice(0, 500),
+      settings: seedData.settings,
+      receipts: (seedData.receipts || []).slice(0, 500),
+      inventory: (seedData.inventory || []).slice(0, 500),
+      expenses: (seedData.expenses || []).slice(0, 500),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
 
     return {
       ok: true,
-      status: 'created',
+      status: serverResult?.status || (mode === 'login' ? 'authenticated' : 'created'),
       clinicId: safeId,
-      updatedAt: nowIso,
-      data: initialData,
+      updatedAt: serverResult?.updatedAt || nowIso,
+      data: seedData,
     };
   } catch {
-    // Fallback to server API if remote Firestore rules reject unauthenticated workspace access
-    try {
-      const res = await fetch('/api/cloud/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clinicId: safeId,
-          password,
-          initialData,
-        }),
-      });
-      const text = await res.text();
-      if (text && !text.trim().startsWith('<')) {
-        const parsed = JSON.parse(text);
-        if (!res.ok) {
-          return {
-            ok: false,
-            clinicId: safeId,
-            updatedAt: nowIso,
-            error: parsed.error || 'تعذر تسجيل الدخول لحساب العيادة',
-          };
-        }
-        return {
-          ok: true,
-          status: parsed.status === 'authenticated' ? 'authenticated' : 'created',
-          clinicId: parsed.clinicId || safeId,
-          updatedAt: parsed.updatedAt || nowIso,
-          data: parsed.data || initialData,
-        };
-      }
-    } catch {
-      // Ignore network fallback failure
+    if (serverResult) {
+      return {
+        ok: serverResult.ok,
+        status: serverResult.status,
+        clinicId: serverResult.clinicId || safeId,
+        updatedAt: serverResult.updatedAt || nowIso,
+        data: serverResult.data || initialData,
+      };
     }
     return {
       ok: true,
-      status: 'created',
+      status: mode === 'login' ? 'authenticated' : 'created',
       clinicId: safeId,
       updatedAt: nowIso,
       data: initialData,
@@ -788,49 +844,65 @@ export async function pushDirectWorkspaceToCloud(
   data: DirectWorkspacePayload
 ): Promise<string> {
   const safeId = normalizeClinicWorkspaceId(clinicId);
-  const passwordHash = await hashClinicPassword(password);
-  const nowIso = new Date().toISOString();
+  const cleanPass = String(password || '').trim();
+  const passwordHash = await hashClinicPassword(cleanPass);
+  let nowIso = new Date().toISOString();
   const ref = doc(db, 'clinic_workspaces', safeId);
 
-  try {
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      await updateDoc(ref, {
-        settings: data.settings,
-        receipts: (data.receipts || []).slice(0, 500),
-        inventory: (data.inventory || []).slice(0, 500),
-        expenses: (data.expenses || []).slice(0, 500),
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      await setDoc(ref, {
-        clinicId: safeId,
-        passwordHash,
-        settings: data.settings,
-        receipts: (data.receipts || []).slice(0, 500),
-        inventory: (data.inventory || []).slice(0, 500),
-        expenses: (data.expenses || []).slice(0, 500),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-  } catch {
-    // Also mirror to /api/cloud/push as backup
+  // 1. Always push to Server Cloud Store (/api/cloud/push)
+  const serverPromise = (async () => {
     try {
-      await fetch('/api/cloud/push', {
+      const res = await fetch('/api/cloud/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clinicId: safeId,
-          password,
+          password: cleanPass,
           data,
         }),
       });
+      const text = await res.text();
+      if (text && !text.trim().startsWith('<')) {
+        const parsed = JSON.parse(text);
+        if (parsed?.updatedAt) {
+          nowIso = String(parsed.updatedAt);
+        }
+      }
     } catch {
       // Offline
     }
-  }
+  })();
 
+  // 2. Also push to Firestore clinic_workspaces/{safeId}
+  const firestorePromise = (async () => {
+    try {
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        await updateDoc(ref, {
+          settings: data.settings,
+          receipts: (data.receipts || []).slice(0, 500),
+          inventory: (data.inventory || []).slice(0, 500),
+          expenses: (data.expenses || []).slice(0, 500),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(ref, {
+          clinicId: safeId,
+          passwordHash,
+          settings: data.settings,
+          receipts: (data.receipts || []).slice(0, 500),
+          inventory: (data.inventory || []).slice(0, 500),
+          expenses: (data.expenses || []).slice(0, 500),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch {
+      // Handled by serverPromise backup
+    }
+  })();
+
+  await Promise.allSettled([serverPromise, firestorePromise]);
   return nowIso;
 }
 
@@ -840,16 +912,19 @@ export function subscribeToDirectWorkspaceInCloud(
   onUpdate: (payload: DirectWorkspacePayload & { updatedAt: string }) => void
 ): () => void {
   const safeId = normalizeClinicWorkspaceId(clinicId);
+  const cleanPass = String(password || '').trim();
   let unsubFirestore: (() => void) | null = null;
+  let backupInterval: ReturnType<typeof setInterval> | null = null;
   let cancelled = false;
 
   const pullFromBackupApi = async () => {
     if (cancelled) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     try {
       const res = await fetch('/api/cloud/pull', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clinicId: safeId, password }),
+        body: JSON.stringify({ clinicId: safeId, password: cleanPass }),
       });
       const text = await res.text();
       if (!text || text.trim().startsWith('<')) return;
@@ -868,13 +943,22 @@ export function subscribeToDirectWorkspaceInCloud(
     }
   };
 
-  hashClinicPassword(password).then((passwordHash) => {
+  const startBackupPolling = () => {
+    if (backupInterval || cancelled) return;
+    pullFromBackupApi();
+    backupInterval = setInterval(pullFromBackupApi, 6000);
+  };
+
+  hashClinicPassword(cleanPass).then((passwordHash) => {
     if (cancelled) return;
     const ref = doc(db, 'clinic_workspaces', safeId);
     unsubFirestore = onSnapshot(
       ref,
       (snap) => {
-        if (!snap.exists()) return;
+        if (!snap.exists()) {
+          pullFromBackupApi();
+          return;
+        }
         const d = snap.data();
         if (d.passwordHash && d.passwordHash !== passwordHash) return;
         const updatedAt = d.updatedAt?.toDate
@@ -889,21 +973,25 @@ export function subscribeToDirectWorkspaceInCloud(
         });
       },
       () => {
-        // If Firestore listener is blocked by remote rules, pull once now and on reconnect
-        pullFromBackupApi();
+        // Firestore listener blocked by remote rules; activate server sync loop automatically
+        startBackupPolling();
       }
     );
   });
 
-  const handleOnline = () => {
+  const handleOnlineOrFocus = () => {
     pullFromBackupApi();
   };
-  window.addEventListener('online', handleOnline);
+  window.addEventListener('online', handleOnlineOrFocus);
+  window.addEventListener('focus', handleOnlineOrFocus);
 
   return () => {
     cancelled = true;
-    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('online', handleOnlineOrFocus);
+    window.removeEventListener('focus', handleOnlineOrFocus);
+    if (backupInterval) clearInterval(backupInterval);
     if (unsubFirestore) unsubFirestore();
   };
 }
+
 

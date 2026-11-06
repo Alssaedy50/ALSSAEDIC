@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import {
+  AlertCircle,
   ArrowRight,
+  Building2,
+  CheckCircle2,
   Cloud,
   Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   KeyRound,
   LogIn,
   LogOut,
@@ -12,6 +17,7 @@ import {
   Share2,
   ShieldCheck,
   Smartphone,
+  UserPlus,
 } from 'lucide-react';
 import { User } from '../firebase';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -22,14 +28,27 @@ export interface DirectClinicSession {
   updatedAt?: string;
 }
 
+export interface DirectAuthOptions {
+  mode: 'login' | 'register';
+  clinicNameAr?: string;
+  doctorNameAr?: string;
+}
+
 interface CloudAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
+  isFirstOpenGate?: boolean;
   user: User | null;
   directSession: DirectClinicSession | null;
+  defaultClinicName?: string;
+  defaultDoctorName?: string;
   isSyncing: boolean;
-  onSignInGoogle: () => Promise<void>;
-  onDirectLogin: (clinicId: string, password: string) => Promise<boolean>;
+  onSignInGoogle: () => Promise<boolean>;
+  onDirectLogin: (
+    clinicId: string,
+    password: string,
+    options?: DirectAuthOptions
+  ) => Promise<boolean>;
   onSignOut: () => Promise<void>;
   onForceSyncNow: () => Promise<void>;
   receiptsCount: number;
@@ -41,8 +60,11 @@ interface CloudAccountModalProps {
 export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   isOpen,
   onClose,
+  isFirstOpenGate = false,
   user,
   directSession,
+  defaultClinicName = 'عيادة السعيدي لطب وجراحة الفم والأسنان',
+  defaultDoctorName = 'د. صلاح الدين السعيدي',
   isSyncing,
   onSignInGoogle,
   onDirectLogin,
@@ -53,10 +75,15 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   expensesCount,
   notify,
 }) => {
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [clinicIdInput, setClinicIdInput] = useState(
     directSession?.clinicId || 'alssaedy-clinic'
   );
   const [passwordInput, setPasswordInput] = useState('');
+  const [clinicNameInput, setClinicNameInput] = useState(defaultClinicName);
+  const [doctorNameInput, setDoctorNameInput] = useState(defaultDoctorName);
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [appQrUrl, setAppQrUrl] = useState('');
 
@@ -64,10 +91,16 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   const liveAppUrl =
     typeof window !== 'undefined'
       ? window.location.origin
-      : 'https://ais-dev-nupdn4nefn3vfcmrfhiw54-958880361441.europe-west2.run.app';
+      : 'https://ais-dev-bi7tcpizyiib2p7inclvbe-601583926677.europe-west3.run.app';
+
+  useEffect(() => {
+    setClinicNameInput(defaultClinicName);
+    setDoctorNameInput(defaultDoctorName);
+  }, [defaultClinicName, defaultDoctorName]);
 
   useEffect(() => {
     if (!isOpen) return;
+    setAuthError(null);
     QRCode.toDataURL(liveAppUrl, {
       width: 180,
       margin: 1,
@@ -89,18 +122,50 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
 
   const handleDirectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthError(null);
+
+    const trimmedId = clinicIdInput.trim();
+    const trimmedPass = passwordInput.trim();
+
+    if (trimmedId.length < 3) {
+      setAuthError('يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف أو أرقام على الأقل).');
+      return;
+    }
+    if (trimmedPass.length < 4) {
+      setAuthError('يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.');
+      return;
+    }
+
     setAuthLoading(true);
     try {
-      await onDirectLogin(clinicIdInput, passwordInput);
+      const ok = await onDirectLogin(trimmedId, trimmedPass, {
+        mode: authTab,
+        clinicNameAr: authTab === 'register' ? clinicNameInput.trim() : undefined,
+        doctorNameAr: authTab === 'register' ? doctorNameInput.trim() : undefined,
+      });
+      if (ok) {
+        setPasswordInput('');
+        onClose();
+      } else {
+        setAuthError(
+          authTab === 'register'
+            ? 'تعذر إنشاء الحساب بهذا المعرّف. إذا كان الحساب مسجلاً مسبقاً، انتقل إلى تبويب "تسجيل الدخول".'
+            : 'تأكد من صحة معرّف العيادة وكلمة المرور ثم أعد المحاولة.'
+        );
+      }
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
+    setAuthError(null);
     setAuthLoading(true);
     try {
-      await onSignInGoogle();
+      const ok = await onSignInGoogle();
+      if (ok) {
+        onClose();
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -137,19 +202,21 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 no-print"
-      onClick={onClose}
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 no-print"
+      onClick={() => {
+        if (!isFirstOpenGate || isConnected) onClose();
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md max-h-[88vh] flex flex-col overflow-hidden shadow-2xl"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
       >
-        {/* Sticky Top Header with explicit Back button */}
+        {/* Sticky Top Header */}
         <div className="shrink-0 px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950">
           <div className="flex items-center gap-2 min-w-0">
             <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
             <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 truncate">
-              الحساب السحابي والتثبيت
+              {isConnected ? 'الحساب السحابي والتثبيت' : 'تسجيل الدخول أو إنشاء حساب سحابي'}
             </h3>
           </div>
           <button
@@ -158,7 +225,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold shrink-0"
           >
             <ArrowRight className="w-3.5 h-3.5" />
-            <span>رجوع</span>
+            <span>{isConnected ? 'رجوع' : 'تخطي مؤقتاً'}</span>
           </button>
         </div>
 
@@ -176,14 +243,14 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     </span>
                   </div>
                   <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold shrink-0">
-                    متصل
+                    متصل ومزامن
                   </span>
                 </div>
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-200 break-all">
                   {activeAccountLabel}
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                  افتح النظام من أي هاتف آخر وسجّل الدخول بنفس المعرّف وكلمة المرور لتظهر جميع السندات والديون والمخزون فوراً.
+                  يتم حفظ جميع السندات والديون والمخزون والمصروفات تلقائياً في السحابة. افتح النظام من أي هاتف آخر وسجّل الدخول بنفس الحساب لتظهر بياناتك فوراً.
                 </p>
               </div>
 
@@ -215,7 +282,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                 className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 transition-colors"
               >
                 <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                <span>{isSyncing ? 'جاري المزامنة السحابية...' : 'مزامنة البيانات مع السحابة الآن'}</span>
+                <span>{isSyncing ? 'جاري المزامنة السحابية...' : 'مزامنة وحفظ البيانات في السحابة الآن'}</span>
               </button>
 
               <button
@@ -228,72 +295,183 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               </button>
             </div>
           ) : (
-            <form onSubmit={handleDirectSubmit} className="space-y-3">
+            <div className="space-y-3.5">
+              {/* Welcome Banner */}
               <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 space-y-1">
                 <div className="text-xs font-black text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
                   <KeyRound className="w-4 h-4 text-sky-500 shrink-0" />
-                  <span>تسجيل / دخول موحد لحساب العيادة من أي هاتف</span>
+                  <span>مرحباً بك في المنصة السحابية لنظام العيادة</span>
                 </div>
                 <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  أدخل معرّف العيادة (أو رقم الهاتف) وكلمة مرور خاصة بك. عند الدخول بنفس البيانات من أي هاتف آخر ستتم مزامنة كافة السندات والديون والمخزون تلقائياً ومجاناً.
+                  سجّل الدخول إلى حساب عيادتك الحالي أو أنشئ حساباً سحابياً جديداً ليتم حفظ ومزامنة كافة السندات والديون والمخزون تلقائياً عبر جميع أجهزتك.
                 </p>
               </div>
 
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    معرّف العيادة أو رقم الهاتف
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    dir="ltr"
-                    value={clinicIdInput}
-                    onChange={(e) => setClinicIdInput(e.target.value)}
-                    placeholder="alssaedy-clinic أو 775956520"
-                    className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 text-left font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    كلمة مرور حساب العيادة
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    dir="ltr"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="أدخل 4 أرقام أو أحرف على الأقل"
-                    className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 text-left font-mono"
-                  />
-                </div>
+              {/* Explicit Mode Switcher: Login vs Create Account */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthTab('login');
+                    setAuthError(null);
+                  }}
+                  className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                    authTab === 'login'
+                      ? 'bg-sky-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <LogIn className="w-3.5 h-3.5 shrink-0" />
+                  <span>تسجيل الدخول</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthTab('register');
+                    setAuthError(null);
+                  }}
+                  className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                    authTab === 'register'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                  <span>إنشاء حساب جديد</span>
+                </button>
               </div>
 
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>
-                  {authLoading
-                    ? 'جاري الاتصال بالسحابة...'
-                    : 'تسجيل / دخول ومزامنة حساب العيادة'}
-                </span>
-              </button>
+              <form onSubmit={handleDirectSubmit} className="space-y-3">
+                {authTab === 'register' && (
+                  <div className="space-y-2.5 p-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5">
+                    <div className="text-[11px] font-black text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>بيانات العيادة الأساسية للحساب الجديد</span>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        اسم العيادة (يظهر في السندات والتقارير)
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={clinicNameInput}
+                        onChange={(e) => setClinicNameInput(e.target.value)}
+                        placeholder="عيادة السعيدي لطب وجراحة الفم والأسنان"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        اسم الطبيب
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={doctorNameInput}
+                        onChange={(e) => setDoctorNameInput(e.target.value)}
+                        placeholder="د. صلاح الدين السعيدي"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+                  </div>
+                )}
 
-              <button
-                type="button"
-                disabled={authLoading}
-                onClick={handleGoogleLogin}
-                className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-              >
-                <Cloud className="w-3.5 h-3.5 text-sky-500" />
-                <span>أو الربط عبر حساب Google (Firebase Cloud)</span>
-              </button>
-            </form>
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {authTab === 'register'
+                        ? 'اختر معرّف العيادة أو رقم الهاتف (للدخول منه في أي جهاز)'
+                        : 'معرّف العيادة أو رقم الهاتف المسجل'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      dir="ltr"
+                      value={clinicIdInput}
+                      onChange={(e) => setClinicIdInput(e.target.value)}
+                      placeholder="alssaedy-clinic أو 775956520"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 text-left font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {authTab === 'register' ? 'تعيين كلمة مرور الحساب السحابي' : 'كلمة مرور حساب العيادة'}
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        dir="ltr"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        placeholder="4 أحرف أو أرقام على الأقل"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-3 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 text-left font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {authError && (
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] font-bold text-rose-600 dark:text-rose-300 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className={`w-full py-3 px-4 rounded-xl disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors ${
+                    authTab === 'register'
+                      ? 'bg-emerald-600 hover:bg-emerald-500'
+                      : 'bg-sky-600 hover:bg-sky-500'
+                  }`}
+                >
+                  {authTab === 'register' ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <LogIn className="w-4 h-4 shrink-0" />
+                  )}
+                  <span>
+                    {authLoading
+                      ? 'جاري الاتصال بالسحابة والمزامنة...'
+                      : authTab === 'register'
+                        ? 'إنشاء الحساب وتفعيل الحفظ والمزامنة'
+                        : 'تسجيل الدخول واسترجاع بيانات العيادة'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={handleGoogleLogin}
+                  className="w-full py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
+                  <span>أو المتابعة السريعة عبر حساب Google (Firebase Cloud)</span>
+                </button>
+
+                {isFirstOpenGate && (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full py-2 px-3 rounded-xl text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+                  >
+                    الدخول للوضع المحلي مؤقتاً (بدون مزامنة سحابية)
+                  </button>
+                )}
+              </form>
+            </div>
           )}
 
           {/* SECTION 2: LIVE APP LINK, QR & FREE PLATFORMS */}
@@ -373,3 +551,4 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     </div>
   );
 };
+

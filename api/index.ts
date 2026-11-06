@@ -1,4 +1,56 @@
-import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { GoogleGenAI, Type } from '@google/genai';
+
+interface ServerlessWorkspaceRecord {
+  clinicId: string;
+  passwordHash: string;
+  updatedAt: string;
+  data: {
+    settings?: unknown;
+    receipts?: unknown[];
+    inventory?: unknown[];
+    expenses?: unknown[];
+  };
+}
+
+const TMP_STORE_PATH = path.join('/tmp', '.docai_cloud_workspaces.json');
+const memoryWorkspaces: Record<string, ServerlessWorkspaceRecord> = {};
+
+function readServerlessStore(): Record<string, ServerlessWorkspaceRecord> {
+  try {
+    if (fs.existsSync(TMP_STORE_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(TMP_STORE_PATH, 'utf-8'));
+      return { ...memoryWorkspaces, ...parsed };
+    }
+  } catch {
+    // Fallback to memory store
+  }
+  return { ...memoryWorkspaces };
+}
+
+function writeServerlessStore(store: Record<string, ServerlessWorkspaceRecord>): void {
+  Object.assign(memoryWorkspaces, store);
+  try {
+    fs.writeFileSync(TMP_STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
+  } catch {
+    // Kept in memoryWorkspaces
+  }
+}
+
+function hashServerlessPassword(password: string): string {
+  return crypto.createHash('sha256').update(String(password).trim()).digest('hex');
+}
+
+function normalizeServerlessClinicId(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9_\-\u0600-\u06FF]/g, '')
+    .slice(0, 64);
+}
 
 function getGenAIClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
@@ -444,16 +496,102 @@ ${JSON.stringify(cleanContext)}`;
 
     // 3. Cloud Sync Endpoints on Serverless
     if (url.includes('/cloud/')) {
-      const clinicId = String(body.clinicId || 'alssaedy-clinic')
-        .trim()
-        .toLowerCase();
-      return res.status(200).json({
-        ok: true,
-        status: 'authenticated',
-        clinicId,
-        updatedAt: new Date().toISOString(),
-        data: body.data || body.initialData || null,
-      });
+      const store = readServerlessStore();
+      const clinicId = normalizeServerlessClinicId(body.clinicId || '');
+      const password = String(body.password || '').trim();
+      const passHash = hashServerlessPassword(password);
+
+      if (url.includes('/cloud/auth')) {
+        if (!clinicId || clinicId.length < 3) {
+          return res.status(400).json({
+            ok: false,
+            error: 'يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف أو أرقام على الأقل).',
+          });
+        }
+        if (password.length < 4) {
+          return res.status(400).json({
+            ok: false,
+            error: 'يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.',
+          });
+        }
+
+        const existing = store[clinicId];
+        const mode = body.mode || 'auto';
+
+        if (!existing) {
+          const newRecord: ServerlessWorkspaceRecord = {
+            clinicId,
+            passwordHash: passHash,
+            updatedAt: new Date().toISOString(),
+            data: body.initialData || body.data || {},
+          };
+          store[clinicId] = newRecord;
+          writeServerlessStore(store);
+          return res.status(200).json({
+            ok: true,
+            status: mode === 'login' ? 'authenticated' : 'created',
+            clinicId,
+            updatedAt: newRecord.updatedAt,
+            data: newRecord.data,
+          });
+        }
+
+        if (existing.passwordHash !== passHash) {
+          return res.status(401).json({
+            ok: false,
+            error:
+              mode === 'register'
+                ? 'معرّف العيادة هذا مسجل مسبقاً بكلمة مرور مختلفة. اختر "تسجيل الدخول" أو استخدم معرّفاً آخر.'
+                : 'كلمة المرور غير صحيحة لهذا الحساب السحابي.',
+          });
+        }
+
+        return res.status(200).json({
+          ok: true,
+          status: 'authenticated',
+          clinicId,
+          updatedAt: existing.updatedAt,
+          data: existing.data,
+        });
+      }
+
+      if (url.includes('/cloud/push')) {
+        if (!clinicId || !password) {
+          return res.status(400).json({ ok: false, error: 'بيانات الحساب السحابي غير مكتملة.' });
+        }
+        const existing = store[clinicId];
+        if (existing && existing.passwordHash !== passHash) {
+          return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
+        }
+        const updatedAt = new Date().toISOString();
+        store[clinicId] = {
+          clinicId,
+          passwordHash: passHash,
+          updatedAt,
+          data: body.data || {},
+        };
+        writeServerlessStore(store);
+        return res.status(200).json({ ok: true, clinicId, updatedAt });
+      }
+
+      if (url.includes('/cloud/pull')) {
+        if (!clinicId || !password) {
+          return res.status(400).json({ ok: false, error: 'بيانات الحساب السحابي غير مكتملة.' });
+        }
+        const existing = store[clinicId];
+        if (!existing) {
+          return res.status(404).json({ ok: false, error: 'لم يتم العثور على الحساب السحابي.' });
+        }
+        if (existing.passwordHash !== passHash) {
+          return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
+        }
+        return res.status(200).json({
+          ok: true,
+          clinicId,
+          updatedAt: existing.updatedAt,
+          data: existing.data,
+        });
+      }
     }
 
     return res.status(200).json({ ok: true });

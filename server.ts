@@ -67,14 +67,20 @@ function normalizeClinicId(raw: string): string {
 
 app.post('/api/cloud/auth', (req, res) => {
   try {
-    const { clinicId: rawId, password, initialData } = req.body || {};
+    const { clinicId: rawId, password, mode = 'auto', initialData } = req.body || {};
     const clinicId = normalizeClinicId(rawId);
     if (!clinicId || clinicId.length < 3) {
-      res.status(400).json({ error: 'يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف/أرقام على الأقل).' });
+      res.status(400).json({
+        ok: false,
+        error: 'يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف أو أرقام على الأقل).',
+      });
       return;
     }
     if (!password || String(password).trim().length < 4) {
-      res.status(400).json({ error: 'يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.' });
+      res.status(400).json({
+        ok: false,
+        error: 'يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.',
+      });
       return;
     }
 
@@ -92,7 +98,8 @@ app.post('/api/cloud/auth', (req, res) => {
       store[clinicId] = newRecord;
       writeCloudStore(store);
       res.json({
-        status: 'registered',
+        ok: true,
+        status: mode === 'login' ? 'authenticated' : 'created',
         clinicId,
         updatedAt: newRecord.updatedAt,
         data: newRecord.data,
@@ -101,18 +108,37 @@ app.post('/api/cloud/auth', (req, res) => {
     }
 
     if (existing.passwordHash !== passHash) {
-      res.status(401).json({ error: 'كلمة المرور غير صحيحة لهذا الحساب السحابي.' });
+      res.status(401).json({
+        ok: false,
+        error:
+          mode === 'register'
+            ? 'معرّف العيادة هذا مسجل مسبقاً بكلمة مرور مختلفة. اختر "تسجيل الدخول" أو استخدم معرّفاً آخر.'
+            : 'كلمة المرور غير صحيحة لهذا الحساب السحابي.',
+      });
       return;
     }
 
+    // If registering with same credentials and cloud record had empty data, update it with initialData
+    if (
+      mode === 'register' &&
+      initialData &&
+      (!existing.data || Object.keys(existing.data).length === 0)
+    ) {
+      existing.data = initialData;
+      existing.updatedAt = new Date().toISOString();
+      store[clinicId] = existing;
+      writeCloudStore(store);
+    }
+
     res.json({
+      ok: true,
       status: 'authenticated',
       clinicId,
       updatedAt: existing.updatedAt,
       data: existing.data,
     });
   } catch {
-    res.status(500).json({ error: 'تعذر الاتصال بالخادم السحابي.' });
+    res.status(500).json({ ok: false, error: 'تعذر الاتصال بالخادم السحابي.' });
   }
 });
 
@@ -121,7 +147,7 @@ app.post('/api/cloud/push', (req, res) => {
     const { clinicId: rawId, password, data } = req.body || {};
     const clinicId = normalizeClinicId(rawId);
     if (!clinicId || !password) {
-      res.status(400).json({ error: 'بيانات الحساب السحابي غير مكتملة.' });
+      res.status(400).json({ ok: false, error: 'بيانات الحساب السحابي غير مكتملة.' });
       return;
     }
 
@@ -130,7 +156,7 @@ app.post('/api/cloud/push', (req, res) => {
     const existing = store[clinicId];
 
     if (existing && existing.passwordHash !== passHash) {
-      res.status(401).json({ error: 'كلمة المرور غير صحيحة.' });
+      res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
       return;
     }
 
@@ -145,7 +171,7 @@ app.post('/api/cloud/push', (req, res) => {
 
     res.json({ ok: true, clinicId, updatedAt });
   } catch {
-    res.status(500).json({ error: 'تعذر حفظ البيانات في السحابة.' });
+    res.status(500).json({ ok: false, error: 'تعذر حفظ البيانات في السحابة.' });
   }
 });
 
@@ -154,7 +180,7 @@ app.post('/api/cloud/pull', (req, res) => {
     const { clinicId: rawId, password } = req.body || {};
     const clinicId = normalizeClinicId(rawId);
     if (!clinicId || !password) {
-      res.status(400).json({ error: 'بيانات الحساب السحابي غير مكتملة.' });
+      res.status(400).json({ ok: false, error: 'بيانات الحساب السحابي غير مكتملة.' });
       return;
     }
 
@@ -163,12 +189,12 @@ app.post('/api/cloud/pull', (req, res) => {
     const existing = store[clinicId];
 
     if (!existing) {
-      res.status(404).json({ error: 'لم يتم العثور على الحساب السحابي.' });
+      res.status(404).json({ ok: false, error: 'لم يتم العثور على الحساب السحابي.' });
       return;
     }
 
     if (existing.passwordHash !== passHash) {
-      res.status(401).json({ error: 'كلمة المرور غير صحيحة.' });
+      res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
       return;
     }
 
@@ -179,7 +205,7 @@ app.post('/api/cloud/pull', (req, res) => {
       data: existing.data,
     });
   } catch {
-    res.status(500).json({ error: 'تعذر جلب البيانات من السحابة.' });
+    res.status(500).json({ ok: false, error: 'تعذر جلب البيانات من السحابة.' });
   }
 });
 
