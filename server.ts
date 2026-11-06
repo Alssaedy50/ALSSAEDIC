@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
+import { generateLocalClinicalResponse } from './src/utils/aiClient';
 
 dotenv.config();
 
@@ -183,10 +184,10 @@ app.post('/api/cloud/pull', (req, res) => {
 });
 
 // ==================== ULTRA-FAST GEMINI AI ENGINE ====================
-function getGenAIClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+function getGenAIClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error('مفتاح GEMINI_API_KEY غير مضبوط في إعدادات الخادم.');
+    return null;
   }
   return new GoogleGenAI({
     apiKey,
@@ -251,34 +252,93 @@ async function generateWithFastFallback(
   throw lastErr;
 }
 
+function parseReceiptHeuristicServer(
+  raw: string,
+  availableServices: Array<{ name?: string; price?: number; keywords?: string[] }>,
+  defaultCurrency: string
+) {
+  let extractedName = '';
+  const nameMatch = raw.match(
+    /(?:للمريض|مريض|باسم|الأخ|الاخ|المريضة)\s+([^\d،,]+?)(?=\s+(?:خدمة|علاج|حشو|خلع|عصب|تنظيف|تركيب|تقويم|كشف|أشعة|اشعة|بمبلغ|مبلغ|إجمالي|اجمالي|دفع|سدد|رقم|هاتف|جوال|سن|$))/i
+  );
+  if (nameMatch?.[1]) {
+    extractedName = nameMatch[1].trim();
+  } else {
+    const words = raw
+      .replace(/سند|قبض|جديد|للمريض|مريض/g, '')
+      .trim()
+      .split(/\s+/)
+      .slice(0, 3)
+      .join(' ');
+    if (words && !/\d/.test(words)) extractedName = words;
+  }
+
+  const phoneMatch = raw.match(/(?:\+?967|0)?(7\d{8})/);
+  const extractedPhone = phoneMatch ? phoneMatch[0] : '';
+
+  const matchedServices: string[] = [];
+  let calculatedPrice = 0;
+  if (Array.isArray(availableServices)) {
+    availableServices.forEach((srv) => {
+      const allTerms = [srv.name || '', ...(srv.keywords || [])];
+      if (allTerms.some((term) => term && raw.includes(term))) {
+        if (srv.name) matchedServices.push(srv.name);
+        calculatedPrice += Number(srv.price) || 0;
+      }
+    });
+  }
+
+  const fdiMatches = raw.match(/\b([1-4][1-8]|[5-8][1-5])\b/g);
+  const toothFDI = fdiMatches ? Array.from(new Set(fdiMatches)).join(', ') : '';
+
+  const totalMatch = raw.match(/(?:بمبلغ|مبلغ|إجمالي|اجمالي)\s*(\d+)/);
+  const paidMatch = raw.match(/(?:دفع|سدد|المدفوع|استلمنا)\s*(\d+)/);
+
+  const totalAmount = totalMatch ? Number(totalMatch[1]) : calculatedPrice;
+  const paidAmount = paidMatch ? Number(paidMatch[1]) : totalAmount;
+
+  return {
+    patientName: extractedName || 'مريض',
+    patientPhone: extractedPhone,
+    services: matchedServices,
+    toothFDI,
+    totalAmount,
+    paidAmount,
+    currency: defaultCurrency || 'ريال يمني',
+    paymentMethod:
+      raw.includes('تحويل') || raw.includes('محفظة') ? 'تحويل بنكي / محفظة' : 'نقداً (Cash)',
+    notes: '',
+  };
+}
+
 // 1. Smart Receipt Natural Language Parser (Fast ~1s Structured JSON)
 app.post('/api/gemini/parse-receipt', async (req, res) => {
+  const { text, availableServices = [], defaultCurrency = 'ريال يمني' } = req.body || {};
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'يرجى إدخال نص السند للتحليل.' });
+    return;
+  }
+
   try {
-    const { text, availableServices = [], defaultCurrency = 'ريال يمني' } = req.body || {};
-    if (!text || typeof text !== 'string' || !text.trim()) {
-      res.status(400).json({ error: 'يرجى إدخال نص السند للتحليل.' });
+    const ai = getGenAIClient();
+    if (!ai) {
+      res.json({
+        result: parseReceiptHeuristicServer(text.trim(), availableServices, defaultCurrency),
+      });
       return;
     }
 
-    const ai = getGenAIClient();
     const serviceNames = Array.isArray(availableServices)
-      ? availableServices.map((s: { name?: string; price?: number }) => `${s.name} (${s.price || 0})`).join('، ')
+      ? availableServices
+          .map((s: { name?: string; price?: number }) => `${s.name} (${s.price || 0})`)
+          .join('، ')
       : '';
 
     const { response } = await generateWithFastFallback(ai, {
       contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
 النص المدخل: "${text.trim()}"
 الخدمات المعتمدة في العيادة وأسعارها الافتراضية: ${serviceNames || 'كشف ومعاينة، حشوات وتجميل، علاج عصب وجذور، خلع وجراحة، تنظيف وتجليح لثة، تركيبات أسنان، تقويم أسنان، أشعة تشخيصية'}
-العملة الافتراضية: ${defaultCurrency}
-
-تعليمات الاستخراج:
-- استخرج اسم المريض الكامل (patientName) ورقم هاتفه إن وجد (patientPhone).
-- طابق الخدمات المذكورة مع أسماء الخدمات المعتمدة في العيادة قدر الإمكان داخل مصفوفة services.
-- استخرج أرقام الأسنان بنظام FDI إن ذكرت (مثل 11, 14, 26, 36, 48) مفصولة بفاصلة في حقل toothFDI.
-- استخرج إجمالي المبلغ (totalAmount) والمبلغ المدفوع (paidAmount). إذا ذكر مبلغ واحد فقط دون تفصيل متبقي، اعتبره إجمالي المبلغ والمدفوع معاً. إذا لم يذكر المبلغ، اتركه 0 ليتم حسابه من أسعار الخدمات تلقائياً.
-- استخرج طريقة الدفع (paymentMethod) من بين: "نقداً (Cash)"، "تحويل بنكي / محفظة"، "بطاقة إلكترونية".
-- استخرج العملة (currency) من بين: "ريال يمني"، "ريال سعودي"، "دولار أمريكي".
-- ضع أي تفاصيل علاجية إضافية في حقل notes.`,
+العملة الافتراضية: ${defaultCurrency}`,
       config: {
         responseMimeType: 'application/json',
         responseSchema: {
@@ -306,29 +366,38 @@ app.post('/api/gemini/parse-receipt', async (req, res) => {
     const rawJson = (response.text ?? '{}').trim();
     const parsed = JSON.parse(rawJson);
     res.json({ result: parsed });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'حدث خطأ أثناء تحليل السند عبر Gemini.';
-    res.status(500).json({ error: message });
+  } catch {
+    res.json({
+      result: parseReceiptHeuristicServer(text.trim(), availableServices, defaultCurrency),
+    });
   }
 });
 
 // 2. Context-Aware Clinic Assistant, Vision (X-Ray / Prescription / Invoice) & Executive Reports
 app.post('/api/gemini/assistant', async (req, res) => {
-  try {
-    const {
-      prompt,
-      clinicContext,
-      history = [],
-      attachment = null,
-      taskType = 'chat',
-    } = req.body || {};
+  const {
+    prompt,
+    clinicContext,
+    history = [],
+    attachment = null,
+    taskType = 'chat',
+  } = req.body || {};
 
-    if (!prompt || typeof prompt !== 'string') {
-      res.status(400).json({ error: 'الرسالة مطلوبة.' });
+  if (!prompt || typeof prompt !== 'string') {
+    res.status(400).json({ error: 'الرسالة مطلوبة.' });
+    return;
+  }
+
+  try {
+    const ai = getGenAIClient();
+    if (!ai) {
+      res.json({
+        reply: generateLocalClinicalResponse(prompt, clinicContext),
+        model: 'local-clinical-engine',
+      });
       return;
     }
 
-    const ai = getGenAIClient();
     const cleanContext = sanitizeClinicContextForPrompt(clinicContext);
 
     const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة عيادة السعيدي لطب وجراحة الفم والأسنان (د. صلاح الدين السعيدي).
@@ -354,14 +423,18 @@ ${JSON.stringify(cleanContext)}`;
       });
     }
 
-    const historyText = Array.isArray(history) && history.length > 0
-      ? 'سجل المحادثة السابق:\n' +
-        history
-          .slice(-6)
-          .map((m: { role: string; text: string }) => `${m.role === 'user' ? 'المستخدم' : 'المساعد'}: ${m.text}`)
-          .join('\n') +
-        '\n\n'
-      : '';
+    const historyText =
+      Array.isArray(history) && history.length > 0
+        ? 'سجل المحادثة السابق:\n' +
+          history
+            .slice(-6)
+            .map(
+              (m: { role: string; text: string }) =>
+                `${m.role === 'user' ? 'المستخدم' : 'المساعد'}: ${m.text}`
+            )
+            .join('\n') +
+          '\n\n'
+        : '';
 
     parts.push({
       text: `${historyText}الطلب الحالي (${taskType}):\n${prompt}`,
@@ -375,12 +448,14 @@ ${JSON.stringify(cleanContext)}`;
     });
 
     res.json({
-      reply: response.text || 'لم يتم إرجاع نص من النموذج.',
+      reply: response.text || generateLocalClinicalResponse(prompt, clinicContext),
       model: modelName,
     });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'تعذر الاتصال بنموذج Gemini.';
-    res.status(500).json({ error: message });
+  } catch {
+    res.json({
+      reply: generateLocalClinicalResponse(prompt, clinicContext),
+      model: 'local-clinical-engine',
+    });
   }
 });
 

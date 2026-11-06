@@ -22,6 +22,7 @@ import {
   InventoryItem,
   ReceiptRecord,
 } from '../types/clinic';
+import { queryClinicAssistant } from '../utils/aiClient';
 
 interface GeminiAssistantProps {
   settings: ClinicSettings;
@@ -221,27 +222,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         recentExpenses: expenses.slice(0, 12),
       };
 
-      const response = await fetch('/api/gemini/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: userMsg.text,
-          clinicContext,
-          history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
-          attachment: sentAttachment,
-          taskType: 'chat',
-        }),
+      const replyText = await queryClinicAssistant({
+        prompt: userMsg.text,
+        clinicContext,
+        history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
+        attachment: sentAttachment,
+        taskType: 'chat',
       });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'تعذر الحصول على رد');
-      }
 
       const assistantMsg: ChatMessage = {
         id: 'msg_a_' + Date.now(),
         role: 'assistant',
-        text: data.reply || 'تمت المعالجة.',
+        text: replyText || 'تمت المعالجة.',
         timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
       };
       onAddMessage(assistantMsg);
@@ -249,7 +241,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       const errMsg: ChatMessage = {
         id: 'msg_err_' + Date.now(),
         role: 'assistant',
-        text: err instanceof Error ? `خطأ: ${err.message}` : 'تعذر الاتصال بخادم Gemini.',
+        text: err instanceof Error ? `خطأ: ${err.message}` : 'تعذر الاتصال بخادم التحليل.',
         timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
       };
       onAddMessage(errMsg);

@@ -32,6 +32,7 @@ import {
   DEFAULT_SETTINGS,
 } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
+import { safeParseJsonResponse } from './utils/aiClient';
 import { ReceiptStudio } from './components/ReceiptStudio';
 import { RecordsLedger } from './components/RecordsLedger';
 import { InventoryManager } from './components/InventoryManager';
@@ -202,9 +203,9 @@ export default function App() {
           },
         }),
       });
-      const json = await res.json();
-      if (res.ok && json.updatedAt) {
-        lastDirectSyncTimestamp.current = json.updatedAt;
+      const parsed = await safeParseJsonResponse<{ updatedAt?: string }>(res);
+      if (parsed.ok && parsed.data?.updatedAt) {
+        lastDirectSyncTimestamp.current = parsed.data.updatedAt;
       }
     } catch {
       // Offline or transient network error; will sync next time
@@ -225,8 +226,18 @@ export default function App() {
             password: directSession.password,
           }),
         });
-        if (!res.ok) return;
-        const json = await res.json();
+        const parsed = await safeParseJsonResponse<{
+          ok?: boolean;
+          updatedAt?: string;
+          data?: {
+            settings?: ClinicSettings;
+            receipts?: ReceiptRecord[];
+            inventory?: InventoryItem[];
+            expenses?: ExpenseRecord[];
+          };
+        }>(res);
+        if (!parsed.ok || !parsed.data) return;
+        const json = parsed.data;
         if (
           json.ok &&
           json.updatedAt &&
@@ -373,9 +384,20 @@ export default function App() {
           },
         }),
       });
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        // Running on a static host (e.g. GitHub Pages / Netlify / Firebase Hosting) without Node backend
+      const parsed = await safeParseJsonResponse<{
+        status?: string;
+        clinicId?: string;
+        updatedAt?: string;
+        error?: string;
+        data?: {
+          settings?: ClinicSettings;
+          receipts?: ReceiptRecord[];
+          inventory?: InventoryItem[];
+          expenses?: ExpenseRecord[];
+        };
+      }>(res);
+
+      if (!parsed.data) {
         const cleanId = clinicId.trim().toLowerCase().replace(/\s+/g, '-');
         const fallbackSession: DirectClinicSession = {
           clinicId: cleanId,
@@ -387,16 +409,16 @@ export default function App() {
         return true;
       }
 
-      const json = await res.json();
-      if (!res.ok) {
+      const json = parsed.data;
+      if (!parsed.ok) {
         notify(json.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
         return false;
       }
 
       const sessionObj: DirectClinicSession = {
-        clinicId: json.clinicId,
+        clinicId: json.clinicId || clinicId.trim().toLowerCase(),
         password,
-        updatedAt: json.updatedAt,
+        updatedAt: json.updatedAt || new Date().toISOString(),
       };
       lastDirectSyncTimestamp.current = json.updatedAt || '';
       setDirectSession(sessionObj);

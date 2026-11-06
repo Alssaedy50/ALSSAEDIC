@@ -24,6 +24,7 @@ import {
 } from '../types/clinic';
 import { CURRENCIES, PAYMENT_METHODS } from '../data/defaultData';
 import { numberToArabicWords, parseFDIToothNumbers } from '../utils/arabicTafqeet';
+import { safeParseJsonResponse } from '../utils/aiClient';
 import { SignatureModal } from './SignatureModal';
 import { FdiToothModal } from './FdiToothModal';
 import { OfficialReceiptCard, ReceiptDisplayData } from './OfficialReceiptCard';
@@ -238,12 +239,15 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.result) {
-        throw new Error(data.error || 'تعذر التحليل');
+      const parsed = await safeParseJsonResponse<{
+        result?: Record<string, any>;
+        error?: string;
+      }>(response);
+      if (!parsed.ok || !parsed.data?.result) {
+        throw new Error(parsed.data?.error || 'تعذر التحليل');
       }
 
-      const r = data.result;
+      const r = parsed.data.result;
       if (r.patientName) setPatientName(r.patientName);
       if (r.patientPhone) setPatientPhone(r.patientPhone);
 

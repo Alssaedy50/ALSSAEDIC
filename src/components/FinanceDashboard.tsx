@@ -17,6 +17,7 @@ import {
   ReceiptRecord,
 } from '../types/clinic';
 import { CURRENCIES } from '../data/defaultData';
+import { queryClinicAssistant } from '../utils/aiClient';
 
 interface FinanceDashboardProps {
   receipts: ReceiptRecord[];
@@ -141,26 +142,20 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
   const handleGenerateFinancialReport = async () => {
     setIsGeneratingReport(true);
     try {
-      const response = await fetch('/api/gemini/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskType: 'report',
-          prompt:
-            'أعد تقريراً مالياً تنفيذياً مختصراً لأداء العيادة: حلل الإيرادات، نسبة التحصيل، الديون، المصروفات، وصافي الربح النقدي مع 3 توصيات عملية.',
-          clinicContext: {
-            currencySummaries,
-            expenses: expenses.slice(0, 20),
-            totalReceipts: receipts.length,
-            inventoryCount: inventory.length,
-          },
-        }),
+      const reply = await queryClinicAssistant({
+        taskType: 'report',
+        prompt:
+          'أعد تقريراً مالياً تنفيذياً مختصراً لأداء العيادة: حلل الإيرادات، نسبة التحصيل، الديون، المصروفات، وصافي الربح النقدي مع 3 توصيات عملية.',
+        clinicContext: {
+          currencySummaries,
+          expenses: expenses.slice(0, 20),
+          totalReceipts: receipts.length,
+          inventoryCount: inventory.length,
+        },
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'تعذر توليد التقرير');
-      setAiReport(data.reply || '');
+      setAiReport(reply || '');
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'تعذر الاتصال بنموذج Gemini', 'error');
+      notify(err instanceof Error ? err.message : 'تعذر توليد التقرير المالي', 'error');
     } finally {
       setIsGeneratingReport(false);
     }

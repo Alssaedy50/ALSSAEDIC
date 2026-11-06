@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { DentalServiceItem, InventoryItem } from '../types/clinic';
 import { INVENTORY_UNITS } from '../data/defaultData';
+import { queryClinicAssistant } from '../utils/aiClient';
 
 interface InventoryManagerProps {
   inventory: InventoryItem[];
@@ -126,26 +127,20 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   const handleRunGeminiAudit = async () => {
     setIsAuditing(true);
     try {
-      const response = await fetch('/api/gemini/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskType: 'report',
-          prompt:
-            'قم بإجراء جرد تحليلي للمخزون الطبي في العيادة: حدد النواقص وتكلفة إعادة التزويد وقدم توصيات عملية مختصرة.',
-          clinicContext: {
-            defaultCurrency,
-            inventory,
-            lowStockCount: lowStockItems.length,
-            totalInventoryValue,
-          },
-        }),
+      const reply = await queryClinicAssistant({
+        taskType: 'report',
+        prompt:
+          'قم بإجراء جرد تحليلي للمخزون الطبي في العيادة: حدد النواقص وتكلفة إعادة التزويد وقدم توصيات عملية مختصرة.',
+        clinicContext: {
+          defaultCurrency,
+          inventory,
+          lowStockCount: lowStockItems.length,
+          totalInventoryValue,
+        },
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'فشل تحليل المخزون');
-      setAuditReport(data.reply || '');
+      setAuditReport(reply || '');
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'تعذر الاتصال بنموذج Gemini', 'error');
+      notify(err instanceof Error ? err.message : 'تعذر إجراء الجرد الذكي', 'error');
     } finally {
       setIsAuditing(false);
     }
