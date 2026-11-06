@@ -1,0 +1,416 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== PRIMITIVE HELPERS ====================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function hasClinicParent(ownerId) {
+      return exists(/databases/$(database)/documents/clinics/$(ownerId));
+    }
+
+    // ==================== VALIDATION BLUEPRINTS ====================
+    function isValidClinic(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'clinicAr',
+        'doctorAr',
+        'specialtyAr',
+        'clinicEn',
+        'doctorEn',
+        'address',
+        'phones',
+        'defaultCurrency',
+        'primaryColor',
+        'watermarkOpacity',
+        'autoInventory',
+        'showQrCode',
+        'customLogoDataUrl',
+        'permanentAccountantSig',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'clinicAr',
+        'doctorAr',
+        'specialtyAr',
+        'clinicEn',
+        'doctorEn',
+        'address',
+        'phones',
+        'defaultCurrency',
+        'primaryColor',
+        'watermarkOpacity',
+        'autoInventory',
+        'showQrCode',
+        'customLogoDataUrl',
+        'permanentAccountantSig',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.clinicAr is string && data.clinicAr.size() >= 1 && data.clinicAr.size() <= 160 &&
+      data.doctorAr is string && data.doctorAr.size() >= 1 && data.doctorAr.size() <= 160 &&
+      data.specialtyAr is string && data.specialtyAr.size() >= 1 && data.specialtyAr.size() <= 200 &&
+      data.clinicEn is string && data.clinicEn.size() >= 1 && data.clinicEn.size() <= 160 &&
+      data.doctorEn is string && data.doctorEn.size() >= 1 && data.doctorEn.size() <= 160 &&
+      data.address is string && data.address.size() >= 1 && data.address.size() <= 250 &&
+      data.phones is string && data.phones.size() >= 1 && data.phones.size() <= 200 &&
+      data.defaultCurrency is string && data.defaultCurrency.size() >= 1 && data.defaultCurrency.size() <= 40 &&
+      data.primaryColor is string && data.primaryColor.size() >= 4 && data.primaryColor.size() <= 20 &&
+      data.watermarkOpacity is number && data.watermarkOpacity >= 0 && data.watermarkOpacity <= 30 &&
+      data.autoInventory is bool &&
+      data.showQrCode is bool &&
+      data.customLogoDataUrl is string && data.customLogoDataUrl.size() <= 350000 &&
+      data.permanentAccountantSig is string && data.permanentAccountantSig.size() <= 250000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidDentalService(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'price', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['ownerId', 'name', 'price', 'createdAt', 'updatedAt']) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 140 &&
+      data.price is number && data.price >= 0 && data.price <= 100000000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidReceipt(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'receiptNo',
+        'date',
+        'patientName',
+        'patientPhone',
+        'services',
+        'toothFDI',
+        'totalAmount',
+        'paidAmount',
+        'remainingAmount',
+        'currency',
+        'paymentMethod',
+        'notes',
+        'amountWords',
+        'accountantSig',
+        'receiverSig',
+        'paperFormat',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'receiptNo',
+        'date',
+        'patientName',
+        'patientPhone',
+        'services',
+        'toothFDI',
+        'totalAmount',
+        'paidAmount',
+        'remainingAmount',
+        'currency',
+        'paymentMethod',
+        'notes',
+        'amountWords',
+        'accountantSig',
+        'receiverSig',
+        'paperFormat',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.receiptNo is number && data.receiptNo >= 1 && data.receiptNo <= 99999999 &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 160 &&
+      data.patientPhone is string && data.patientPhone.size() <= 50 &&
+      data.services is list && data.services.size() <= 25 &&
+      (data.services.size() == 0 || (data.services[0] is string && data.services[0].size() <= 140)) &&
+      data.toothFDI is string && data.toothFDI.size() <= 200 &&
+      data.totalAmount is number && data.totalAmount >= 0 && data.totalAmount <= 1000000000 &&
+      data.paidAmount is number && data.paidAmount >= 0 && data.paidAmount <= 1000000000 &&
+      data.remainingAmount is number && data.remainingAmount >= 0 && data.remainingAmount <= 1000000000 &&
+      data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 40 &&
+      data.paymentMethod is string && data.paymentMethod.size() >= 1 && data.paymentMethod.size() <= 80 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.amountWords is string && data.amountWords.size() >= 1 && data.amountWords.size() <= 300 &&
+      data.accountantSig is string && data.accountantSig.size() <= 250000 &&
+      data.receiverSig is string && data.receiverSig.size() <= 250000 &&
+      data.paperFormat is string && data.paperFormat.size() >= 2 && data.paperFormat.size() <= 20 &&
+      data.paperFormat in ['a5', 'thermal80'] &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'name',
+        'category',
+        'qty',
+        'minQty',
+        'unit',
+        'unitPrice',
+        'totalCost',
+        'linkedService',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'name',
+        'category',
+        'qty',
+        'minQty',
+        'unit',
+        'unitPrice',
+        'totalCost',
+        'linkedService',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+      data.category is string && data.category.size() <= 160 &&
+      data.qty is number && data.qty >= 0 && data.qty <= 1000000 &&
+      data.minQty is number && data.minQty >= 0 && data.minQty <= 1000000 &&
+      data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 50 &&
+      data.unitPrice is number && data.unitPrice >= 0 && data.unitPrice <= 100000000 &&
+      data.totalCost is number && data.totalCost >= 0 && data.totalCost <= 1000000000 &&
+      data.linkedService is string && data.linkedService.size() <= 140 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'title',
+        'amount',
+        'category',
+        'currency',
+        'date',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'title',
+        'amount',
+        'category',
+        'currency',
+        'date',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.amount is number && data.amount >= 0 && data.amount <= 1000000000 &&
+      data.category is string && data.category.size() >= 1 && data.category.size() <= 100 &&
+      data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 40 &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // ==================== COLLECTION RULES ====================
+
+    // 1. Clinics Collection (/clinics/{clinicId})
+    match /clinics/{clinicId} {
+      allow get: if isSignedIn() && isValidId(clinicId) && clinicId == request.auth.uid && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(clinicId) &&
+        clinicId == request.auth.uid &&
+        isValidClinic(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(clinicId) &&
+        clinicId == request.auth.uid &&
+        isValidClinic(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action: Update Clinic Identity & Settings
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'clinicAr',
+            'doctorAr',
+            'specialtyAr',
+            'clinicEn',
+            'doctorEn',
+            'address',
+            'phones',
+            'defaultCurrency',
+            'primaryColor',
+            'watermarkOpacity',
+            'autoInventory',
+            'showQrCode',
+            'customLogoDataUrl',
+            'permanentAccountantSig',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isVerifiedUser() && isValidId(clinicId) && clinicId == request.auth.uid && existing().ownerId == request.auth.uid;
+    }
+
+    // 2. Dental Services Collection (/services/{serviceId})
+    match /services/{serviceId} {
+      allow get: if isSignedIn() && isValidId(serviceId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(serviceId) &&
+        isValidDentalService(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(incoming().ownerId);
+      allow update: if isVerifiedUser() &&
+        isValidId(serviceId) &&
+        isValidDentalService(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(existing().ownerId) && (
+          // Action: Update Service Name or Price
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'updatedAt'])
+        );
+      allow delete: if isVerifiedUser() && isValidId(serviceId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 3. Receipts Collection (/receipts/{receiptId})
+    match /receipts/{receiptId} {
+      allow get: if isSignedIn() && isValidId(receiptId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(receiptId) &&
+        isValidReceipt(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(incoming().ownerId);
+      allow update: if isVerifiedUser() &&
+        isValidId(receiptId) &&
+        isValidReceipt(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(existing().ownerId) && (
+          // Action 1: Settle Debt
+          incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'remainingAmount', 'amountWords', 'updatedAt']) ||
+          // Action 2: Full Receipt Edit
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'receiptNo',
+            'date',
+            'patientName',
+            'patientPhone',
+            'services',
+            'toothFDI',
+            'totalAmount',
+            'paidAmount',
+            'remainingAmount',
+            'currency',
+            'paymentMethod',
+            'notes',
+            'amountWords',
+            'accountantSig',
+            'receiverSig',
+            'paperFormat',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isVerifiedUser() && isValidId(receiptId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 4. Inventory Collection (/inventory/{itemId})
+    match /inventory/{itemId} {
+      allow get: if isSignedIn() && isValidId(itemId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(itemId) &&
+        isValidInventoryItem(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(incoming().ownerId);
+      allow update: if isVerifiedUser() &&
+        isValidId(itemId) &&
+        isValidInventoryItem(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(existing().ownerId) && (
+          // Action 1: Stock Quantity Adjustment
+          incoming().diff(existing()).affectedKeys().hasOnly(['qty', 'totalCost', 'updatedAt']) ||
+          // Action 2: Full Item Edit
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'category',
+            'qty',
+            'minQty',
+            'unit',
+            'unitPrice',
+            'totalCost',
+            'linkedService',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isVerifiedUser() && isValidId(itemId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 5. Expenses Collection (/expenses/{expenseId})
+    match /expenses/{expenseId} {
+      allow get: if isSignedIn() && isValidId(expenseId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(incoming().ownerId);
+      allow update: if isVerifiedUser() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(existing().ownerId) && (
+          // Action: Edit Expense Details
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'amount', 'category', 'currency', 'date', 'updatedAt'])
+        );
+      allow delete: if isVerifiedUser() && isValidId(expenseId) && existing().ownerId == request.auth.uid;
+    }
+  }
+}

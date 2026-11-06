@@ -1,0 +1,6 @@
+{
+  "name": "DOCAI Dental ERP — نظام إدارة العيادة الذكي",
+  "description": "نظام متكامل واحترافي لإدارة عيادات طب وجراحة الفم والأسنان وإصدار السندات الذكية والمخزون والمحاسبة مدعوم بنموذج Gemini AI.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
