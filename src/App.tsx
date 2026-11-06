@@ -717,7 +717,7 @@ export default function App() {
       icon: Package,
       badge: lowStockCount > 0 ? lowStockCount : undefined,
     },
-    { id: 'finance', title: 'المالية والمصروفات', icon: Wallet },
+    { id: 'finance', title: 'المالية', icon: Wallet },
     { id: 'assistant', title: 'المساعد الذكي', icon: Bot },
     { id: 'settings', title: 'الإعدادات', icon: Settings },
   ];
@@ -727,73 +727,64 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-      {/* ==================== CLEAN SINGLE-NAVIGATION HEADER ==================== */}
+      {/* ==================== CLEAN NON-OVERLAPPING MOBILE HEADER ==================== */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs no-print">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
-          {/* Right: Single Menu Button + Clinic Name */}
-          <div className="flex items-center gap-2 min-w-0">
+          {/* Right: Menu Button + Clear Page Title */}
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
               onClick={() => setIsDrawerOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 hover:border-sky-500 text-xs font-bold transition-colors shrink-0"
+              className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 hover:border-sky-500 text-xs font-bold transition-colors shrink-0"
               aria-label="القائمة"
             >
-              <Menu className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <Menu className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
               <span>القائمة</span>
             </button>
 
-            <div className="flex items-center gap-2 min-w-0">
-              <img
-                src={settings.appearance.customLogoDataUrl}
-                alt="Logo"
-                referrerPolicy="no-referrer"
-                className="w-8 h-8 rounded-lg object-contain bg-slate-900 p-0.5 shrink-0"
-              />
-              <div className="min-w-0">
-                <div className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 truncate">
-                  عيادة السعيدي
-                </div>
-                <div className="text-[11px] font-bold text-sky-600 dark:text-sky-400 truncate">
-                  {currentSectionObj.title}
-                </div>
+            <div className="min-w-0">
+              <div className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                {currentSectionObj.title}
+              </div>
+              <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 truncate hidden sm:block">
+                {settings.identity.clinicAr}
               </div>
             </div>
           </div>
 
-          {/* Left: Back Button (if not on receipt) + Cloud Account Button + PWA Install + Theme */}
+          {/* Left: Back Button + Cloud Button + Theme Toggle */}
           <div className="flex items-center gap-1.5 shrink-0">
             {activeSection !== 'receipt' && (
               <button
                 type="button"
                 onClick={() => navigateToSection('receipt')}
-                className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0"
               >
-                <ArrowRight className="w-3.5 h-3.5 text-sky-500" />
-                <span className="hidden xs:inline">رجوع للسند</span>
-                <span className="xs:hidden">رجوع</span>
+                <ArrowRight className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                <span>رجوع</span>
               </button>
             )}
-
-            <PWAInstallButton compact notify={notify} />
 
             <button
               type="button"
               onClick={() => setIsCloudModalOpen(true)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-colors ${
+              className={`inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border text-xs font-bold transition-colors shrink-0 ${
                 isCloudConnected
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
               }`}
-              title="حساب العيادة والمنصة السحابية المجانية"
+              title="حساب العيادة والتثبيت"
             >
-              <Cloud className="w-3.5 h-3.5 shrink-0" />
-              <span>{isCloudConnected ? 'متصل' : 'حساب سحابي'}</span>
+              <Cloud className="w-4 h-4 shrink-0" />
+              <span className={activeSection !== 'receipt' ? 'hidden sm:inline' : 'inline'}>
+                {isCloudConnected ? 'متصل' : 'سحابي'}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setDarkMode((d) => !d)}
-              className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
               title="تبديل المظهر"
             >
               {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -1038,6 +1029,8 @@ export default function App() {
             messages={chatMessages}
             onAddMessage={(msg) => setChatMessages((prev) => [...prev, msg])}
             onClearMessages={() => setChatMessages([])}
+            onExitFullScreen={() => navigateToSection('receipt')}
+            onOpenMenu={() => setIsDrawerOpen(true)}
             notify={notify}
           />
         )}

@@ -1,8 +1,11 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowRight,
   Bot,
+  Copy,
   ImagePlus,
   Loader2,
+  Menu,
   Mic,
   MicOff,
   Send,
@@ -28,14 +31,17 @@ interface GeminiAssistantProps {
   messages: ChatMessage[];
   onAddMessage: (msg: ChatMessage) => void;
   onClearMessages: () => void;
+  onExitFullScreen?: () => void;
+  onOpenMenu?: () => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
 const QUICK_PROMPTS = [
-  'كشف ديون المرضى',
-  'نواقص المخزون',
-  'ملخص الأرباح',
-  'تعليمات بعد الخلع',
+  'كشف ديون المرضى بالتفصيل',
+  'تقرير نواقص المخزون الطبي',
+  'ملخص صافي الأرباح والمصروفات',
+  'تعليمات للمريض بعد خلع الضرس',
+  'خطة علاج عصب للسن 16',
 ];
 
 export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
@@ -46,6 +52,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   messages,
   onAddMessage,
   onClearMessages,
+  onExitFullScreen,
+  onOpenMenu,
   notify,
 }) => {
   const [input, setInput] = useState('');
@@ -59,6 +67,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isSending]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -85,6 +98,13 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_`-]/g, ' '));
     utterance.lang = 'ar-SA';
     window.speechSynthesis.speak(utterance);
+  };
+
+  const copyMessageText = (text: string) => {
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() => notify('تم نسخ الرد للحافظة', 'success'))
+      .catch(() => {});
   };
 
   const toggleVoiceInput = () => {
@@ -182,10 +202,23 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           currency: r.currency,
           date: r.date,
         })),
-        recentReceipts: receipts.slice(0, 15),
+        recentReceipts: receipts.slice(0, 12).map((r) => ({
+          receiptNo: r.receiptNo,
+          date: r.date,
+          patientName: r.patientName,
+          patientPhone: r.patientPhone,
+          services: r.services,
+          toothFDI: r.toothFDI,
+          totalAmount: r.totalAmount,
+          paidAmount: r.paidAmount,
+          remainingAmount: r.remainingAmount,
+          currency: r.currency,
+          paymentMethod: r.paymentMethod,
+          notes: r.notes,
+        })),
         inventoryStatus: inventory,
         lowStockAlerts: lowStock,
-        recentExpenses: expenses.slice(0, 15),
+        recentExpenses: expenses.slice(0, 12),
       };
 
       const response = await fetch('/api/gemini/assistant', {
@@ -226,125 +259,176 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   };
 
   return (
-    <div className="max-w-3xl mx-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-[calc(100vh-8.5rem)] min-h-[480px] overflow-hidden">
-      {/* Compact Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+    <div className="fixed inset-0 z-40 w-full h-[100dvh] bg-white dark:bg-slate-950 flex flex-col overflow-hidden">
+      {/* Full-Screen Top Navigation Bar */}
+      <header className="shrink-0 h-14 px-3 sm:px-6 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-sky-600 text-white flex items-center justify-center shrink-0">
+          {onOpenMenu && (
+            <button
+              type="button"
+              onClick={onOpenMenu}
+              className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 text-xs font-bold shrink-0"
+            >
+              <Menu className="w-4 h-4 text-sky-500" />
+              <span>القائمة</span>
+            </button>
+          )}
+
+          <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
             <Sparkles className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
-              المساعد الذكي
+            <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 truncate">
+              المساعد الطبي والمالي الذكي
             </h2>
-            <p className="text-[11px] text-slate-500 truncate">Gemini 3.8 Flash</p>
+            <p className="text-[10px] sm:text-[11px] font-bold text-sky-600 dark:text-sky-400 truncate">
+              شاشة كاملة — Gemini 3.8 Flash
+            </p>
           </div>
         </div>
 
-        {messages.length > 0 && (
-          <button
-            type="button"
-            onClick={onClearMessages}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg shrink-0"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>مسح</span>
-          </button>
-        )}
-      </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={onClearMessages}
+              className="inline-flex items-center gap-1 px-2.5 py-2 text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl shrink-0 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">مسح</span>
+            </button>
+          )}
 
-      {/* Quick Prompts */}
-      <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 flex flex-wrap items-center gap-1.5">
+          {onExitFullScreen && (
+            <button
+              type="button"
+              onClick={onExitFullScreen}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0"
+            >
+              <ArrowRight className="w-3.5 h-3.5 text-sky-500" />
+              <span>رجوع للسند</span>
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Quick Prompts Strip */}
+      <div className="shrink-0 px-3 sm:px-6 py-2.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/80 dark:bg-slate-900/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {QUICK_PROMPTS.map((q) => (
           <button
             key={q}
             type="button"
             onClick={() => sendMessage(q)}
             disabled={isSending}
-            className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-sky-400"
+            className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
           >
             {q}
           </button>
         ))}
       </div>
 
-      {/* Messages List */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center max-w-sm mx-auto space-y-2 py-6">
-            <div className="w-11 h-11 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-600 dark:text-sky-400 flex items-center justify-center">
-              <Bot className="w-5 h-5" />
-            </div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-              مساعد عيادة السعيدي
-            </h3>
-            <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              اسأل عن أي مريض، سند، ديون، مخزون، أو أرفق صورة أشعة للتحليل المباشر.
-            </p>
-          </div>
-        ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex items-start gap-2.5 ${
-                msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
-              }`}
-            >
-              <div
-                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                  msg.role === 'user'
-                    ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
-                    : 'bg-sky-600 text-white'
-                }`}
-              >
-                {msg.role === 'user' ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
+      {/* Full-Screen Scrollable Messages Area */}
+      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4">
+        <div className="max-w-4xl mx-auto h-full space-y-4">
+          {messages.length === 0 ? (
+            <div className="min-h-[60vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-3 px-4">
+              <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
+                <Bot className="w-7 h-7" />
               </div>
-
+              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100">
+                مساعد عيادة السعيدي الذكي (شاشة كاملة)
+              </h3>
+              <p className="text-xs sm:text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                متصل مباشرة بقاعدة بيانات المرضى، السندات، الديون، والمخزون الطبي. يمكنك الاستفسار عن أي حساب مالي أو إرفاق صورة أشعة سنية أو تقرير طبي لتحليله بدقة.
+              </p>
+            </div>
+          ) : (
+            messages.map((msg) => (
               <div
-                className={`max-w-[85%] rounded-xl p-3 text-xs sm:text-sm leading-relaxed space-y-1.5 break-words ${
-                  msg.role === 'user'
-                    ? 'bg-slate-900 text-white dark:bg-slate-800 dark:text-slate-100'
-                    : 'bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200'
+                key={msg.id}
+                className={`flex items-start gap-2.5 sm:gap-3 ${
+                  msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
                 }`}
               >
-                {msg.attachmentPreview && (
-                  <img
-                    src={msg.attachmentPreview}
-                    alt="مرفق"
-                    className="max-h-40 rounded-lg border border-slate-300 dark:border-slate-700 object-contain"
-                  />
-                )}
-                <div className="whitespace-pre-line">{msg.text}</div>
-                <div className="flex items-center justify-between gap-3 pt-1 text-[10px] opacity-70">
-                  <span className="font-mono tabular-nums">{msg.timestamp}</span>
-                  {msg.role === 'assistant' && (
-                    <button
-                      type="button"
-                      onClick={() => speakText(msg.text)}
-                      className="inline-flex items-center gap-1 hover:underline"
-                    >
-                      <Volume2 className="w-3 h-3" />
-                      <span>نطق</span>
-                    </button>
+                <div
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                    msg.role === 'user'
+                      ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                      : 'bg-sky-600 text-white'
+                  }`}
+                >
+                  {msg.role === 'user' ? (
+                    <User className="w-4 h-4" />
+                  ) : (
+                    <Bot className="w-4 h-4" />
                   )}
                 </div>
-              </div>
-            </div>
-          ))
-        )}
 
-        {isSending && (
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
-            <span>جاري التحليل...</span>
-          </div>
-        )}
+                <div
+                  className={`max-w-[88%] sm:max-w-[80%] rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed space-y-2 break-words shadow-2xs ${
+                    msg.role === 'user'
+                      ? 'bg-sky-600 text-white'
+                      : 'bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
+                  }`}
+                >
+                  {msg.attachmentPreview && (
+                    <img
+                      src={msg.attachmentPreview}
+                      alt="مرفق"
+                      className="max-h-56 rounded-xl border border-slate-300 dark:border-slate-700 object-contain"
+                    />
+                  )}
+                  <div className="whitespace-pre-line">{msg.text}</div>
+                  <div
+                    className={`flex items-center justify-between gap-4 pt-1.5 border-t text-[10px] ${
+                      msg.role === 'user'
+                        ? 'border-white/20 text-white/80'
+                        : 'border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    <span className="font-mono tabular-nums">{msg.timestamp}</span>
+                    {msg.role === 'assistant' && (
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => copyMessageText(msg.text)}
+                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold"
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>نسخ</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => speakText(msg.text)}
+                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold"
+                        >
+                          <Volume2 className="w-3 h-3" />
+                          <span>استماع</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+
+          {isSending && (
+            <div className="flex items-center gap-2 text-xs font-bold text-sky-600 dark:text-sky-400 px-2 py-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>جاري التحليل وإعداد الإجابة...</span>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
+      {/* Attachment Preview Bar */}
       {attachment && (
-        <div className="px-4 py-1.5 bg-sky-50 dark:bg-sky-950/50 border-t border-sky-200 dark:border-sky-900 flex items-center justify-between text-xs">
+        <div className="shrink-0 px-4 py-2 bg-sky-50 dark:bg-sky-950/60 border-t border-sky-200 dark:border-sky-900 flex items-center justify-between text-xs">
           <span className="font-bold text-sky-800 dark:text-sky-300 truncate">
-            {attachment.name}
+            مرفق جاهز للتحليل: {attachment.name}
           </span>
           <button
             type="button"
@@ -356,60 +440,62 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         </div>
       )}
 
-      {/* Mobile-Safe Composer Bar */}
+      {/* Full-Screen Bottom Composer Bar */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           sendMessage();
         }}
-        className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-1.5"
+        className="shrink-0 p-3 sm:px-6 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,application/pdf"
-          onChange={handleFileChange}
-          className="hidden"
-        />
+        <div className="max-w-4xl mx-auto flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,application/pdf"
+            onChange={handleFileChange}
+            className="hidden"
+          />
 
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 shrink-0"
-          title="إرفاق صورة"
-        >
-          <ImagePlus className="w-4 h-4" />
-        </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 shrink-0 transition-colors"
+            title="إرفاق صورة أشعة أو ملف"
+          >
+            <ImagePlus className="w-4 h-4" />
+          </button>
 
-        <button
-          type="button"
-          onClick={toggleVoiceInput}
-          className={`p-2 rounded-lg border shrink-0 ${
-            isListening
-              ? 'bg-rose-600 border-rose-500 text-white'
-              : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300'
-          }`}
-          title="صوت"
-        >
-          {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-        </button>
+          <button
+            type="button"
+            onClick={toggleVoiceInput}
+            className={`p-2.5 rounded-xl border shrink-0 transition-colors ${
+              isListening
+                ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
+                : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500'
+            }`}
+            title="إملاء صوتي"
+          >
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
 
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="اكتب سؤالك هنا..."
-          className="flex-1 min-w-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs sm:text-sm text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
-        />
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="اسأل عن مريض، سند، ديون، مخزون، أو أرفق صورة أشعة..."
+            className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
+          />
 
-        <button
-          type="submit"
-          disabled={isSending || (!input.trim() && !attachment)}
-          className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg shrink-0"
-        >
-          <Send className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">إرسال</span>
-        </button>
+          <button
+            type="submit"
+            disabled={isSending || (!input.trim() && !attachment)}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-black text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
+          >
+            <Send className="w-4 h-4" />
+            <span>إرسال</span>
+          </button>
+        </div>
       </form>
     </div>
   );

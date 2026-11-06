@@ -129,11 +129,11 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       loadImg(data.receiverSig),
     ]);
 
-    // Watermark in center
+    // Watermark centered in the body area above the QR row so it never overlaps the QR code
     if (logoImg) {
       ctx.save();
       ctx.globalAlpha = (settings.appearance.watermarkOpacity || 6) / 100;
-      ctx.drawImage(logoImg, (W - 220) / 2, (H - 220) / 2, 220, 220);
+      ctx.drawImage(logoImg, (W - 180) / 2, 175, 180, 180);
       ctx.restore();
     }
 
@@ -345,7 +345,14 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
 
     // Center QR & Notes
     if (qrImg) {
-      ctx.drawImage(qrImg, W / 2 - 36, y + 4, 72, 72);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.strokeStyle = '#E2E8F0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(W / 2 - 40, y + 2, 80, 76, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.drawImage(qrImg, W / 2 - 35, y + 5, 70, 70);
     }
     ctx.fillStyle = '#475569';
     ctx.font = '700 11px "Tajawal", sans-serif';
@@ -662,7 +669,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
           alt=""
           aria-hidden="true"
           referrerPolicy="no-referrer"
-          className="pointer-events-none select-none absolute inset-0 m-auto w-52 h-52 sm:w-64 sm:h-64 object-contain"
+          className="pointer-events-none select-none absolute top-32 left-1/2 -translate-x-1/2 w-44 h-44 sm:w-52 sm:h-52 object-contain"
           style={{ opacity: (settings.appearance.watermarkOpacity || 6) / 100 }}
         />
 

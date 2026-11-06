@@ -17,8 +17,6 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '20mb' }));
 
 // ==================== PERSISTENT CLOUD WORKSPACE STORAGE ====================
-// Allows instant multi-phone login & real-time sync via Clinic ID + Password
-// without requiring popup windows or third-party cookies.
 const CLOUD_STORE_PATH = path.join(__dirname, '.cloud_workspaces.json');
 
 interface CloudWorkspaceRecord {
@@ -66,7 +64,6 @@ function normalizeClinicId(raw: string): string {
     .slice(0, 64);
 }
 
-// Login / Register Clinic Cloud Account & Sync Data
 app.post('/api/cloud/auth', (req, res) => {
   try {
     const { clinicId: rawId, password, initialData } = req.body || {};
@@ -85,7 +82,6 @@ app.post('/api/cloud/auth', (req, res) => {
     const existing = store[clinicId];
 
     if (!existing) {
-      // Register new clinic workspace automatically
       const newRecord: CloudWorkspaceRecord = {
         clinicId,
         passwordHash: passHash,
@@ -119,7 +115,6 @@ app.post('/api/cloud/auth', (req, res) => {
   }
 });
 
-// Push Clinic Data to Cloud Workspace
 app.post('/api/cloud/push', (req, res) => {
   try {
     const { clinicId: rawId, password, data } = req.body || {};
@@ -153,7 +148,6 @@ app.post('/api/cloud/push', (req, res) => {
   }
 });
 
-// Pull Latest Clinic Data from Cloud Workspace
 app.post('/api/cloud/pull', (req, res) => {
   try {
     const { clinicId: rawId, password } = req.body || {};
@@ -188,10 +182,11 @@ app.post('/api/cloud/pull', (req, res) => {
   }
 });
 
+// ==================== ULTRA-FAST GEMINI AI ENGINE ====================
 function getGenAIClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error('مفتاح GEMINI_API_KEY غير مضبوط في إعدادات الخادم (Settings > Secrets).');
+    throw new Error('مفتاح GEMINI_API_KEY غير مضبوط في إعدادات الخادم.');
   }
   return new GoogleGenAI({
     apiKey,
@@ -203,7 +198,60 @@ function getGenAIClient(): GoogleGenAI {
   });
 }
 
-// 1. Smart Receipt Natural Language Parser (Gemini 3.8 Flash + Structured JSON)
+// Strips base64 images/signatures from clinicContext so the prompt stays tiny (~2KB) and fast
+function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
+  if (!ctx || typeof ctx !== 'object') return {};
+  const clone: Record<string, unknown> = { ...ctx };
+
+  if (Array.isArray(clone.recentReceipts)) {
+    clone.recentReceipts = clone.recentReceipts.slice(0, 12).map((r: Record<string, unknown>) => ({
+      receiptNo: r.receiptNo,
+      date: r.date,
+      patientName: r.patientName,
+      patientPhone: r.patientPhone,
+      services: r.services,
+      toothFDI: r.toothFDI,
+      totalAmount: r.totalAmount,
+      paidAmount: r.paidAmount,
+      remainingAmount: r.remainingAmount,
+      currency: r.currency,
+      paymentMethod: r.paymentMethod,
+      notes: r.notes,
+    }));
+  }
+  return clone;
+}
+
+// Calls gemini-3.1-flash-lite with LOW thinking for ~1s response, with automatic fallback to gemini-3.8-flash
+async function generateWithFastFallback(
+  ai: GoogleGenAI,
+  payload: {
+    contents: unknown;
+    config?: Record<string, unknown>;
+  }
+) {
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+  let lastErr: unknown = null;
+
+  for (const modelName of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: payload.contents as string,
+        config: {
+          ...payload.config,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        },
+      });
+      return { response, modelName };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+// 1. Smart Receipt Natural Language Parser (Fast ~1s Structured JSON)
 app.post('/api/gemini/parse-receipt', async (req, res) => {
   try {
     const { text, availableServices = [], defaultCurrency = 'ريال يمني' } = req.body || {};
@@ -217,8 +265,7 @@ app.post('/api/gemini/parse-receipt', async (req, res) => {
       ? availableServices.map((s: { name?: string; price?: number }) => `${s.name} (${s.price || 0})`).join('، ')
       : '';
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const { response } = await generateWithFastFallback(ai, {
       contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
 النص المدخل: "${text.trim()}"
 الخدمات المعتمدة في العيادة وأسعارها الافتراضية: ${serviceNames || 'كشف ومعاينة، حشوات وتجميل، علاج عصب وجذور، خلع وجراحة، تنظيف وتجليح لثة، تركيبات أسنان، تقويم أسنان، أشعة تشخيصية'}
@@ -233,7 +280,6 @@ app.post('/api/gemini/parse-receipt', async (req, res) => {
 - استخرج العملة (currency) من بين: "ريال يمني"، "ريال سعودي"، "دولار أمريكي".
 - ضع أي تفاصيل علاجية إضافية في حقل notes.`,
       config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -283,14 +329,15 @@ app.post('/api/gemini/assistant', async (req, res) => {
     }
 
     const ai = getGenAIClient();
+    const cleanContext = sanitizeClinicContextForPrompt(clinicContext);
 
-    const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة عيادة طب وجراحة الفم والأسنان.
-تتحدث بلغة عربية احترافية، واضحة، ودقيقة، وتعتمد حصرياً على البيانات الحقيقية للعيادة المرفقة في السياق أدناه عند الإجابة عن المرضى، السندات، الديون، المخزون، والمصروفات.
-لا تخترع أرقاماً غير موجودة في السياق، وقدم توصيات عملية قابلة للتنفيذ للطبيب أو المحاسب.
+    const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة عيادة السعيدي لطب وجراحة الفم والأسنان (د. صلاح الدين السعيدي).
+تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة، وتعتمد حصرياً على البيانات الحقيقية للعيادة المرفقة في السياق أدناه عند الإجابة عن المرضى، السندات، الديون، المخزون، والمصروفات.
+لا تخترع أرقاماً غير موجودة في السياق، وقدم إجابات منظمة ومباشرة للطبيب أو المحاسب.
 عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة، قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
 
 سياق قاعدة بيانات العيادة الحالية (JSON):
-${JSON.stringify(clinicContext || {}, null, 2)}`;
+${JSON.stringify(cleanContext)}`;
 
     const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
 
@@ -320,20 +367,16 @@ ${JSON.stringify(clinicContext || {}, null, 2)}`;
       text: `${historyText}الطلب الحالي (${taskType}):\n${prompt}`,
     });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const { response, modelName } = await generateWithFastFallback(ai, {
       contents: { parts },
       config: {
         systemInstruction,
-        thinkingConfig: {
-          thinkingLevel: taskType === 'report' || attachment ? ThinkingLevel.MEDIUM : ThinkingLevel.LOW,
-        },
       },
     });
 
     res.json({
       reply: response.text || 'لم يتم إرجاع نص من النموذج.',
-      model: 'gemini-3.8-flash',
+      model: modelName,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'تعذر الاتصال بنموذج Gemini.';
