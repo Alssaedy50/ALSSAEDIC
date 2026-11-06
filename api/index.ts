@@ -43,18 +43,16 @@ async function generateWithFastFallback(
     config?: Record<string, unknown>;
   }
 ) {
-  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
   let lastErr: unknown = null;
 
   for (const modelName of candidateModels) {
     try {
-      const isSeries3 = modelName.startsWith('gemini-3');
       const response = await ai.models.generateContent({
         model: modelName,
         contents: payload.contents as string,
         config: {
           ...payload.config,
-          ...(isSeries3 ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
         },
       });
       return { response, modelName };

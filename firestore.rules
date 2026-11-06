@@ -93,12 +93,15 @@ service cloud.firestore {
     }
 
     function isValidDentalService(data) {
-      return data.keys().hasAll(['ownerId', 'name', 'price', 'createdAt', 'updatedAt']) &&
-      data.keys().hasOnly(['ownerId', 'name', 'price', 'createdAt', 'updatedAt']) &&
+      return data.keys().hasAll(['ownerId', 'name', 'price', 'category', 'keywords', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['ownerId', 'name', 'price', 'category', 'keywords', 'createdAt', 'updatedAt']) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
       data.ownerId == request.auth.uid &&
       data.name is string && data.name.size() >= 1 && data.name.size() <= 140 &&
       data.price is number && data.price >= 0 && data.price <= 100000000 &&
+      data.category is string && data.category.size() >= 1 && data.category.size() <= 100 &&
+      data.keywords is list && data.keywords.size() <= 20 &&
+      (data.keywords.size() == 0 || (data.keywords[0] is string && data.keywords[0].size() <= 80)) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -243,6 +246,40 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidClinicWorkspace(data) {
+      return data.keys().hasAll([
+        'clinicId',
+        'passwordHash',
+        'settings',
+        'receipts',
+        'inventory',
+        'expenses',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'clinicId',
+        'passwordHash',
+        'settings',
+        'receipts',
+        'inventory',
+        'expenses',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.clinicId is string && data.clinicId.size() >= 3 && data.clinicId.size() <= 64 && data.clinicId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.passwordHash is string && data.passwordHash.size() == 64 && data.passwordHash.matches('^[a-f0-9]{64}$') &&
+      data.settings is map && data.settings.size() >= 1 && data.settings.size() <= 10 &&
+      data.receipts is list && data.receipts.size() <= 500 &&
+      (data.receipts.size() == 0 || (data.receipts[0] is map && data.receipts[0].size() <= 25)) &&
+      data.inventory is list && data.inventory.size() <= 500 &&
+      (data.inventory.size() == 0 || (data.inventory[0] is map && data.inventory[0].size() <= 20)) &&
+      data.expenses is list && data.expenses.size() <= 500 &&
+      (data.expenses.size() == 0 || (data.expenses[0] is map && data.expenses[0].size() <= 15)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     // ==================== COLLECTION RULES ====================
 
     // 1. Clinics Collection (/clinics/{clinicId})
@@ -303,8 +340,8 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         hasClinicParent(existing().ownerId) && (
-          // Action: Update Service Name or Price
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'updatedAt'])
+          // Action: Update Service Name, Price, Category, or Keywords
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'category', 'keywords', 'updatedAt'])
         );
       allow delete: if isVerifiedUser() && isValidId(serviceId) && existing().ownerId == request.auth.uid;
     }
@@ -327,8 +364,8 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         hasClinicParent(existing().ownerId) && (
-          // Action 1: Settle Debt
-          incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'remainingAmount', 'amountWords', 'updatedAt']) ||
+          // Action 1: Settle Debt (with optional auto-note)
+          incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'remainingAmount', 'amountWords', 'notes', 'updatedAt']) ||
           // Action 2: Full Receipt Edit
           incoming().diff(existing()).affectedKeys().hasOnly([
             'receiptNo',
@@ -411,6 +448,28 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'amount', 'category', 'currency', 'date', 'updatedAt'])
         );
       allow delete: if isVerifiedUser() && isValidId(expenseId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 6. Direct Multi-Device Clinic Workspaces (/clinic_workspaces/{clinicId})
+    match /clinic_workspaces/{clinicId} {
+      allow get: if isValidId(clinicId);
+      allow list: if false;
+      allow create: if isValidId(clinicId) &&
+        incoming().clinicId == clinicId &&
+        isValidClinicWorkspace(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(clinicId) &&
+        incoming().clinicId == clinicId &&
+        isValidClinicWorkspace(incoming()) &&
+        incoming().clinicId == existing().clinicId &&
+        incoming().passwordHash == existing().passwordHash &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action: Sync Workspace Collections
+          incoming().diff(existing()).affectedKeys().hasOnly(['settings', 'receipts', 'inventory', 'expenses', 'updatedAt'])
+        );
+      allow delete: if false;
     }
   }
 }

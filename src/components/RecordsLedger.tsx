@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -6,7 +6,10 @@ import {
   Edit3,
   Eye,
   FilePlus2,
+  MessageCircle,
+  RefreshCw,
   Search,
+  SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
 import { ClinicSettings, ReceiptRecord } from '../types/clinic';
@@ -16,6 +19,8 @@ interface RecordsLedgerProps {
   settings: ClinicSettings;
   receipts: ReceiptRecord[];
   defaultCurrency: string;
+  initialSettleReceiptId?: string | null;
+  onClearInitialSettle?: () => void;
   onEditReceipt: (receipt: ReceiptRecord) => void;
   onSettleDebt: (receiptId: string, amountPaid: number) => void;
   onDeleteReceipt: (receiptId: string) => void;
@@ -23,10 +28,25 @@ interface RecordsLedgerProps {
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
+interface ExchangeRatesMap {
+  'ريال يمني': number;
+  'ريال سعودي': number;
+  'دولار أمريكي': number;
+  [key: string]: number;
+}
+
+const DEFAULT_RATES_TO_YER: ExchangeRatesMap = {
+  'ريال يمني': 1,
+  'ريال سعودي': 140,
+  'دولار أمريكي': 535,
+};
+
 export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
   settings,
   receipts,
   defaultCurrency,
+  initialSettleReceiptId,
+  onClearInitialSettle,
   onEditReceipt,
   onSettleDebt,
   onDeleteReceipt,
@@ -37,11 +57,46 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | 'debt' | 'paid'>('all');
   const [currencyFilter, setCurrencyFilter] = useState<string>('all');
 
+  // Exchange rates state (value of 1 unit in YER)
+  const [ratesToYer, setRatesToYer] = useState<ExchangeRatesMap>(() => {
+    try {
+      const saved = localStorage.getItem('docai_exchange_rates_v1');
+      if (saved) return { ...DEFAULT_RATES_TO_YER, ...JSON.parse(saved) };
+    } catch {
+      // ignore
+    }
+    return DEFAULT_RATES_TO_YER;
+  });
+  const [showRatesPanel, setShowRatesPanel] = useState<boolean>(false);
+  const [isUpdatingRates, setIsUpdatingRates] = useState<boolean>(false);
+
   // Pop-up Modals
   const [settlingReceipt, setSettlingReceipt] = useState<ReceiptRecord | null>(null);
   const [settleAmountInput, setSettleAmountInput] = useState<string>('');
   const [previewReceipt, setPreviewReceipt] = useState<ReceiptRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('docai_exchange_rates_v1', JSON.stringify(ratesToYer));
+    } catch {
+      // ignore
+    }
+  }, [ratesToYer]);
+
+  const openSettleModal = (rec: ReceiptRecord) => {
+    setSettlingReceipt(rec);
+    setSettleAmountInput(String(rec.remainingAmount || 0));
+  };
+
+  useEffect(() => {
+    if (!initialSettleReceiptId) return;
+    const found = receipts.find((r) => r.id === initialSettleReceiptId);
+    if (found) {
+      openSettleModal(found);
+    }
+    onClearInitialSettle?.();
+  }, [initialSettleReceiptId, receipts, onClearInitialSettle]);
 
   const availableCurrencies = useMemo(() => {
     const set = new Set<string>([defaultCurrency]);
@@ -67,22 +122,119 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
     });
   }, [receipts, searchQuery, statusFilter, currencyFilter]);
 
-  const summaryStats = useMemo(() => {
-    return filteredReceipts.reduce(
-      (acc, r) => {
-        acc.totalBilled += Number(r.totalAmount) || 0;
-        acc.totalPaid += Number(r.paidAmount) || 0;
-        acc.totalRemaining += Number(r.remainingAmount) || 0;
-        if ((Number(r.remainingAmount) || 0) > 0) acc.debtors += 1;
+  const convertAmount = (amount: number, fromCurrency: string, toCurrency: string): number => {
+    if (fromCurrency === toCurrency) return amount;
+    const fromRate = Number(ratesToYer[fromCurrency]) || 1;
+    const toRate = Number(ratesToYer[toCurrency]) || 1;
+    return (amount * fromRate) / toRate;
+  };
+
+  const perCurrencyStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { currency: string; totalBilled: number; totalPaid: number; totalRemaining: number; count: number }
+    >();
+
+    filteredReceipts.forEach((r) => {
+      const cur = String(r.currency || defaultCurrency || 'ريال يمني');
+      const existing = map.get(cur) || {
+        currency: cur,
+        totalBilled: 0,
+        totalPaid: 0,
+        totalRemaining: 0,
+        count: 0,
+      };
+      existing.totalBilled += Number(r.totalAmount) || 0;
+      existing.totalPaid += Number(r.paidAmount) || 0;
+      existing.totalRemaining += Number(r.remainingAmount) || 0;
+      existing.count += 1;
+      map.set(cur, existing);
+    });
+
+    if (map.size === 0) {
+      const fallbackCur = currencyFilter === 'all' ? defaultCurrency : currencyFilter;
+      map.set(fallbackCur, {
+        currency: fallbackCur,
+        totalBilled: 0,
+        totalPaid: 0,
+        totalRemaining: 0,
+        count: 0,
+      });
+    }
+
+    return Array.from(map.values());
+  }, [filteredReceipts, defaultCurrency, currencyFilter]);
+
+  const unifiedTotalsInDefaultCurrency = useMemo(() => {
+    return perCurrencyStats.reduce(
+      (acc, item) => {
+        acc.billed += Math.round(convertAmount(item.totalBilled, item.currency, defaultCurrency));
+        acc.paid += Math.round(convertAmount(item.totalPaid, item.currency, defaultCurrency));
+        acc.remaining += Math.round(
+          convertAmount(item.totalRemaining, item.currency, defaultCurrency)
+        );
         return acc;
       },
-      { totalBilled: 0, totalPaid: 0, totalRemaining: 0, debtors: 0 }
+      { billed: 0, paid: 0, remaining: 0 }
     );
-  }, [filteredReceipts]);
+  }, [perCurrencyStats, ratesToYer, defaultCurrency]);
 
-  const openSettleModal = (rec: ReceiptRecord) => {
-    setSettlingReceipt(rec);
-    setSettleAmountInput(String(rec.remainingAmount || 0));
+  const handleAutoFetchExchangeRates = async () => {
+    setIsUpdatingRates(true);
+    try {
+      const res = await fetch('https://open.er-api.com/v6/latest/USD');
+      const text = await res.text();
+      if (text && !text.trim().startsWith('<')) {
+        const json = JSON.parse(text);
+        const sarPerUsd = Number(json?.rates?.SAR) || 3.75;
+        const usdInYer = Number(ratesToYer['دولار أمريكي']) || 535;
+        const computedSarInYer = Math.round((usdInYer / sarPerUsd) * 10) / 10;
+        setRatesToYer((prev) => ({
+          ...prev,
+          'ريال يمني': 1,
+          'دولار أمريكي': usdInYer,
+          'ريال سعودي': computedSarInYer,
+        }));
+        notify(
+          `تم تحديث الربط التلقائي للعملات (1$ = ${usdInYer} ر.ي | 1 ر.س = ${computedSarInYer} ر.ي)`,
+          'success'
+        );
+        return;
+      }
+      throw new Error('fallback');
+    } catch {
+      setRatesToYer(DEFAULT_RATES_TO_YER);
+      notify('تم ضبط أسعار الصرف القياسية بنجاح', 'info');
+    } finally {
+      setIsUpdatingRates(false);
+    }
+  };
+
+  const buildWhatsAppHref = (rec: ReceiptRecord): string => {
+    const rawDigits = String(rec.patientPhone || '').replace(/\D/g, '');
+    let intlPhone = rawDigits;
+    if (rawDigits.length === 9 && rawDigits.startsWith('7')) {
+      intlPhone = `967${rawDigits}`;
+    } else if (rawDigits.length === 10 && rawDigits.startsWith('07')) {
+      intlPhone = `967${rawDigits.slice(1)}`;
+    }
+
+    const lines = [
+      `*${settings.identity.clinicAr}*`,
+      `${settings.identity.doctorAr}`,
+      `━━━━━━━━━━━━━━`,
+      `📄 *سند قبض رقم:* #${rec.receiptNo}`,
+      `📅 *التاريخ:* ${rec.date}`,
+      `👤 *المريض:* ${rec.patientName}`,
+      `🦷 *الخدمات:* ${(rec.services || []).join(' + ') || rec.notes || 'خدمات علاجية'}`,
+      `💰 *الإجمالي:* ${Number(rec.totalAmount).toLocaleString()} ${rec.currency}`,
+      `✅ *المقبوض:* ${Number(rec.paidAmount).toLocaleString()} ${rec.currency}`,
+      `📌 *المتبقي:* ${Number(rec.remainingAmount).toLocaleString()} ${rec.currency}`,
+      `━━━━━━━━━━━━━━`,
+      `نتمنى لكم دوام الصحة والابتسامة المشرقة`,
+    ];
+    const encoded = encodeURIComponent(lines.join('\n'));
+    return intlPhone ? `https://wa.me/${intlPhone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
   };
 
   const confirmSettleDebt = (e: React.FormEvent) => {
@@ -133,36 +285,170 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
         </button>
       </div>
 
-      {/* Summary Cards */}
+      {/* Summary Cards (Per-Currency Breakdown + Linked Exchange Rate Totals) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5">
-          <div className="text-xs text-slate-500 dark:text-slate-400">عدد السندات</div>
-          <div className="mt-1 text-lg sm:text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100">
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">عدد السندات</span>
+            <button
+              type="button"
+              onClick={() => setShowRatesPanel((v) => !v)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 text-[10px] font-bold border border-sky-200 dark:border-sky-800"
+              title="أسعار صرف العملات"
+            >
+              <SlidersHorizontal className="w-3 h-3" />
+              <span>أسعار الصرف</span>
+            </button>
+          </div>
+          <div className="mt-1.5 text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 dark:text-slate-100">
             {filteredReceipts.length}
           </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5">
-          <div className="text-xs text-slate-500 dark:text-slate-400">إجمالي السندات</div>
-          <div className="mt-1 text-lg sm:text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100">
-            {summaryStats.totalBilled.toLocaleString()}
+          <div className="mt-1 text-[10px] text-slate-400">
+            {perCurrencyStats.length > 1
+              ? `${perCurrencyStats.length} عملات نشطة`
+              : perCurrencyStats[0]?.currency}
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5">
-          <div className="text-xs text-slate-500 dark:text-slate-400">المقبوض نقداً</div>
-          <div className="mt-1 text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-            {summaryStats.totalPaid.toLocaleString()}
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 space-y-1.5">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">إجمالي السندات</div>
+          <div className="space-y-1">
+            {perCurrencyStats.map((st) => (
+              <div
+                key={st.currency}
+                className="flex items-baseline justify-between gap-1 text-xs sm:text-sm font-mono tabular-nums font-black text-slate-900 dark:text-slate-100"
+              >
+                <span>{st.totalBilled.toLocaleString()}</span>
+                <span className="text-[10px] font-sans font-bold text-slate-500">{st.currency}</span>
+              </div>
+            ))}
           </div>
+          {perCurrencyStats.length > 1 && (
+            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 flex items-center justify-between">
+              <span>المعادل الموحد:</span>
+              <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                {unifiedTotalsInDefaultCurrency.billed.toLocaleString()} {defaultCurrency}
+              </span>
+            </div>
+          )}
         </div>
 
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5">
-          <div className="text-xs text-slate-500 dark:text-slate-400">الديون المتبقية</div>
-          <div className="mt-1 text-lg sm:text-xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
-            {summaryStats.totalRemaining.toLocaleString()}
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 space-y-1.5">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">المقبوض نقداً</div>
+          <div className="space-y-1">
+            {perCurrencyStats.map((st) => (
+              <div
+                key={st.currency}
+                className="flex items-baseline justify-between gap-1 text-xs sm:text-sm font-mono tabular-nums font-black text-emerald-600 dark:text-emerald-400"
+              >
+                <span>{st.totalPaid.toLocaleString()}</span>
+                <span className="text-[10px] font-sans font-bold text-emerald-600/80 dark:text-emerald-400/80">
+                  {st.currency}
+                </span>
+              </div>
+            ))}
           </div>
+          {perCurrencyStats.length > 1 && (
+            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-emerald-600/80 flex items-center justify-between">
+              <span>المعادل الموحد:</span>
+              <span className="font-mono font-bold">
+                {unifiedTotalsInDefaultCurrency.paid.toLocaleString()} {defaultCurrency}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 space-y-1.5">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">الديون المتبقية</div>
+          <div className="space-y-1">
+            {perCurrencyStats.map((st) => (
+              <div
+                key={st.currency}
+                className="flex items-baseline justify-between gap-1 text-xs sm:text-sm font-mono tabular-nums font-black text-rose-600 dark:text-rose-400"
+              >
+                <span>{st.totalRemaining.toLocaleString()}</span>
+                <span className="text-[10px] font-sans font-bold text-rose-600/80 dark:text-rose-400/80">
+                  {st.currency}
+                </span>
+              </div>
+            ))}
+          </div>
+          {perCurrencyStats.length > 1 && (
+            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-rose-600/80 flex items-center justify-between">
+              <span>المعادل الموحد:</span>
+              <span className="font-mono font-bold">
+                {unifiedTotalsInDefaultCurrency.remaining.toLocaleString()} {defaultCurrency}
+              </span>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Exchange Rate Control Bar (Manual & Auto Update) */}
+      {showRatesPanel && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-50/40 dark:bg-slate-900 p-3.5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-bold text-slate-800 dark:text-slate-100">
+              إعدادات أسعار الصرف (مقابل الريال اليمني) لربط البطاقات المالية:
+            </div>
+            <button
+              type="button"
+              disabled={isUpdatingRates}
+              onClick={handleAutoFetchExchangeRates}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white text-xs font-bold transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingRates ? 'animate-spin' : ''}`} />
+              <span>تحديث تلقائي للأسعار</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                سعر 1 ريال سعودي =
+              </span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min="1"
+                  step="0.5"
+                  value={ratesToYer['ريال سعودي']}
+                  onChange={(e) =>
+                    setRatesToYer((prev) => ({
+                      ...prev,
+                      'ريال سعودي': Math.max(1, Number(e.target.value) || 1),
+                    }))
+                  }
+                  className="w-24 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 py-1 text-xs font-mono font-bold text-center"
+                />
+                <span className="text-[11px] font-bold text-slate-500">ريال يمني</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                سعر 1 دولار أمريكي =
+              </span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={ratesToYer['دولار أمريكي']}
+                  onChange={(e) =>
+                    setRatesToYer((prev) => ({
+                      ...prev,
+                      'دولار أمريكي': Math.max(1, Number(e.target.value) || 1),
+                    }))
+                  }
+                  className="w-24 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 py-1 text-xs font-mono font-bold text-center"
+                />
+                <span className="text-[11px] font-bold text-slate-500">ريال يمني</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search & Currency Filter */}
       <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-4">
@@ -218,37 +504,47 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 space-y-2.5"
                   >
                     <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono tabular-nums font-black text-sky-600 dark:text-sky-400 text-sm">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          dir="ltr"
+                          className="font-mono tabular-nums font-black text-sky-600 dark:text-sky-400 text-sm shrink-0"
+                        >
                           #{rec.receiptNo}
                         </span>
-                        <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                        <span className="font-bold text-slate-900 dark:text-slate-100 text-sm truncate">
                           {rec.patientName}
                         </span>
                       </div>
-                      <span className="font-mono tabular-nums text-[11px] text-slate-500">
-                        {rec.date}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                          {rec.currency}
+                        </span>
+                        <span className="whitespace-nowrap shrink-0 font-mono tabular-nums text-[11px] text-slate-500">
+                          {rec.date}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
                       <div>
                         <span className="text-slate-400">الخدمات: </span>
-                        <span className="font-semibold">
+                        <span className="font-semibold break-words">
                           {(rec.services || []).join(' + ') || rec.notes || '—'}
                         </span>
                       </div>
                       {rec.toothFDI && (
                         <div>
                           <span className="text-slate-400">الأسنان (FDI): </span>
-                          <span className="font-mono font-bold text-sky-500">{rec.toothFDI}</span>
+                          <span dir="ltr" className="font-mono font-bold text-sky-500">
+                            {rec.toothFDI}
+                          </span>
                         </div>
                       )}
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 text-center bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
                       <div>
-                        <div className="text-[10px] text-slate-400">الإجمالي</div>
+                        <div className="text-[10px] text-slate-400">الإجمالي ({rec.currency})</div>
                         <div className="font-mono tabular-nums font-bold">
                           {Number(rec.totalAmount).toLocaleString()}
                         </div>
@@ -283,11 +579,21 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         <span>معاينة</span>
                       </button>
 
+                      <a
+                        href={buildWhatsAppHref(rec)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 rounded-lg border border-emerald-200 dark:border-emerald-800"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>واتساب</span>
+                      </a>
+
                       {hasDebt && (
                         <button
                           type="button"
                           onClick={() => openSettleModal(rec)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 rounded-lg border border-emerald-200 dark:border-emerald-800"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 rounded-lg border border-amber-200 dark:border-amber-800"
                         >
                           <CreditCard className="w-3.5 h-3.5" />
                           <span>تسديد</span>
@@ -303,14 +609,27 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         <span>تعديل</span>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => onDeleteReceipt(rec.id)}
-                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
-                        title="حذف"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {deletingId === rec.id ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteReceipt(rec.id);
+                            setDeletingId(null);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                        >
+                          تأكيد؟
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setDeletingId(rec.id)}
+                          className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                          title="حذف"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -341,9 +660,9 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                       >
                         <td className="py-3 px-3 font-mono tabular-nums font-bold text-sky-600 dark:text-sky-400">
-                          #{rec.receiptNo}
+                          <span dir="ltr">#{rec.receiptNo}</span>
                         </td>
-                        <td className="py-3 px-3 font-mono tabular-nums text-xs text-slate-500">
+                        <td className="py-3 px-3 whitespace-nowrap shrink-0 font-mono tabular-nums text-xs text-slate-500">
                           {rec.date}
                         </td>
                         <td className="py-3 px-3">

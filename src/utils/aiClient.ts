@@ -1,3 +1,4 @@
+import { GoogleGenAI, Type } from '@google/genai';
 import {
   ClinicSettings,
   CurrencyFinancialSummary,
@@ -6,6 +7,8 @@ import {
   InventoryItem,
   ReceiptRecord,
 } from '../types/clinic';
+
+export const GEMINI_CANDIDATE_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'] as const;
 
 export interface AssistantRequestPayload {
   prompt: string;
@@ -19,6 +22,18 @@ export interface AssistantRequestPayload {
   taskType?: 'chat' | 'report';
 }
 
+export interface SmartReceiptParseResult {
+  patientName?: string;
+  patientPhone?: string;
+  services?: string[];
+  toothFDI?: string;
+  totalAmount?: number;
+  paidAmount?: number;
+  currency?: string;
+  paymentMethod?: string;
+  notes?: string;
+}
+
 export async function safeParseJsonResponse<T = Record<string, unknown>>(
   response: Response
 ): Promise<{ ok: boolean; status: number; data: T | null }> {
@@ -29,7 +44,11 @@ export async function safeParseJsonResponse<T = Record<string, unknown>>(
       return { ok: false, status, data: null };
     }
     const trimmed = rawText.trim();
-    if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<')) {
+    if (
+      trimmed.toLowerCase().startsWith('<!doctype') ||
+      trimmed.toLowerCase().startsWith('<html') ||
+      trimmed.startsWith('<')
+    ) {
       return { ok: false, status, data: null };
     }
     const parsed = JSON.parse(trimmed) as T;
@@ -37,6 +56,42 @@ export async function safeParseJsonResponse<T = Record<string, unknown>>(
   } catch {
     return { ok: false, status, data: null };
   }
+}
+
+function getBrowserGenAIClient(): GoogleGenAI | null {
+  try {
+    const envKey =
+      (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) || '';
+    if (!envKey || !String(envKey).trim()) {
+      return null;
+    }
+    return new GoogleGenAI({ apiKey: String(envKey).trim() });
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
+  if (!ctx || typeof ctx !== 'object') return {};
+  const clone: Record<string, unknown> = { ...ctx };
+
+  if (Array.isArray(clone.recentReceipts)) {
+    clone.recentReceipts = clone.recentReceipts.slice(0, 12).map((r: Record<string, unknown>) => ({
+      receiptNo: r.receiptNo,
+      date: r.date,
+      patientName: r.patientName,
+      patientPhone: r.patientPhone,
+      services: r.services,
+      toothFDI: r.toothFDI,
+      totalAmount: r.totalAmount,
+      paidAmount: r.paidAmount,
+      remainingAmount: r.remainingAmount,
+      currency: r.currency,
+      paymentMethod: r.paymentMethod,
+      notes: r.notes,
+    }));
+  }
+  return clone;
 }
 
 export function generateLocalClinicalResponse(
@@ -102,7 +157,7 @@ export function generateLocalClinicalResponse(
       .map(([curr, sum]) => `${sum.toLocaleString()} ${curr}`)
       .join(' + ');
 
-    return `📋 كشف ديون المرضى بالتفصيل (${debtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المستحقة للتحصيل: ${totalsSummary}\n💡 يمكنك تسديد أي دفعة مباشرة أو إرسال مطالبة واتساب رسمية للمريض من قسم "سجل السندات".`;
+    return `📋 كشف ديون المرضى بالتفصيل (${debtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المستحقة للتحصيل (حسب كل عملة): ${totalsSummary}\n💡 يمكنك تسديد أي دفعة مباشرة أو إرسال مطالبة واتساب رسمية للمريض من قسم "سجل السندات".`;
   }
 
   // 2. تقرير نواقص المخزون الطبي / جرد المخزون
@@ -226,15 +281,90 @@ export function generateLocalClinicalResponse(
     return `🔍 نتائج البحث في سجلات المرضى والسندات:\n\n${details}`;
   }
 
-  // 7. إجابة شاملة افتراضية من واقع بيانات العيادة
-  const fin = ctx.financialSummary || {};
+  // 7. إجابة شاملة افتراضية من واقع بيانات العيادة (مفصولة حسب كل عملة)
   const debtorsCount = Array.isArray(ctx.pendingDebtsPatients) ? ctx.pendingDebtsPatients.length : 0;
   const lowCount = Array.isArray(ctx.lowStockAlerts) ? ctx.lowStockAlerts.length : 0;
 
+  if (Array.isArray(ctx.currencySummaries) && ctx.currencySummaries.length > 0) {
+    const currLines = ctx.currencySummaries
+      .map(
+        (c) =>
+          `• عملة ${c.currency}: المقبوض ${Number(c.totalCollectedRevenue || 0).toLocaleString()} | الديون ${Number(c.totalPendingDebts || 0).toLocaleString()} | الصافي ${Number(c.netCashProfit || 0).toLocaleString()}`
+      )
+      .join('\n');
+    return `مرحباً بك في المساعد الطبي والمالي الذكي لـ ${clinicName} (${doctorName}):\n\n📌 الملخص المباشر لقاعدة بيانات العيادة الآن (حسب كل عملة):\n${currLines}\n• تنبيهات نواقص المخزون: ${lowCount} صنف\n\nيمكنك الضغط على أي من الأزرار السريعة بالأعلى للحصول على:\n- كشف ديون المرضى بالتفصيل\n- تقرير نواقص المخزون الطبي\n- ملخص صافي الأرباح والمصروفات\n- أو كتابة اسم مريض أو استشارة علاجية مباشرة.`;
+  }
+
+  const fin = ctx.financialSummary || {};
   return `مرحباً بك في المساعد الطبي والمالي الذكي لـ ${clinicName} (${doctorName}):\n\n📌 الملخص المباشر لقاعدة بيانات العيادة الآن:\n• السندات المسجلة: ${fin.totalReceipts || 0} سند\n• الإيرادات المقبوضة: ${Number(fin.totalCollected || 0).toLocaleString()} ${defaultCurr}\n• الديون المتبقية على المرضى: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ${defaultCurr} (${debtorsCount} مريض)\n• المصروفات المسجلة: ${Number(fin.totalExpenses || 0).toLocaleString()} ${defaultCurr}\n• تنبيهات نواقص المخزون: ${lowCount} صنف\n\nيمكنك الضغط على أي من الأزرار السريعة بالأعلى للحصول على:\n- كشف ديون المرضى بالتفصيل\n- تقرير نواقص المخزون الطبي\n- ملخص صافي الأرباح والمصروفات\n- أو كتابة اسم مريض أو استشارة علاجية مباشرة.`;
 }
 
+async function queryBrowserGeminiFallback(payload: AssistantRequestPayload): Promise<string | null> {
+  const ai = getBrowserGenAIClient();
+  if (!ai) return null;
+
+  const cleanContext = sanitizeClinicContextForPrompt(payload.clinicContext);
+  const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة عيادة السعيدي لطب وجراحة الفم والأسنان (د. صلاح الدين السعيدي).
+تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة، وتعتمد حصرياً على البيانات الحقيقية للعيادة المرفقة في السياق أدناه عند الإجابة عن المرضى، السندات، الديون، المخزون، والمصروفات.
+لا تخترع أرقاماً غير موجودة في السياق، وقدم إجابات منظمة ومباشرة للطبيب أو المحاسب.
+عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة، قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
+
+سياق قاعدة بيانات العيادة الحالية (JSON):
+${JSON.stringify(cleanContext)}`;
+
+  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+
+  if (payload.attachment && payload.attachment.base64Data && payload.attachment.mimeType) {
+    const cleanBase64 = String(payload.attachment.base64Data).includes(',')
+      ? String(payload.attachment.base64Data).slice(
+          String(payload.attachment.base64Data).indexOf(',') + 1
+        )
+      : String(payload.attachment.base64Data);
+
+    parts.push({
+      inlineData: {
+        mimeType: String(payload.attachment.mimeType),
+        data: cleanBase64,
+      },
+    });
+  }
+
+  const historyText =
+    Array.isArray(payload.history) && payload.history.length > 0
+      ? 'سجل المحادثة السابق:\n' +
+        payload.history
+          .slice(-6)
+          .map((m) => `${m.role === 'user' ? 'المستخدم' : 'المساعد'}: ${m.text}`)
+          .join('\n') +
+        '\n\n'
+      : '';
+
+  parts.push({
+    text: `${historyText}الطلب الحالي (${payload.taskType || 'chat'}):\n${payload.prompt}`,
+  });
+
+  for (const modelName of GEMINI_CANDIDATE_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: { parts },
+        config: {
+          systemInstruction,
+        },
+      });
+      if (response.text && response.text.trim()) {
+        return response.text.trim();
+      }
+    } catch {
+      // Try next candidate model
+    }
+  }
+
+  return null;
+}
+
 export async function queryClinicAssistant(payload: AssistantRequestPayload): Promise<string> {
+  // 1. Try server endpoint (/api/gemini/assistant) using safe text->JSON reader
   try {
     const response = await fetch('/api/gemini/assistant', {
       method: 'POST',
@@ -243,12 +373,102 @@ export async function queryClinicAssistant(payload: AssistantRequestPayload): Pr
     });
 
     const parsed = await safeParseJsonResponse<{ reply?: string; error?: string }>(response);
-    if (parsed.ok && parsed.data?.reply) {
-      return parsed.data.reply;
+    if (parsed.ok && parsed.data?.reply && String(parsed.data.reply).trim()) {
+      return String(parsed.data.reply).trim();
     }
   } catch {
-    // Fall through to local clinical intelligence engine
+    // Server route unreachable or failed; proceed to browser SDK fallback
   }
 
+  // 2. Try direct browser @google/genai fallback if process.env.GEMINI_API_KEY is available
+  try {
+    const browserReply = await queryBrowserGeminiFallback(payload);
+    if (browserReply) {
+      return browserReply;
+    }
+  } catch {
+    // Browser SDK fallback unavailable or failed; proceed silently to local clinical engine
+  }
+
+  // 3. Silent immediate fallback to Local Clinical Intelligence Engine
   return generateLocalClinicalResponse(payload.prompt, payload.clinicContext);
+}
+
+export async function parseSmartReceiptWithFallback(
+  text: string,
+  availableServices: DentalServiceItem[],
+  defaultCurrency: string
+): Promise<SmartReceiptParseResult | null> {
+  const cleanText = String(text || '').trim();
+  if (!cleanText) return null;
+
+  // 1. Try server endpoint (/api/gemini/parse-receipt) using safe text->JSON reader
+  try {
+    const response = await fetch('/api/gemini/parse-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: cleanText,
+        availableServices,
+        defaultCurrency,
+      }),
+    });
+
+    const parsed = await safeParseJsonResponse<{
+      result?: SmartReceiptParseResult;
+      error?: string;
+    }>(response);
+    if (parsed.ok && parsed.data?.result) {
+      return parsed.data.result;
+    }
+  } catch {
+    // Fall through to browser SDK fallback
+  }
+
+  // 2. Try direct browser @google/genai fallback if process.env.GEMINI_API_KEY is available
+  const ai = getBrowserGenAIClient();
+  if (ai) {
+    const serviceNames = Array.isArray(availableServices)
+      ? availableServices.map((s) => `${s.name} (${s.price || 0})`).join('، ')
+      : '';
+
+    for (const modelName of GEMINI_CANDIDATE_MODELS) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
+النص المدخل: "${cleanText}"
+الخدمات المعتمدة في العيادة وأسعارها الافتراضية: ${serviceNames || 'كشف ومعاينة، حشوات وتجميل، علاج عصب وجذور، خلع وجراحة، تنظيف وتجليح لثة، تركيبات أسنان، تقويم أسنان، أشعة تشخيصية'}
+العملة الافتراضية: ${defaultCurrency}`,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                patientName: { type: Type.STRING },
+                patientPhone: { type: Type.STRING },
+                services: { type: Type.ARRAY, items: { type: Type.STRING } },
+                toothFDI: { type: Type.STRING },
+                totalAmount: { type: Type.NUMBER },
+                paidAmount: { type: Type.NUMBER },
+                currency: { type: Type.STRING },
+                paymentMethod: { type: Type.STRING },
+                notes: { type: Type.STRING },
+              },
+              required: ['patientName', 'services', 'totalAmount', 'paidAmount', 'currency'],
+            },
+          },
+        });
+
+        const rawJson = (response.text ?? '').trim();
+        if (rawJson) {
+          return JSON.parse(rawJson) as SmartReceiptParseResult;
+        }
+      } catch {
+        // Try next candidate model
+      }
+    }
+  }
+
+  return null;
 }

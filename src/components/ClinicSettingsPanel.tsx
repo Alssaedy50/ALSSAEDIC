@@ -25,6 +25,7 @@ interface ClinicSettingsPanelProps {
   receipts: ReceiptRecord[];
   inventory: InventoryItem[];
   expenses: ExpenseRecord[];
+  onDeleteService?: (serviceId: string) => void;
   onSaveSettings: (nextSettings: ClinicSettings) => void;
   onImportFullBackup: (payload: {
     settings?: ClinicSettings;
@@ -40,12 +41,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   receipts,
   inventory,
   expenses,
+  onDeleteService,
   onSaveSettings,
   onImportFullBackup,
   notify,
 }) => {
   const [subTab, setSubTab] = useState<'identity' | 'services' | 'backup'>('identity');
   const [formState, setFormState] = useState<ClinicSettings>(settings);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Pop-up Add Service Modal
   const [isAddServiceModalOpen, setIsAddServiceModalOpen] = useState(false);
@@ -145,7 +148,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       services: formState.services.filter((s) => s.id !== id),
     };
     setFormState(updated);
+    onDeleteService?.(id);
     onSaveSettings(updated);
+    setConfirmDeleteId(null);
   };
 
   const handleExportBackup = () => {
@@ -474,14 +479,24 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
                     {srv.name}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveService(srv.id)}
-                    className="p-1 text-slate-400 hover:text-rose-600"
-                    title="حذف"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {confirmDeleteId === srv.id ? (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveService(srv.id)}
+                      className="px-2 py-0.5 text-xs font-bold text-white bg-rose-600 rounded-md"
+                    >
+                      تأكيد؟
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(srv.id)}
+                      className="p-1 text-slate-400 hover:text-rose-600"
+                      title="حذف"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">

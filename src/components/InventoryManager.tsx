@@ -53,6 +53,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   const [filterMode, setFilterMode] = useState<'all' | 'low'>('all');
   const [auditReport, setAuditReport] = useState<string>('');
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const totalCost = useMemo(
     () => +(Number(qty || 0) * Number(unitPrice || 0)).toFixed(2),
@@ -265,9 +266,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
+                <div className="grid grid-cols-2 gap-2 text-center bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
                   <div>
-                    <div className="text-[10px] text-slate-400">الكمية</div>
+                    <div className="text-[10px] text-slate-400">الكمية المتوفرة</div>
                     <div className="font-mono tabular-nums font-bold">
                       {item.qty} {item.unit}
                     </div>
@@ -278,9 +279,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       {item.minQty} {item.unit}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-[10px] text-slate-400">الخدمة</div>
-                    <div className="truncate font-semibold">{item.linkedService || '—'}</div>
+                  <div className="col-span-2 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-right">
+                    <span className="text-[10px] text-slate-400 shrink-0">الخدمة المرتبطة:</span>
+                    <span className="font-bold text-sky-700 dark:text-sky-300 break-words">
+                      {item.linkedService || 'بدون ربط تلقائي'}
+                    </span>
                   </div>
                 </div>
 
@@ -292,6 +295,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <div className="inline-flex items-center gap-1 shrink-0">
                     <button
                       type="button"
+                      dir="ltr"
                       onClick={() => onQuickConsume(item.id, 1)}
                       className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg"
                     >
@@ -300,6 +304,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     </button>
                     <button
                       type="button"
+                      dir="ltr"
                       onClick={() => onQuickRestock(item.id, 5, false)}
                       className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg"
                     >
@@ -313,13 +318,26 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     >
                       <Edit3 className="w-4 h-4" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteItem(item.id)}
-                      className="p-1.5 text-rose-500"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {confirmDeleteId === item.id ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteItem(item.id);
+                          setConfirmDeleteId(null);
+                        }}
+                        className="px-2 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                      >
+                        تأكيد؟
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(item.id)}
+                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -377,6 +395,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       <div className="inline-flex items-center gap-1.5">
                         <button
                           type="button"
+                          dir="ltr"
                           onClick={() => onQuickConsume(item.id, 1)}
                           className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg"
                         >
@@ -385,6 +404,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         </button>
                         <button
                           type="button"
+                          dir="ltr"
                           onClick={() => onQuickRestock(item.id, 5, false)}
                           className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg"
                         >
@@ -398,13 +418,26 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteItem(item.id)}
-                          className="p-1.5 text-rose-500"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {confirmDeleteId === item.id ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onDeleteItem(item.id);
+                              setConfirmDeleteId(null);
+                            }}
+                            className="px-2 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                          >
+                            تأكيد؟
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(item.id)}
+                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

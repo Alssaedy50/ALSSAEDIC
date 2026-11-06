@@ -44,11 +44,14 @@ import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButto
 import {
   User,
   auth,
+  authenticateDirectWorkspaceInCloud,
   deleteExpenseFromCloud,
   deleteInventoryItemFromCloud,
   deleteReceiptFromCloud,
+  deleteServiceFromCloud,
   ensureClinicDocumentInCloud,
   onAuthStateChanged,
+  pushDirectWorkspaceToCloud,
   saveClinicSettingsToCloud,
   saveExpenseToCloud,
   saveInventoryItemToCloud,
@@ -57,6 +60,7 @@ import {
   signInWithGoogleAccount,
   signOutAccount,
   subscribeToClinicCloudData,
+  subscribeToDirectWorkspaceInCloud,
   syncLocalDataToCloud,
 } from './firebase';
 
@@ -126,6 +130,7 @@ export default function App() {
   );
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [editingReceipt, setEditingReceipt] = useState<ReceiptRecord | null>(null);
+  const [settlingReceiptIdFromStudio, setSettlingReceiptIdFromStudio] = useState<string | null>(null);
 
   const [toast, setToast] = useState<{
     id: number;
@@ -180,7 +185,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  // Helper to push current state to Direct Cloud Workspace
+  // Helper to push current state to Direct Cloud Workspace (Firestore clinic_workspaces/{clinicId})
   const pushToDirectCloud = async (
     session: DirectClinicSession,
     nextSettings: ClinicSettings,
@@ -189,81 +194,40 @@ export default function App() {
     nextExpenses: ExpenseRecord[]
   ) => {
     try {
-      const res = await fetch('/api/cloud/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clinicId: session.clinicId,
-          password: session.password,
-          data: {
-            settings: nextSettings,
-            receipts: nextReceipts,
-            inventory: nextInventory,
-            expenses: nextExpenses,
-          },
-        }),
+      const updatedAt = await pushDirectWorkspaceToCloud(session.clinicId, session.password, {
+        settings: nextSettings,
+        receipts: nextReceipts,
+        inventory: nextInventory,
+        expenses: nextExpenses,
       });
-      const parsed = await safeParseJsonResponse<{ updatedAt?: string }>(res);
-      if (parsed.ok && parsed.data?.updatedAt) {
-        lastDirectSyncTimestamp.current = parsed.data.updatedAt;
+      if (updatedAt) {
+        lastDirectSyncTimestamp.current = updatedAt;
       }
     } catch {
       // Offline or transient network error; will sync next time
     }
   };
 
-  // Poll Direct Cloud Workspace every 8 seconds so multiple phones stay in sync automatically
+  // Real-time Firestore listener (onSnapshot) for Direct Cloud Workspace + reconnect sync
   useEffect(() => {
     if (!directSession) return;
 
-    const pullLatest = async () => {
-      try {
-        const res = await fetch('/api/cloud/pull', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            clinicId: directSession.clinicId,
-            password: directSession.password,
-          }),
-        });
-        const parsed = await safeParseJsonResponse<{
-          ok?: boolean;
-          updatedAt?: string;
-          data?: {
-            settings?: ClinicSettings;
-            receipts?: ReceiptRecord[];
-            inventory?: InventoryItem[];
-            expenses?: ExpenseRecord[];
-          };
-        }>(res);
-        if (!parsed.ok || !parsed.data) return;
-        const json = parsed.data;
-        if (
-          json.ok &&
-          json.updatedAt &&
-          json.updatedAt !== lastDirectSyncTimestamp.current &&
-          json.data
-        ) {
-          lastDirectSyncTimestamp.current = json.updatedAt;
-          if (json.data.settings) setSettings(json.data.settings as ClinicSettings);
-          if (Array.isArray(json.data.receipts)) {
-            setReceipts(json.data.receipts as ReceiptRecord[]);
-          }
-          if (Array.isArray(json.data.inventory)) {
-            setInventory(json.data.inventory as InventoryItem[]);
-          }
-          if (Array.isArray(json.data.expenses)) {
-            setExpenses(json.data.expenses as ExpenseRecord[]);
-          }
+    const unsubDirect = subscribeToDirectWorkspaceInCloud(
+      directSession.clinicId,
+      directSession.password,
+      (payload) => {
+        if (payload.updatedAt && payload.updatedAt === lastDirectSyncTimestamp.current) {
+          return;
         }
-      } catch {
-        // Ignore network errors while offline
+        lastDirectSyncTimestamp.current = payload.updatedAt;
+        if (payload.settings) setSettings(payload.settings);
+        if (Array.isArray(payload.receipts)) setReceipts(payload.receipts);
+        if (Array.isArray(payload.inventory)) setInventory(payload.inventory);
+        if (Array.isArray(payload.expenses)) setExpenses(payload.expenses);
       }
-    };
+    );
 
-    pullLatest();
-    const interval = setInterval(pullLatest, 8000);
-    return () => clearInterval(interval);
+    return () => unsubDirect();
   }, [directSession]);
 
   // Firebase Auth & Real-Time Multi-Phone Cloud Sync
@@ -310,27 +274,19 @@ export default function App() {
         }));
       },
       onServicesUpdate: (cloudServices) => {
-        if (cloudServices.length > 0) {
-          setSettings((prev) => ({
-            ...prev,
-            services: cloudServices,
-          }));
-        }
+        setSettings((prev) => ({
+          ...prev,
+          services: cloudServices,
+        }));
       },
       onReceiptsUpdate: (cloudReceipts) => {
-        if (cloudReceipts.length > 0) {
-          setReceipts(cloudReceipts);
-        }
+        setReceipts(cloudReceipts);
       },
       onInventoryUpdate: (cloudInventory) => {
-        if (cloudInventory.length > 0) {
-          setInventory(cloudInventory);
-        }
+        setInventory(cloudInventory);
       },
       onExpensesUpdate: (cloudExpenses) => {
-        if (cloudExpenses.length > 0) {
-          setExpenses(cloudExpenses);
-        }
+        setExpenses(cloudExpenses);
       },
     });
 
@@ -370,73 +326,34 @@ export default function App() {
   ): Promise<boolean> => {
     setIsSyncingCloud(true);
     try {
-      const res = await fetch('/api/cloud/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clinicId,
-          password,
-          initialData: {
-            settings,
-            receipts,
-            inventory,
-            expenses,
-          },
-        }),
+      const result = await authenticateDirectWorkspaceInCloud(clinicId, password, {
+        settings,
+        receipts,
+        inventory,
+        expenses,
       });
-      const parsed = await safeParseJsonResponse<{
-        status?: string;
-        clinicId?: string;
-        updatedAt?: string;
-        error?: string;
-        data?: {
-          settings?: ClinicSettings;
-          receipts?: ReceiptRecord[];
-          inventory?: InventoryItem[];
-          expenses?: ExpenseRecord[];
-        };
-      }>(res);
 
-      if (!parsed.data) {
-        const cleanId = clinicId.trim().toLowerCase().replace(/\s+/g, '-');
-        const fallbackSession: DirectClinicSession = {
-          clinicId: cleanId,
-          password,
-          updatedAt: new Date().toISOString(),
-        };
-        setDirectSession(fallbackSession);
-        notify(`تم تفعيل حساب العيادة (${cleanId}) بنجاح`, 'success');
-        return true;
-      }
-
-      const json = parsed.data;
-      if (!parsed.ok) {
-        notify(json.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
+      if (!result.ok) {
+        notify(result.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
         return false;
       }
 
       const sessionObj: DirectClinicSession = {
-        clinicId: json.clinicId || clinicId.trim().toLowerCase(),
+        clinicId: result.clinicId,
         password,
-        updatedAt: json.updatedAt || new Date().toISOString(),
+        updatedAt: result.updatedAt,
       };
-      lastDirectSyncTimestamp.current = json.updatedAt || '';
+      lastDirectSyncTimestamp.current = result.updatedAt;
       setDirectSession(sessionObj);
 
-      if (json.status === 'authenticated' && json.data) {
-        if (json.data.settings) setSettings(json.data.settings as ClinicSettings);
-        if (Array.isArray(json.data.receipts) && json.data.receipts.length > 0) {
-          setReceipts(json.data.receipts as ReceiptRecord[]);
-        }
-        if (Array.isArray(json.data.inventory) && json.data.inventory.length > 0) {
-          setInventory(json.data.inventory as InventoryItem[]);
-        }
-        if (Array.isArray(json.data.expenses) && json.data.expenses.length > 0) {
-          setExpenses(json.data.expenses as ExpenseRecord[]);
-        }
-        notify(`تم ربط حساب العيادة (${json.clinicId}) وجلب البيانات السحابية بنجاح`, 'success');
+      if (result.status === 'authenticated' && result.data) {
+        if (result.data.settings) setSettings(result.data.settings);
+        if (Array.isArray(result.data.receipts)) setReceipts(result.data.receipts);
+        if (Array.isArray(result.data.inventory)) setInventory(result.data.inventory);
+        if (Array.isArray(result.data.expenses)) setExpenses(result.data.expenses);
+        notify(`تم ربط حساب العيادة (${result.clinicId}) وجلب البيانات السحابية بنجاح`, 'success');
       } else {
-        notify(`تم إنشاء وربط حساب العيادة السحابي (${json.clinicId}) بنجاح`, 'success');
+        notify(`تم إنشاء وربط حساب العيادة السحابي (${result.clinicId}) بنجاح`, 'success');
       }
       return true;
     } catch {
@@ -577,14 +494,20 @@ export default function App() {
   };
 
   const handleSettleDebt = (receiptId: string, amountPaidNow: number) => {
+    const today = new Date().toISOString().slice(0, 10);
     const nextReceiptsList = receipts.map((r) => {
       if (r.id !== receiptId) return r;
       const nextPaid = Math.min(r.totalAmount, Number(r.paidAmount) + amountPaidNow);
       const nextRem = Math.max(0, Number(r.totalAmount) - nextPaid);
+      const settlementNote = `تم سداد دفعة ${amountPaidNow.toLocaleString()} ${r.currency} بتاريخ ${today}`;
+      const nextNotes = r.notes
+        ? `${r.notes} | ${settlementNote}`.slice(0, 500)
+        : settlementNote;
       const updated: ReceiptRecord = {
         ...r,
         paidAmount: nextPaid,
         remainingAmount: nextRem,
+        notes: nextNotes,
         amountWords: numberToArabicWords(nextPaid, String(r.currency)),
       };
       if (currentUser) {
@@ -596,19 +519,48 @@ export default function App() {
     if (directSession) {
       pushToDirectCloud(directSession, settings, nextReceiptsList, inventory, expenses);
     }
-    notify('تم تسديد الدفعة ومزامنتها بنجاح', 'success');
+    notify('تم تسديد الدفعة وتوثيقها في السند ومزامنتها بنجاح', 'success');
   };
 
   const handleDeleteReceipt = (receiptId: string) => {
+    const deletedReceipt = receipts.find((r) => r.id === receiptId);
     const nextReceiptsList = receipts.filter((r) => r.id !== receiptId);
     setReceipts(nextReceiptsList);
+
+    let nextInventoryList = inventory;
+    if (
+      deletedReceipt &&
+      settings.features.autoInventory &&
+      Array.isArray(deletedReceipt.services) &&
+      deletedReceipt.services.length > 0
+    ) {
+      const today = new Date().toISOString().slice(0, 10);
+      nextInventoryList = inventory.map((item) => {
+        if (item.linkedService && deletedReceipt.services.includes(item.linkedService)) {
+          const nextQty = +(Number(item.qty) + 1).toFixed(2);
+          const updatedItem: InventoryItem = {
+            ...item,
+            qty: nextQty,
+            totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
+            updatedAt: today,
+          };
+          if (currentUser) {
+            saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
+          }
+          return updatedItem;
+        }
+        return item;
+      });
+      setInventory(nextInventoryList);
+    }
+
     if (directSession) {
-      pushToDirectCloud(directSession, settings, nextReceiptsList, inventory, expenses);
+      pushToDirectCloud(directSession, settings, nextReceiptsList, nextInventoryList, expenses);
     }
     if (currentUser) {
       deleteReceiptFromCloud(currentUser.uid, receiptId).catch(() => {});
     }
-    notify('تم حذف السند', 'info');
+    notify('تم حذف السند واسترجاع المواد المرتبطة للمخزون', 'info');
   };
 
   const handleSaveInventoryItem = (
@@ -931,7 +883,7 @@ export default function App() {
       />
 
       {/* ==================== MAIN PAGE VIEWPORT ==================== */}
-      <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4">
+      <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 pb-24 md:pb-6">
         {activeSection === 'receipt' && (
           <ReceiptStudio
             settings={settings}
@@ -940,6 +892,10 @@ export default function App() {
             nextReceiptNo={nextReceiptNo}
             onSaveReceipt={handleSaveReceipt}
             onClearEditing={() => setEditingReceipt(null)}
+            onJumpToSettleDebt={(receiptId) => {
+              setSettlingReceiptIdFromStudio(receiptId);
+              navigateToSection('records');
+            }}
             onUpdatePermanentSig={(sig) => {
               const nextSettings: ClinicSettings = {
                 ...settings,
@@ -962,6 +918,8 @@ export default function App() {
             settings={settings}
             receipts={receipts}
             defaultCurrency={settings.identity.defaultCurrency}
+            initialSettleReceiptId={settlingReceiptIdFromStudio}
+            onClearInitialSettle={() => setSettlingReceiptIdFromStudio(null)}
             onEditReceipt={(rec) => {
               setEditingReceipt(rec);
               navigateToSection('receipt');
@@ -1063,6 +1021,11 @@ export default function App() {
             receipts={receipts}
             inventory={inventory}
             expenses={expenses}
+            onDeleteService={(serviceId) => {
+              if (currentUser) {
+                deleteServiceFromCloud(currentUser.uid, serviceId).catch(() => {});
+              }
+            }}
             onSaveSettings={(next) => {
               setSettings(next);
               if (directSession) {
@@ -1114,12 +1077,71 @@ export default function App() {
         )}
       </main>
 
+      {/* ==================== MOBILE BOTTOM NAVIGATION BAR (5 TABS + BADGES) ==================== */}
+      <nav
+        aria-label="التنقل السفلي السريع"
+        className="fixed bottom-0 inset-x-0 z-30 md:hidden border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md no-print"
+      >
+        <div className="grid grid-cols-5 h-16 max-w-md mx-auto px-1">
+          {[
+            { id: 'receipt' as MainSectionId, label: 'إصدار سند', icon: FileText },
+            {
+              id: 'records' as MainSectionId,
+              label: 'السجل',
+              icon: FileSpreadsheet,
+              badge: pendingDebtsCount > 0 ? pendingDebtsCount : undefined,
+              badgeColor: 'bg-rose-500 text-white',
+            },
+            {
+              id: 'inventory' as MainSectionId,
+              label: 'المخزون',
+              icon: Package,
+              badge: lowStockCount > 0 ? lowStockCount : undefined,
+              badgeColor: 'bg-amber-500 text-slate-950',
+            },
+            { id: 'finance' as MainSectionId, label: 'المالية', icon: Wallet },
+            { id: 'assistant' as MainSectionId, label: 'المساعد', icon: Bot },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeSection === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => navigateToSection(tab.id)}
+                className={`relative flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl transition-colors ${
+                  isActive
+                    ? 'text-sky-600 dark:text-sky-400 font-black'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-bold'
+                }`}
+              >
+                <div className="relative flex items-center justify-center">
+                  <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-2'}`} />
+                  {tab.badge !== undefined && (
+                    <span
+                      dir="ltr"
+                      className={`absolute -top-1.5 -left-3 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-mono font-black flex items-center justify-center shadow-xs ${tab.badgeColor}`}
+                    >
+                      {tab.badge}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] leading-tight whitespace-nowrap">{tab.label}</span>
+                {isActive && (
+                  <span className="absolute top-0 inset-x-4 h-0.5 rounded-b-full bg-sky-600 dark:bg-sky-400" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
       {/* Offline Mode Indicator */}
       <OfflineIndicator />
 
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed bottom-4 left-4 right-4 sm:right-auto z-50 sm:max-w-sm rounded-xl border border-slate-700 bg-slate-900 text-white px-4 py-3 shadow-xl flex items-center justify-between gap-3 text-xs font-bold no-print">
+        <div className="fixed bottom-20 md:bottom-4 left-4 right-4 sm:right-auto z-50 sm:max-w-sm rounded-xl border border-slate-700 bg-slate-900 text-white px-4 py-3 shadow-xl flex items-center justify-between gap-3 text-xs font-bold no-print">
           <span>{toast.message}</span>
           <button
             type="button"

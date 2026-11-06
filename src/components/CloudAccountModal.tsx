@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   ArrowRight,
-  CheckCircle2,
   Cloud,
   Copy,
   ExternalLink,
@@ -150,7 +149,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
           <div className="flex items-center gap-2 min-w-0">
             <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
             <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 truncate">
-              حساب العيادة السحابي والتثبيت
+              الحساب السحابي والتثبيت
             </h3>
           </div>
           <button
@@ -369,18 +368,6 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               </ul>
             </div>
           </div>
-        </div>
-
-        {/* Sticky Footer */}
-        <div className="shrink-0 p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>إغلاق</span>
-          </button>
         </div>
       </div>
     </div>

@@ -48,6 +48,8 @@ export default defineConfig(() => {
         },
         workbox: {
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+          cleanupOutdatedCaches: true,
+          navigateFallbackDenylist: [/^\/api\//],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
@@ -86,6 +88,9 @@ export default defineConfig(() => {
         },
       }),
     ],
+    define: {
+      'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || ''),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

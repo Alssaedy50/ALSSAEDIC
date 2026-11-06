@@ -1,11 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
   Bot,
   Copy,
   ImagePlus,
   Loader2,
-  Menu,
   Mic,
   MicOff,
   Send,
@@ -18,6 +16,7 @@ import {
 import {
   ChatMessage,
   ClinicSettings,
+  CurrencyFinancialSummary,
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
@@ -53,8 +52,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   messages,
   onAddMessage,
   onClearMessages,
-  onExitFullScreen,
-  onOpenMenu,
   notify,
 }) => {
   const [input, setInput] = useState('');
@@ -69,6 +66,51 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const currencySummaries = useMemo<CurrencyFinancialSummary[]>(() => {
+    const defaultCur = String(settings.identity.defaultCurrency || 'ريال يمني');
+    const map = new Map<string, CurrencyFinancialSummary>();
+
+    const ensureBucket = (curr: string) => {
+      const key = curr || defaultCur;
+      if (!map.has(key)) {
+        map.set(key, {
+          currency: key,
+          totalBilledAmount: 0,
+          totalCollectedRevenue: 0,
+          totalPendingDebts: 0,
+          totalExpenses: 0,
+          netCashProfit: 0,
+          receiptsCount: 0,
+          debtorsCount: 0,
+        });
+      }
+      return map.get(key)!;
+    };
+
+    ensureBucket(defaultCur);
+
+    receipts.forEach((r) => {
+      const row = ensureBucket(String(r.currency || defaultCur));
+      row.totalBilledAmount += Number(r.totalAmount) || 0;
+      row.totalCollectedRevenue += Number(r.paidAmount) || 0;
+      row.totalPendingDebts += Number(r.remainingAmount) || 0;
+      row.receiptsCount += 1;
+      if ((Number(r.remainingAmount) || 0) > 0) {
+        row.debtorsCount += 1;
+      }
+    });
+
+    expenses.forEach((e) => {
+      const row = ensureBucket(String(e.currency || defaultCur));
+      row.totalExpenses += Number(e.amount) || 0;
+    });
+
+    return Array.from(map.values()).map((item) => ({
+      ...item,
+      netCashProfit: item.totalCollectedRevenue - item.totalExpenses,
+    }));
+  }, [receipts, expenses, settings.identity.defaultCurrency]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -188,12 +230,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       const clinicContext = {
         identity: settings.identity,
         servicesCatalog: settings.services,
+        currencySummaries,
         financialSummary: {
           totalReceipts: receipts.length,
-          totalBilled: receipts.reduce((s, r) => s + (Number(r.totalAmount) || 0), 0),
-          totalCollected: receipts.reduce((s, r) => s + (Number(r.paidAmount) || 0), 0),
-          totalPendingDebts: receipts.reduce((s, r) => s + (Number(r.remainingAmount) || 0), 0),
-          totalExpenses: expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0),
+          byCurrency: currencySummaries,
         },
         pendingDebtsPatients: debtors.map((r) => ({
           receiptNo: r.receiptNo,
@@ -251,21 +291,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-40 w-full h-[100dvh] bg-white dark:bg-slate-950 flex flex-col overflow-hidden">
-      {/* Full-Screen Top Navigation Bar */}
-      <header className="shrink-0 h-14 px-3 sm:px-6 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {onOpenMenu && (
-            <button
-              type="button"
-              onClick={onOpenMenu}
-              className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 text-xs font-bold shrink-0"
-            >
-              <Menu className="w-4 h-4 text-sky-500" />
-              <span>القائمة</span>
-            </button>
-          )}
-
+    <div className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-[calc(100dvh-10.5rem)] md:h-[calc(100dvh-6.5rem)] overflow-hidden shadow-xs">
+      {/* Clean Integrated Assistant Top Bar (No Duplicate Header) */}
+      <div className="shrink-0 px-3.5 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
             <Sparkles className="w-4 h-4" />
           </div>
@@ -274,38 +303,25 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               المساعد الطبي والمالي الذكي
             </h2>
             <p className="text-[10px] sm:text-[11px] font-bold text-sky-600 dark:text-sky-400 truncate">
-              شاشة كاملة — Gemini 3.8 Flash
+              Gemini 2.5 Flash
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={onClearMessages}
-              className="inline-flex items-center gap-1 px-2.5 py-2 text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl shrink-0 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span className="hidden xs:inline">مسح</span>
-            </button>
-          )}
-
-          {onExitFullScreen && (
-            <button
-              type="button"
-              onClick={onExitFullScreen}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0"
-            >
-              <ArrowRight className="w-3.5 h-3.5 text-sky-500" />
-              <span>رجوع للسند</span>
-            </button>
-          )}
-        </div>
-      </header>
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={onClearMessages}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl shrink-0 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>مسح المحادثة</span>
+          </button>
+        )}
+      </div>
 
       {/* Quick Prompts Strip */}
-      <div className="shrink-0 px-3 sm:px-6 py-2.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/80 dark:bg-slate-900/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+      <div className="shrink-0 px-3 sm:px-5 py-2 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {QUICK_PROMPTS.map((q) => (
           <button
             key={q}
@@ -319,19 +335,19 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         ))}
       </div>
 
-      {/* Full-Screen Scrollable Messages Area */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4">
+      {/* Scrollable Messages Area */}
+      <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-4">
         <div className="max-w-4xl mx-auto h-full space-y-4">
           {messages.length === 0 ? (
-            <div className="min-h-[60vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-3 px-4">
-              <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
-                <Bot className="w-7 h-7" />
+            <div className="min-h-[42vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-3 px-4">
+              <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
+                <Bot className="w-6 h-6" />
               </div>
-              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100">
-                مساعد عيادة السعيدي الذكي (شاشة كاملة)
+              <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">
+                مساعد عيادة السعيدي الذكي
               </h3>
-              <p className="text-xs sm:text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-                متصل مباشرة بقاعدة بيانات المرضى، السندات، الديون، والمخزون الطبي. يمكنك الاستفسار عن أي حساب مالي أو إرفاق صورة أشعة سنية أو تقرير طبي لتحليله بدقة.
+              <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                متصل مباشرة بقاعدة بيانات المرضى، السندات، الديون المفصولة حسب العملة، والمخزون الطبي. يمكنك الاستفسار عن أي حساب مالي أو إرفاق صورة أشعة سنية لتحليلها بدقة.
               </p>
             </div>
           ) : (
@@ -432,15 +448,15 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         </div>
       )}
 
-      {/* Full-Screen Bottom Composer Bar */}
+      {/* Bottom Composer Bar with Expanded Input & Sleek Icon-Only Send Button */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           sendMessage();
         }}
-        className="shrink-0 p-3 sm:px-6 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+        className="shrink-0 p-2.5 sm:px-5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
       >
-        <div className="max-w-4xl mx-auto flex items-center gap-2">
+        <div className="max-w-4xl mx-auto flex items-center gap-1.5 sm:gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -452,7 +468,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 shrink-0 transition-colors"
+            className="w-10 h-10 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 shrink-0 transition-colors"
             title="إرفاق صورة أشعة أو ملف"
           >
             <ImagePlus className="w-4 h-4" />
@@ -461,7 +477,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <button
             type="button"
             onClick={toggleVoiceInput}
-            className={`p-2.5 rounded-xl border shrink-0 transition-colors ${
+            className={`w-10 h-10 flex items-center justify-center rounded-xl border shrink-0 transition-colors ${
               isListening
                 ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
                 : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500'
@@ -475,17 +491,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="اسأل عن مريض، سند، ديون، مخزون، أو أرفق صورة أشعة..."
+            placeholder="اكتب سؤالك المالي أو الطبي أو أرفق صورة أشعة..."
             className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
           />
 
           <button
             type="submit"
             disabled={isSending || (!input.trim() && !attachment)}
-            className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-black text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
+            aria-label="إرسال"
+            title="إرسال"
+            className="w-10 h-10 inline-flex items-center justify-center text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
           >
             <Send className="w-4 h-4" />
-            <span>إرسال</span>
           </button>
         </div>
       </form>

@@ -10,6 +10,7 @@ import {
   Mic,
   MicOff,
   PenTool,
+  Plus,
   RotateCcw,
   Save,
   Sparkles,
@@ -24,7 +25,7 @@ import {
 } from '../types/clinic';
 import { CURRENCIES, PAYMENT_METHODS } from '../data/defaultData';
 import { numberToArabicWords, parseFDIToothNumbers } from '../utils/arabicTafqeet';
-import { safeParseJsonResponse } from '../utils/aiClient';
+import { parseSmartReceiptWithFallback } from '../utils/aiClient';
 import { SignatureModal } from './SignatureModal';
 import { FdiToothModal } from './FdiToothModal';
 import { OfficialReceiptCard, ReceiptDisplayData } from './OfficialReceiptCard';
@@ -36,6 +37,7 @@ interface ReceiptStudioProps {
   nextReceiptNo: number;
   onSaveReceipt: (payload: Omit<ReceiptRecord, 'id'> & { id?: string }) => ReceiptRecord;
   onClearEditing: () => void;
+  onJumpToSettleDebt?: (receiptId: string) => void;
   onUpdatePermanentSig: (sigDataUrl: string) => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
@@ -47,6 +49,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   nextReceiptNo,
   onSaveReceipt,
   onClearEditing,
+  onJumpToSettleDebt,
   onUpdatePermanentSig,
   notify,
 }) => {
@@ -126,18 +129,23 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     return Array.from(map.entries()).map(([name, phone]) => ({ name, phone }));
   }, [receipts]);
 
-  const patientPreviousDebt = useMemo(() => {
+  const patientUnpaidReceipts = useMemo(() => {
     const cleanName = patientName.trim();
-    if (!cleanName || !settings.features.debtAlert) return 0;
-    return receipts
-      .filter(
-        (r) =>
-          r.patientName.trim() === cleanName &&
-          (!editingReceipt || r.id !== editingReceipt.id) &&
-          r.remainingAmount > 0
-      )
-      .reduce((sum, r) => sum + (Number(r.remainingAmount) || 0), 0);
-  }, [patientName, receipts, editingReceipt, settings.features.debtAlert]);
+    if (!cleanName || !settings.features.debtAlert) return [];
+    return receipts.filter(
+      (r) =>
+        r.patientName.trim() === cleanName &&
+        (!editingReceipt || r.id !== editingReceipt.id) &&
+        String(r.currency || 'ريال يمني') === String(currency || 'ريال يمني') &&
+        (Number(r.remainingAmount) || 0) > 0
+    );
+  }, [patientName, receipts, editingReceipt, currency, settings.features.debtAlert]);
+
+  const patientPreviousDebt = useMemo(
+    () =>
+      patientUnpaidReceipts.reduce((sum, r) => sum + (Number(r.remainingAmount) || 0), 0),
+    [patientUnpaidReceipts]
+  );
 
   const handleToggleService = (serviceName: string, price: number) => {
     setSelectedServices((prev) => {
@@ -229,27 +237,17 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
     setIsParsingAI(true);
     try {
-      const response = await fetch('/api/gemini/parse-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: textToAnalyze,
-          availableServices: settings.services,
-          defaultCurrency: settings.identity.defaultCurrency,
-        }),
-      });
-
-      const parsed = await safeParseJsonResponse<{
-        result?: Record<string, any>;
-        error?: string;
-      }>(response);
-      if (!parsed.ok || !parsed.data?.result) {
-        throw new Error(parsed.data?.error || 'تعذر التحليل');
+      const r = await parseSmartReceiptWithFallback(
+        textToAnalyze,
+        settings.services,
+        settings.identity.defaultCurrency
+      );
+      if (!r) {
+        throw new Error('تعذر التحليل');
       }
 
-      const r = parsed.data.result;
-      if (r.patientName) setPatientName(r.patientName);
-      if (r.patientPhone) setPatientPhone(r.patientPhone);
+      if (r.patientName) setPatientName(String(r.patientName));
+      if (r.patientPhone) setPatientPhone(String(r.patientPhone));
 
       let computedServicesTotal = 0;
       if (Array.isArray(r.services) && r.services.length > 0) {
@@ -260,22 +258,24 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         }, 0);
       }
 
-      if (r.toothFDI) setToothFDI(r.toothFDI);
+      if (r.toothFDI) setToothFDI(String(r.toothFDI));
 
       const resolvedTotal =
         Number(r.totalAmount) > 0 ? Number(r.totalAmount) : computedServicesTotal;
       const resolvedPaid =
         r.paidAmount !== undefined && Number(r.paidAmount) > 0
-          ? Number(r.paidAmount)
+          ? Math.min(resolvedTotal || Number(r.paidAmount), Number(r.paidAmount))
           : resolvedTotal;
 
       if (resolvedTotal > 0) setTotalAmount(resolvedTotal);
       if (resolvedPaid >= 0) setPaidAmount(resolvedPaid);
-      if (r.currency && CURRENCIES.includes(r.currency)) setCurrency(r.currency);
-      if (r.paymentMethod) setPaymentMethod(r.paymentMethod);
-      if (r.notes) setNotes(r.notes);
+      if (r.currency && CURRENCIES.includes(r.currency as CurrencyCode)) {
+        setCurrency(r.currency as CurrencyCode);
+      }
+      if (r.paymentMethod) setPaymentMethod(String(r.paymentMethod));
+      if (r.notes) setNotes(String(r.notes));
 
-      notify('تم تعبئة السند ذكياً عبر Gemini', 'success');
+      notify('تم تعبئة السند ذكياً عبر Gemini 2.5 Flash', 'success');
     } catch {
       applyLocalHeuristic(textToAnalyze);
       notify('تم استخراج بيانات السند تلقائياً', 'info');
@@ -347,6 +347,27 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       return null;
     }
 
+    const numericTotal = Number(totalAmount) || 0;
+    const numericPaid = Number(paidAmount) || 0;
+
+    if (numericPaid > numericTotal) {
+      notify('لا يمكن أن يكون المبلغ المقبوض أكبر من الإجمالي', 'warning');
+      return null;
+    }
+
+    const isDuplicateNo = receipts.some(
+      (r) =>
+        Number(r.receiptNo) === Number(receiptNo) &&
+        (!editingReceipt || r.id !== editingReceipt.id)
+    );
+    if (isDuplicateNo) {
+      notify(
+        `رقم السند #${receiptNo} مستخدم مسبقاً في سند آخر، يرجى اختيار رقم مختلف`,
+        'warning'
+      );
+      return null;
+    }
+
     const parsedFdi = parseFDIToothNumbers(toothFDI);
     if (parsedFdi.invalid.length > 0) {
       notify(`أرقام FDI غير صحيحة: ${parsedFdi.invalid.join(', ')}`, 'warning');
@@ -361,8 +382,8 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       patientPhone: patientPhone.trim(),
       services: selectedServices,
       toothFDI: parsedFdi.values.join(', '),
-      totalAmount: Number(totalAmount) || 0,
-      paidAmount: Number(paidAmount) || 0,
+      totalAmount: numericTotal,
+      paidAmount: numericPaid,
       remainingAmount,
       currency,
       paymentMethod,
@@ -373,9 +394,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       paperFormat,
     });
 
-    if (!editingReceipt) {
-      resetForm();
-    }
+    setSubTab('preview');
     return saved;
   };
 
@@ -436,24 +455,39 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
       {subTab === 'preview' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 no-print">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 no-print">
             <button
               type="button"
               onClick={() => setSubTab('form')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200"
             >
               <ArrowRight className="w-3.5 h-3.5" />
               <span>رجوع للبيانات</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleSave}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>حفظ السند</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  resetForm();
+                  setSubTab('form');
+                  notify('تم تجهيز نموذج سند جديد', 'info');
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-sky-600 hover:bg-sky-500 text-white"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>إصدار سند جديد</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSave}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>حفظ السند</span>
+              </button>
+            </div>
           </div>
 
           <OfficialReceiptCard
@@ -476,7 +510,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 </h2>
               </div>
               <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                Gemini 3.8 Flash
+                Gemini 2.5 Flash
               </span>
             </div>
 
@@ -563,7 +597,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums text-slate-900 dark:text-slate-100"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums text-slate-900 dark:text-slate-100 dark:[color-scheme:dark]"
                 />
               </div>
             </div>
@@ -613,28 +647,32 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               </div>
             </div>
 
-            {/* تنبيه الديون السابقة */}
+            {/* تنبيه الديون السابقة بنفس العملة المختارة */}
             {patientPreviousDebt > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>
-                    دين سابق على المريض:{' '}
+                    دين سابق على المريض بعملة ({currency}):{' '}
                     <strong className="font-mono tabular-nums">
                       {patientPreviousDebt.toLocaleString()} {currency}
-                    </strong>
+                    </strong>{' '}
+                    (في سند رقم{' '}
+                    <span dir="ltr" className="font-mono font-black">
+                      #{patientUnpaidReceipts[0]?.receiptNo}
+                    </span>
+                    )
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTotalAmount((prev) => Number(prev) + patientPreviousDebt);
-                    notify('تمت إضافة الدين السابق للإجمالي', 'info');
-                  }}
-                  className="px-2.5 py-1 rounded-md bg-amber-600 text-white font-bold"
-                >
-                  إضافة للسند
-                </button>
+                {onJumpToSettleDebt && patientUnpaidReceipts[0] && (
+                  <button
+                    type="button"
+                    onClick={() => onJumpToSettleDebt(patientUnpaidReceipts[0].id)}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold transition-colors shrink-0"
+                  >
+                    تسديد من السجل
+                  </button>
+                )}
               </div>
             )}
 
@@ -691,7 +729,8 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <input
                   type="number"
                   min="0"
-                  value={totalAmount || ''}
+                  value={totalAmount === 0 ? '' : totalAmount}
+                  onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => {
                     const val = Number(e.target.value) || 0;
                     setTotalAmount(val);
@@ -711,10 +750,16 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <input
                   type="number"
                   min="0"
-                  value={paidAmount || ''}
+                  max={totalAmount || undefined}
+                  value={paidAmount === 0 ? '' : paidAmount}
+                  onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => setPaidAmount(Number(e.target.value) || 0)}
                   placeholder="0"
-                  className="w-full rounded-lg border border-emerald-500/60 bg-emerald-50/20 dark:bg-emerald-950/20 px-2.5 py-2 text-sm font-mono tabular-nums font-black text-emerald-700 dark:text-emerald-300"
+                  className={`w-full rounded-lg border px-2.5 py-2 text-sm font-mono tabular-nums font-black ${
+                    paidAmount > totalAmount
+                      ? 'border-rose-500 bg-rose-50/30 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300'
+                      : 'border-emerald-500/60 bg-emerald-50/20 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300'
+                  }`}
                 />
               </div>
 

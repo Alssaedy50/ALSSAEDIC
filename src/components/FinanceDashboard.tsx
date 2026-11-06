@@ -60,6 +60,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
   // Pop-up AI Report Modal
   const [aiReport, setAiReport] = useState<string>('');
   const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const currencySummaries = useMemo<CurrencyFinancialSummary[]>(() => {
     const map = new Map<string, CurrencyFinancialSummary>();
@@ -220,23 +221,40 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
                     <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
                       {exp.title}
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      {exp.category} · <span className="font-mono">{exp.date}</span>
+                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span>{exp.category}</span>
+                      <span>·</span>
+                      <span className="whitespace-nowrap shrink-0 font-mono tabular-nums">
+                        {exp.date}
+                      </span>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-mono tabular-nums font-bold text-xs sm:text-sm text-rose-600 dark:text-rose-400">
+                    <span className="font-mono tabular-nums font-bold text-xs sm:text-sm text-rose-600 dark:text-rose-400 whitespace-nowrap">
                       {Number(exp.amount).toLocaleString()} {exp.currency}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteExpense(exp.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
-                      title="حذف"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {confirmDeleteId === exp.id ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteExpense(exp.id);
+                          setConfirmDeleteId(null);
+                        }}
+                        className="px-2.5 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                      >
+                        تأكيد؟
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(exp.id)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
+                        title="حذف"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
