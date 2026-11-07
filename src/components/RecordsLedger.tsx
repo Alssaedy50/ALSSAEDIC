@@ -411,6 +411,9 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               <OfficialReceiptCard
                 data={previewReceipt}
                 settings={settings}
+                onPaperFormatChange={(fmt) =>
+                  setPreviewReceipt((prev) => (prev ? { ...prev, paperFormat: fmt } : null))
+                }
                 notify={notify}
                 showToolbar={true}
               />
