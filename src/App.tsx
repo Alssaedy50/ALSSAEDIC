@@ -1177,6 +1177,7 @@ export default function App() {
         onEmailLogin={handleEmailLogin}
         onEmailRegister={handleEmailRegister}
         onResendVerification={handleResendVerification}
+        onRefreshVerification={handleRefreshVerification}
         onDirectLogin={handleDirectClinicLogin}
         onSignOut={handleSignOut}
         onForceSyncNow={handleForceCloudSync}
