@@ -556,18 +556,9 @@ export function isInstantClinicQuery(
 export async function queryClinicAssistantDetailed(
   payload: AssistantRequestPayload
 ): Promise<AssistantDetailedResponse> {
-  // 1. Instant 0ms fast-path for direct clinic ledger, inventory, debt, and standard dental protocol queries
-  if (!payload.attachment && isInstantClinicQuery(payload.prompt, payload.clinicContext)) {
-    return {
-      reply: generateLocalClinicalResponse(payload.prompt, payload.clinicContext),
-      model: 'gemini-3.8-flash',
-      modelLabel: 'Gemini 3.8 Flash · استجابة فورية',
-    };
-  }
-
-  // 2. Call server endpoint (/api/gemini/assistant) for open-ended & multimodal queries
+  // Call server endpoint (/api/gemini/assistant) so real Gemini AI answers with full clinic context
   const controller = new AbortController();
-  const timeoutMs = 15_000;
+  const timeoutMs = 25_000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -586,7 +577,7 @@ export async function queryClinicAssistantDetailed(
       error?: string;
     }>(response);
     if (parsed.ok && parsed.data?.reply && String(parsed.data.reply).trim()) {
-      const model = String(parsed.data.model || 'gemini-3.8-flash').trim();
+      const model = String(parsed.data.model || 'gemini-3.1-flash-lite').trim();
       const modelLabel =
         String(parsed.data.modelLabel || '').trim() || formatModelDisplayLabel(model);
       return {
@@ -600,7 +591,7 @@ export async function queryClinicAssistantDetailed(
     // Server route unreachable or timed out; fall back to local clinical engine
   }
 
-  // 3. Silent immediate fallback to Local Clinical Intelligence Engine (never expose API keys to browser)
+  // Fallback to Local Clinical Intelligence Engine only if server/network is completely unreachable
   return {
     reply: generateLocalClinicalResponse(payload.prompt, payload.clinicContext),
     model: 'local-clinical-engine',

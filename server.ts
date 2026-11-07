@@ -299,15 +299,13 @@ const MODEL_LABELS: Record<string, string> = {
 };
 
 const TEXT_MODEL_POOL = [
-  'gemini-3.8-flash',
-  'gemini-flash-latest',
   'gemini-3.1-flash-lite',
+  'gemini-3.8-flash',
 ] as const;
 
 const VISION_MODEL_POOL = [
-  'gemini-3.8-flash',
-  'gemini-flash-latest',
   'gemini-3.1-flash-lite',
+  'gemini-3.8-flash',
 ] as const;
 
 const modelCooldownUntil = new Map<string, number>();
@@ -493,7 +491,7 @@ async function generateWithMultiModelLoadBalancer(
           contents: payload.contents as string,
           config: modelConfig,
         }),
-        15_000
+        8_000
       );
       modelCooldownUntil.delete(slotKey);
       return {
@@ -505,17 +503,19 @@ async function generateWithMultiModelLoadBalancer(
       lastErr = err;
       const errMsg = String(err instanceof Error ? err.message : err || '').toLowerCase();
       const isNotFound = errMsg.includes('404') || errMsg.includes('not_found');
+      const isTimeout = errMsg.includes('model_timeout');
       const isQuotaOrTransient =
         errMsg.includes('429') ||
         errMsg.includes('resource_exhausted') ||
         errMsg.includes('quota') ||
         errMsg.includes('rate') ||
         errMsg.includes('503') ||
-        errMsg.includes('overloaded') ||
-        errMsg.includes('model_timeout');
+        errMsg.includes('overloaded');
 
       if (isNotFound) {
         modelCooldownUntil.set(slotKey, Date.now() + 10 * 60_000);
+      } else if (isTimeout) {
+        modelCooldownUntil.set(slotKey, Date.now() + 5 * 60_000);
       } else if (isQuotaOrTransient) {
         modelCooldownUntil.set(slotKey, Date.now() + 60_000);
       } else {
@@ -770,16 +770,6 @@ app.post(
       return;
     }
     const cleanPrompt = prompt.trim().slice(0, 4000);
-
-    // Instant <10ms response for direct clinic ledger, inventory, debt, and standard dental protocol queries
-    if (!attachment && isInstantClinicQuery(cleanPrompt, clinicContext)) {
-      res.json({
-        reply: generateLocalClinicalResponse(cleanPrompt, clinicContext),
-        model: 'gemini-3.8-flash',
-        modelLabel: 'Gemini 3.8 Flash · استجابة فورية',
-      });
-      return;
-    }
 
     try {
       const clients = getGenAIClientsPool();
