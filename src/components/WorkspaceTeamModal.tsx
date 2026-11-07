@@ -3,12 +3,16 @@ import {
   ArrowUpCircle,
   Building2,
   Check,
+  CheckCircle2,
+  Copy,
   Crown,
   KeyRound,
+  Lock,
   Mail,
   Plus,
   RefreshCw,
   Shield,
+  ShieldCheck,
   Trash2,
   UserCheck,
   UserPlus,
@@ -40,6 +44,9 @@ export interface WorkspaceTeamPanelProps {
   currentRole?: WorkspaceRole;
   members?: WorkspaceMember[];
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
+  ownerEmail?: string | null;
+  doctorName?: string | null;
+  clinicName?: string | null;
 }
 
 export interface WorkspaceTeamModalProps extends WorkspaceTeamPanelProps {
@@ -96,6 +103,9 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   currentRole,
   members,
   notify,
+  ownerEmail,
+  doctorName,
+  clinicName,
 }) => {
   const effectiveWsId = workspaceId || 'alssaedy-clinic';
   const [cloudMembers, setCloudMembers] = useState<WorkspaceMember[]>(() =>
@@ -114,6 +124,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   const [totalRegisteredAccountsCount, setTotalRegisteredAccountsCount] = useState<number>(1);
   const [directoryLoading, setDirectoryLoading] = useState<boolean>(false);
   const [showClinicsList, setShowClinicsList] = useState<boolean>(false);
+  const [copiedEmail, setCopiedEmail] = useState(false);
 
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => auth.currentUser?.email || null);
 
@@ -123,6 +134,56 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     });
     return () => unsubAuth();
   }, []);
+
+  const effectiveIsOwner = isOwner !== undefined ? isOwner : !currentRole || currentRole === 'owner';
+
+  // Authoritative clinic owner email resolution
+  const effectiveOwnerEmail =
+    (ownerEmail && ownerEmail.includes('@') ? ownerEmail : null) ||
+    (effectiveIsOwner && currentUserEmail && currentUserEmail.includes('@') ? currentUserEmail : null) ||
+    localStorage.getItem(`docai_owner_email_${effectiveWsId}`) ||
+    (currentUserEmail && currentUserEmail.includes('@') ? currentUserEmail : null) ||
+    (effectiveWsId === 'alssaedy-clinic' ? 'alssaedy50@gmail.com' : 'owner@clinic.local');
+
+  // Cache resolved owner email locally for subsequent renders
+  useEffect(() => {
+    if (effectiveOwnerEmail && effectiveOwnerEmail.includes('@')) {
+      try {
+        localStorage.setItem(`docai_owner_email_${effectiveWsId}`, effectiveOwnerEmail);
+      } catch {
+        // ignore
+      }
+    }
+  }, [effectiveOwnerEmail, effectiveWsId]);
+
+  const isCurrentUserTheOwner = Boolean(
+    currentUserEmail &&
+    effectiveOwnerEmail &&
+    currentUserEmail.toLowerCase() === effectiveOwnerEmail.toLowerCase()
+  );
+
+  const effectiveOwnerDoctorName =
+    doctorName ||
+    auth.currentUser?.displayName ||
+    (effectiveWsId === 'alssaedy-clinic' ? 'د. صلاح الدين السعيدي' : 'طبيب ومسؤول العيادة');
+
+  const effectiveClinicTitle =
+    clinicName ||
+    (effectiveWsId === 'alssaedy-clinic'
+      ? 'عيادة السعيدي لطب وجراحة الفم والأسنان'
+      : 'عيادة طب وجراحة الفم والأسنان');
+
+  const handleCopyOwnerEmail = () => {
+    if (!effectiveOwnerEmail) return;
+    navigator.clipboard
+      .writeText(effectiveOwnerEmail)
+      .then(() => {
+        setCopiedEmail(true);
+        notify('تم نسخ البريد الإلكتروني لصاحب العيادة بنجاح', 'success');
+        setTimeout(() => setCopiedEmail(false), 2000);
+      })
+      .catch(() => {});
+  };
 
   const isDeveloperSuperAdmin = Boolean(
     currentUserEmail &&
@@ -155,7 +216,6 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     };
   }, [effectiveWsId, isDeveloperSuperAdmin]);
 
-  const effectiveIsOwner = isOwner !== undefined ? isOwner : !currentRole || currentRole === 'owner';
   const displayMembers = members && members.length > 0 ? members : cloudMembers;
 
   const handleAddMember = async (e: React.FormEvent) => {
@@ -343,6 +403,81 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
         </section>
       )}
 
+      {/* Primary Clinic Owner Card (صاحب العيادة الأساسي المنشئ) */}
+      <section className="rounded-2xl border-2 border-amber-500/40 dark:border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-amber-50/40 to-white dark:via-slate-900/90 dark:to-slate-950 p-4 sm:p-4.5 space-y-3 relative overflow-hidden shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center shrink-0 shadow-md">
+              <Crown className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 truncate">
+                  {effectiveOwnerDoctorName}
+                </h3>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                  <ShieldCheck className="w-3 h-3" />
+                  <span>صاحب العيادة (مالك / مدير)</span>
+                </span>
+                {isCurrentUserTheOwner && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>حسابك الحالي المفتوح الآن</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="text-xs font-bold text-slate-600 dark:text-slate-400 truncate">
+                {effectiveClinicTitle}
+              </div>
+
+              {/* Owner Email with Copy button and certified badge */}
+              <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                <div
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono font-black text-slate-900 dark:text-slate-100 shadow-2xs"
+                  dir="ltr"
+                >
+                  <Mail className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>{effectiveOwnerEmail}</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyOwnerEmail}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-[10px] font-bold text-slate-700 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-500/40 transition-colors"
+                  title="نسخ البريد الإلكتروني"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{copiedEmail ? 'تم النسخ!' : 'نسخ'}</span>
+                </button>
+
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  (البريد الإلكتروني الذي تم إنشاء وتوثيق العيادة به)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex sm:flex-col items-end justify-between sm:justify-center gap-1 text-[11px] font-bold text-slate-500 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200 dark:border-slate-800">
+            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-black">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>مفعل ونشط سحابياً</span>
+            </span>
+            <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <Lock className="w-3 h-3" />
+              <span>محمي وغير قابل للحذف</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-amber-500/20 text-[11px] text-slate-600 dark:text-slate-400 flex flex-wrap items-center justify-between gap-2">
+          <span className="font-bold">مستوى التحكم:</span>
+          <span className="font-bold text-slate-800 dark:text-slate-200">
+            كامل الصلاحيات (إدارة الفريق، إصدار وتعديل وحذف السندات، المخزون، والتقارير المالية)
+          </span>
+        </div>
+      </section>
+
       {/* Add Member Form */}
       {effectiveIsOwner ? (
         <section className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 space-y-3">
@@ -431,18 +566,23 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
         </div>
       )}
 
-      {/* Members List */}
+      {/* Additional Members List */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs font-black text-slate-700 dark:text-slate-300 px-1">
-          <span>الحسابات المضافة ({displayMembers.length})</span>
+          <span>الحسابات الإضافية لفريق العمل ({displayMembers.length})</span>
           <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
             حفظ محلي وسحابي فوري
           </span>
         </div>
 
         {displayMembers.length === 0 ? (
-          <div className="p-6 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-            لا توجد حسابات مضافة بعد. أضف حساب محاسب أو طبيب من النموذج أعلاه.
+          <div className="p-5 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 space-y-1">
+            <div className="font-bold text-slate-700 dark:text-slate-300">
+              لا توجد حسابات إضافية مضافة بعد.
+            </div>
+            <div className="text-[11px] text-slate-500">
+              حساب صاحب العيادة موثق في الأعلى. يمكنك إضافة حسابات جديدة للمحاسبين، الأطباء، أو موظفي الاستقبال من النموذج أعلاه.
+            </div>
           </div>
         ) : (
           displayMembers.map((m) => {

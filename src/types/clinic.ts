@@ -66,6 +66,7 @@ export interface ClinicIdentity {
   address: string;
   phones: string;
   defaultCurrency: CurrencyCode;
+  ownerEmail?: string;
 }
 
 export interface ClinicAppearance {

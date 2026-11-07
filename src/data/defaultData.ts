@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
     address: 'ريمة - كسمة - عزلة الضبارة',
     phones: '+967 716 339 366 | +967 739 550 138 | +967 775 956 520',
     defaultCurrency: 'ريال يمني',
+    ownerEmail: 'alssaedy50@gmail.com',
   },
   appearance: {
     primaryColor: '#0B2545',
@@ -151,6 +152,7 @@ export function createInitialClinicSettingsForUser(
       address: '',
       phones: '',
       defaultCurrency: 'ريال يمني',
+      ownerEmail: cleanEmail || '',
     },
     appearance: {
       primaryColor: '#0B2545',

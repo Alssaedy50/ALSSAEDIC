@@ -459,6 +459,7 @@ export async function ensureClinicDocumentInCloud(
         wasCreated = true;
         await setDoc(ref, {
           ownerId: safeUid,
+          ownerEmail: sanitizeStr(auth.currentUser?.email || settings.identity.ownerEmail || '', 160, ''),
           clinicAr: sanitizeStr(
             settings.identity.clinicAr,
             160,
@@ -507,6 +508,7 @@ export async function saveClinicSettingsToCloud(
     await withCloudRetry(async () => {
       const exists = await checkDocExistsByOwner('clinics', safeUid, safeUid);
       const payload = {
+        ownerEmail: sanitizeStr(auth.currentUser?.email || settings.identity.ownerEmail || '', 160, ''),
         clinicAr: sanitizeStr(
           settings.identity.clinicAr,
           160,
@@ -902,6 +904,7 @@ async function fetchClinicCollectionsFromFirestore(
         address: String(d.address ?? ''),
         phones: String(d.phones ?? ''),
         defaultCurrency: validCurrency,
+        ownerEmail: String(d.ownerEmail || auth.currentUser?.email || nextSettings.identity.ownerEmail || ''),
       },
       appearance: {
         primaryColor: String(d.primaryColor || nextSettings.appearance.primaryColor),

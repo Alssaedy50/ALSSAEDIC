@@ -33,6 +33,7 @@ interface ClinicSettingsPanelProps {
   isOwner?: boolean;
   currentRole?: WorkspaceRole;
   isNewAccountSetup?: boolean;
+  ownerEmail?: string | null;
   onDeleteService?: (serviceId: string) => void;
   onSaveSettings: (nextSettings: ClinicSettings) => void;
   onImportFullBackup: (payload: {
@@ -55,6 +56,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   isOwner,
   currentRole,
   isNewAccountSetup,
+  ownerEmail,
   onDeleteService,
   onSaveSettings,
   onImportFullBackup,
@@ -634,6 +636,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             ownerUid={ownerUid || 'local_owner'}
             isOwner={isOwner}
             currentRole={currentRole}
+            ownerEmail={ownerEmail || formState.identity.ownerEmail}
+            doctorName={formState.identity.doctorAr || formState.identity.systemTitleAr}
+            clinicName={formState.identity.clinicAr || formState.identity.systemTitleAr}
             notify={notify}
           />
         </section>
