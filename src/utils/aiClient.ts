@@ -563,12 +563,24 @@ export function isInstantClinicQuery(
 }
 
 export async function queryClinicAssistantDetailed(
-  payload: AssistantRequestPayload
+  payload: AssistantRequestPayload,
+  externalSignal?: AbortSignal
 ): Promise<AssistantDetailedResponse> {
   // Call server endpoint (/api/gemini/assistant) so real Gemini AI answers with full clinic context
   const controller = new AbortController();
   const timeoutMs = 25_000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timer);
+      throw new DOMException('Aborted by user', 'AbortError');
+    }
+    externalSignal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      controller.abort();
+    });
+  }
 
   try {
     const response = await fetch('/api/gemini/assistant', {
@@ -595,9 +607,16 @@ export async function queryClinicAssistantDetailed(
         modelLabel,
       };
     }
-  } catch {
+  } catch (err: unknown) {
     clearTimeout(timer);
+    if (externalSignal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+      throw err;
+    }
     // Server route unreachable or timed out; fall back to local clinical engine
+  }
+
+  if (externalSignal?.aborted) {
+    throw new DOMException('Aborted by user', 'AbortError');
   }
 
   // Fallback to Local Clinical Intelligence Engine only if server/network is completely unreachable

@@ -317,6 +317,17 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     }
   };
 
+  const deduplicateConsecutiveWords = (text: string): string => {
+    const words = text.trim().split(/\s+/);
+    const cleaned: string[] = [];
+    for (let i = 0; i < words.length; i++) {
+      if (i === 0 || words[i] !== words[i - 1]) {
+        cleaned.push(words[i]);
+      }
+    }
+    return cleaned.join(' ');
+  };
+
   const toggleVoiceDictation = () => {
     if (isListening || shouldKeepListeningRef.current) {
       stopVoiceDictation(true);
@@ -358,42 +369,46 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         start: () => void;
         stop: () => void;
       };
-      rec.lang = 'ar-YE';
+      // ar-SA ensures reliable, uninterrupted standard recognition without phone-chime loops
+      rec.lang = 'ar-SA';
       rec.continuous = true;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
 
-      accumulatedTranscriptRef.current = smartInput.trim();
+      const initialBase = smartInput.trim();
+      accumulatedTranscriptRef.current = initialBase;
       currentSessionFinalRef.current = '';
       shouldKeepListeningRef.current = true;
 
       rec.onresult = (event) => {
-        let sessionFinal = '';
-        let sessionInterim = '';
+        let finalTranscripts = '';
+        let interimTranscripts = '';
         for (let i = 0; i < event.results.length; i += 1) {
           const res = event.results[i];
-          const textPiece = res?.[0]?.transcript || '';
+          const textPiece = res?.[0]?.transcript?.trim() || '';
+          if (!textPiece) continue;
           if (res?.isFinal) {
-            sessionFinal += ' ' + textPiece;
+            finalTranscripts += (finalTranscripts ? ' ' : '') + textPiece;
           } else {
-            sessionInterim += ' ' + textPiece;
+            interimTranscripts += (interimTranscripts ? ' ' : '') + textPiece;
           }
         }
-        currentSessionFinalRef.current = sessionFinal.trim();
+        currentSessionFinalRef.current = finalTranscripts;
         const combined = [
-          accumulatedTranscriptRef.current,
-          currentSessionFinalRef.current,
-          sessionInterim.trim(),
+          initialBase,
+          finalTranscripts,
+          interimTranscripts,
         ]
           .filter(Boolean)
           .join(' ')
           .replace(/\s+/g, ' ')
           .trim();
 
-        if (combined) {
-          latestSmartInputRef.current = combined;
-          setSmartInput(combined);
-          applyLocalHeuristic(combined);
+        const deduped = deduplicateConsecutiveWords(combined);
+        if (deduped) {
+          latestSmartInputRef.current = deduped;
+          setSmartInput(deduped);
+          applyLocalHeuristic(deduped);
         }
       };
 
@@ -407,29 +422,12 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       };
 
       rec.onend = () => {
-        if (currentSessionFinalRef.current) {
-          accumulatedTranscriptRef.current = [
-            accumulatedTranscriptRef.current,
-            currentSessionFinalRef.current,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          currentSessionFinalRef.current = '';
-        }
-
-        if (shouldKeepListeningRef.current) {
-          setTimeout(() => {
-            if (!shouldKeepListeningRef.current) return;
-            try {
-              rec.start();
-            } catch {
-              // Ignore if already started
-            }
-          }, 120);
-        } else {
-          setIsListening(false);
+        // Stop cleanly without rapid restart loop to avoid sound chimes and repeated words
+        shouldKeepListeningRef.current = false;
+        setIsListening(false);
+        const finalText = latestSmartInputRef.current.trim();
+        if (finalText) {
+          applyLocalHeuristic(finalText);
         }
       };
 

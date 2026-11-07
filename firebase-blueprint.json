@@ -12,6 +12,11 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "ownerEmail": {
+          "type": "string",
+          "description": "Authenticated email address of the clinic owner.",
+          "maxLength": 160
+        },
         "clinicAr": {
           "type": "string",
           "description": "Arabic name of the dental clinic.",

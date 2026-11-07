@@ -1083,6 +1083,7 @@ export function subscribeToClinicCloudData(
           address: String(d.address ?? ''),
           phones: String(d.phones ?? ''),
           defaultCurrency: validCurrency,
+          ownerEmail: String(d.ownerEmail || auth.currentUser?.email || ''),
         },
         appearance: {
           primaryColor: String(d.primaryColor || '#0B2545'),

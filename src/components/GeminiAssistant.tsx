@@ -7,6 +7,7 @@ import {
   Mic,
   MicOff,
   Send,
+  Square,
   Trash2,
   User,
   Volume2,
@@ -70,6 +71,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   const accumulatedTranscriptRef = useRef<string>('');
   const currentSessionFinalRef = useRef<string>('');
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
@@ -78,6 +80,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         recognitionRef.current?.stop();
       } catch {
         // Ignore
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
     };
   }, []);
@@ -168,6 +173,17 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       .catch(() => {});
   };
 
+  const deduplicateConsecutiveWords = (text: string): string => {
+    const words = text.trim().split(/\s+/);
+    const cleaned: string[] = [];
+    for (let i = 0; i < words.length; i++) {
+      if (i === 0 || words[i] !== words[i - 1]) {
+        cleaned.push(words[i]);
+      }
+    }
+    return cleaned.join(' ');
+  };
+
   const stopVoiceInput = () => {
     shouldKeepListeningRef.current = false;
     setIsListening(false);
@@ -195,7 +211,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         .webkitSpeechRecognition;
 
     if (!SpeechRec) {
-      notify('المتصفح لا يدعم الإملاء الصوتي', 'warning');
+      notify('المتصفح لا يدعم الإملاء الصوتي المباشر', 'warning');
       return;
     }
 
@@ -219,40 +235,48 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         start: () => void;
         stop: () => void;
       };
-      rec.lang = 'ar-YE';
+
+      // Use ar-SA for standard, reliable, uninterrupted speech recognition across all mobile/desktop engines
+      rec.lang = 'ar-SA';
       rec.continuous = true;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
 
-      accumulatedTranscriptRef.current = input.trim();
+      const initialBase = input.trim();
+      accumulatedTranscriptRef.current = initialBase;
       currentSessionFinalRef.current = '';
       shouldKeepListeningRef.current = true;
 
       rec.onresult = (event) => {
-        let sessionFinal = '';
-        let sessionInterim = '';
+        let finalTranscripts = '';
+        let interimTranscripts = '';
+
         for (let i = 0; i < event.results.length; i += 1) {
           const res = event.results[i];
-          const textPiece = res?.[0]?.transcript || '';
+          const textPiece = res?.[0]?.transcript?.trim() || '';
+          if (!textPiece) continue;
           if (res?.isFinal) {
-            sessionFinal += ' ' + textPiece;
+            finalTranscripts += (finalTranscripts ? ' ' : '') + textPiece;
           } else {
-            sessionInterim += ' ' + textPiece;
+            interimTranscripts += (interimTranscripts ? ' ' : '') + textPiece;
           }
         }
-        currentSessionFinalRef.current = sessionFinal.trim();
-        const combined = [
-          accumulatedTranscriptRef.current,
-          currentSessionFinalRef.current,
-          sessionInterim.trim(),
+
+        currentSessionFinalRef.current = finalTranscripts;
+
+        const combinedRaw = [
+          initialBase,
+          finalTranscripts,
+          interimTranscripts,
         ]
           .filter(Boolean)
           .join(' ')
           .replace(/\s+/g, ' ')
           .trim();
 
-        if (combined) {
-          setInput(combined);
+        const deduped = deduplicateConsecutiveWords(combinedRaw);
+        if (deduped) {
+          setInput(deduped);
         }
       };
 
@@ -266,30 +290,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       };
 
       rec.onend = () => {
-        if (currentSessionFinalRef.current) {
-          accumulatedTranscriptRef.current = [
-            accumulatedTranscriptRef.current,
-            currentSessionFinalRef.current,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          currentSessionFinalRef.current = '';
-        }
-
-        if (shouldKeepListeningRef.current) {
-          setTimeout(() => {
-            if (!shouldKeepListeningRef.current) return;
-            try {
-              rec.start();
-            } catch {
-              // Ignore if already running
-            }
-          }, 120);
-        } else {
-          setIsListening(false);
-        }
+        // Smooth single-session completion: avoid rapid reconnect loops that cause repeated beep sounds
+        shouldKeepListeningRef.current = false;
+        setIsListening(false);
+        setInput((prev) => deduplicateConsecutiveWords(prev));
       };
 
       recognitionRef.current = rec;
@@ -299,6 +303,15 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       shouldKeepListeningRef.current = false;
       setIsListening(false);
     }
+  };
+
+  const handleStopResponse = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsSending(false);
+    notify('تم إيقاف توليد الرد بنجاح', 'info');
   };
 
   const sendMessage = async (textOverride?: string) => {
@@ -325,6 +338,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     setAttachment(null);
     setIsSending(true);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const debtors = receipts.filter((r) => (Number(r.remainingAmount) || 0) > 0);
       const lowStock = inventory.filter((i) => Number(i.qty) <= Number(i.minQty));
@@ -338,7 +354,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           totalDebtors: debtors.length,
           byCurrency: currencySummaries,
         },
-        // Complete datasets (never sliced) so reports are 100% accurate across all history
+        // Complete datasets so reports are 100% accurate across all history
         allReceipts: receipts.map((r) => ({
           receiptNo: r.receiptNo,
           date: r.date,
@@ -384,13 +400,20 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         recentExpenses: expenses,
       };
 
-      const assistantResult = await queryClinicAssistantDetailed({
-        prompt: userMsg.text,
-        clinicContext,
-        history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
-        attachment: sentAttachment,
-        taskType: 'chat',
-      });
+      const assistantResult = await queryClinicAssistantDetailed(
+        {
+          prompt: userMsg.text,
+          clinicContext,
+          history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
+          attachment: sentAttachment,
+          taskType: 'chat',
+        },
+        controller.signal
+      );
+
+      if (controller.signal.aborted) {
+        return;
+      }
 
       const assistantMsg: ChatMessage = {
         id: 'msg_a_' + Date.now(),
@@ -401,6 +424,17 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       };
       onAddMessage(assistantMsg);
     } catch (err: unknown) {
+      if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+        const stoppedMsg: ChatMessage = {
+          id: 'msg_stopped_' + Date.now(),
+          role: 'assistant',
+          text: '⏹️ تم إيقاف توليد الرد بناءً على رغبتك.',
+          timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
+        };
+        onAddMessage(stoppedMsg);
+        return;
+      }
+
       const errMsg: ChatMessage = {
         id: 'msg_err_' + Date.now(),
         role: 'assistant',
@@ -409,6 +443,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       };
       onAddMessage(errMsg);
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       setIsSending(false);
     }
   };
@@ -611,9 +648,20 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           )}
 
           {isSending && (
-            <div className="flex items-center gap-2 text-xs font-bold text-sky-600 dark:text-sky-400 px-2 py-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>جاري التحليل...</span>
+            <div className="flex items-center justify-between gap-2 text-xs font-bold text-sky-700 dark:text-sky-300 px-3.5 py-2.5 bg-sky-50/90 dark:bg-sky-950/60 rounded-xl border border-sky-200 dark:border-sky-900 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-sky-500 shrink-0" />
+                <span>جاري معالجة وتوليد الرد...</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleStopResponse}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-xs transition-colors shrink-0"
+                title="إيقاف توليد الرد الآن"
+              >
+                <Square className="w-3 h-3 fill-current" />
+                <span>إيقاف الرد</span>
+              </button>
             </div>
           )}
         </div>
@@ -682,15 +730,28 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
           />
 
-          <button
-            type="submit"
-            disabled={isSending || (!input.trim() && !attachment)}
-            aria-label="إرسال"
-            title="إرسال"
-            className="w-9 h-9 sm:w-10 sm:h-10 inline-flex items-center justify-center text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
-          >
-            <Send className="w-4 h-4" />
-          </button>
+          {isSending ? (
+            <button
+              type="button"
+              onClick={handleStopResponse}
+              aria-label="إيقاف الرد"
+              title="إيقاف توليد الرد الآن"
+              className="h-9 sm:h-10 px-3 inline-flex items-center justify-center gap-1.5 text-white bg-rose-600 hover:bg-rose-500 rounded-xl shrink-0 transition-colors shadow-xs animate-pulse"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span className="text-xs font-bold">إيقاف</span>
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!input.trim() && !attachment}
+              aria-label="إرسال"
+              title="إرسال"
+              className="w-9 h-9 sm:w-10 sm:h-10 inline-flex items-center justify-center text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </form>
     </div>
