@@ -294,14 +294,17 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
     date: sanitizeStr(receipt.date, 30, new Date().toISOString().slice(0, 10)),
     patientName,
     patientPhone: sanitizeStr(receipt.patientPhone, 50, ''),
-    services: (Array.isArray(receipt.services) ? receipt.services : [])
-      .map((s) =>
-        sanitizeStr(s, 140, '')
-          .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
-          .replace(/تجليح/g, 'تقليح')
-      )
-      .filter(Boolean)
-      .slice(0, 25),
+    services: (() => {
+      const cleaned = (Array.isArray(receipt.services) ? receipt.services : [])
+        .map((s) =>
+          sanitizeStr(s, 140, '')
+            .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
+            .replace(/تجليح/g, 'تقليح')
+        )
+        .filter(Boolean)
+        .slice(0, 25);
+      return cleaned.length > 0 ? cleaned : ['كشف ومعاينة'];
+    })(),
     toothFDI: sanitizeStr(receipt.toothFDI, 200, ''),
     totalAmount,
     paidAmount,
@@ -504,6 +507,53 @@ function clearPendingDelete<K extends keyof PendingClinicSyncState['deletes']>(
   }
 }
 
+const LOCAL_COLLECTION_STORAGE_KEYS: Record<
+  keyof PendingClinicSyncState['upserts'],
+  string | null
+> = {
+  services: null,
+  receipts: 'docai_gemini_receipts_v3',
+  inventory: 'docai_gemini_inventory_v3',
+  expenses: 'docai_gemini_expenses_v3',
+};
+
+function readLocalScopedCollectionItems<T extends { id: string }>(
+  uid: string,
+  collectionKey: keyof PendingClinicSyncState['upserts']
+): T[] {
+  const baseKey = LOCAL_COLLECTION_STORAGE_KEYS[collectionKey];
+  if (!baseKey || typeof window === 'undefined' || !window.localStorage) return [];
+  try {
+    const safeUid = sanitizeId(uid);
+    const raw = window.localStorage.getItem(`${baseKey}_${safeUid}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const demoSet =
+      collectionKey === 'receipts'
+        ? SEED_DEMO_IDS.receipts
+        : collectionKey === 'inventory'
+          ? SEED_DEMO_IDS.inventory
+          : collectionKey === 'expenses'
+            ? SEED_DEMO_IDS.expenses
+            : null;
+    return parsed.filter(
+      (item): item is T =>
+        Boolean(item && typeof item.id === 'string' && (!demoSet || !demoSet.has(item.id)))
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function getDeletedRecordIds(
+  uid: string,
+  collectionKey: keyof PendingClinicSyncState['deletes']
+): Set<string> {
+  const state = loadPendingSyncState(uid);
+  return new Set(state.deletes[collectionKey]);
+}
+
 function applyPendingQueueToItems<T extends { id: string }>(
   uid: string,
   collectionKey: keyof PendingClinicSyncState['upserts'],
@@ -512,13 +562,22 @@ function applyPendingQueueToItems<T extends { id: string }>(
   const state = loadPendingSyncState(uid);
   const deleteSet = new Set(state.deletes[collectionKey]);
   const pendingUpsertsMap = state.upserts[collectionKey] as unknown as Record<string, T>;
+  const localItems = readLocalScopedCollectionItems<T>(uid, collectionKey);
 
   const resultMap = new Map<string, T>();
+  // 1. Preserve any existing local records that haven't been deleted
+  for (const localItem of localItems) {
+    if (localItem && localItem.id && !deleteSet.has(localItem.id)) {
+      resultMap.set(localItem.id, localItem);
+    }
+  }
+  // 2. Apply authoritative cloud records
   for (const item of cloudItems) {
     if (item && item.id && !deleteSet.has(item.id)) {
       resultMap.set(item.id, item);
     }
   }
+  // 3. Apply latest pending local upserts on top
   for (const [id, pendingItem] of Object.entries(pendingUpsertsMap)) {
     if (pendingItem && !deleteSet.has(id)) {
       resultMap.set(id, pendingItem);
@@ -808,19 +867,43 @@ export async function ensureClinicDocumentInCloud(
         const exists = await checkDocExistsFast('clinics', safeUid, safeUid);
         if (!exists) {
           wasCreated = true;
-          await setDoc(ref, {
+          const createPayload = {
             ownerId: safeUid,
             clinicAr: sanitizeStr(
               effectiveSettings.identity.clinicAr,
               160,
-              'عيادة طب وجراحة الفم والأسنان'
+              'عيادة السعيدي لطب وجراحة الفم والأسنان'
             ),
-            doctorAr: sanitizeStr(effectiveSettings.identity.doctorAr, 160, ''),
-            specialtyAr: sanitizeStr(effectiveSettings.identity.specialtyAr, 200, ''),
-            clinicEn: sanitizeStr(effectiveSettings.identity.clinicEn, 160, ''),
-            doctorEn: sanitizeStr(effectiveSettings.identity.doctorEn, 160, ''),
-            address: sanitizeStr(effectiveSettings.identity.address, 250, ''),
-            phones: sanitizeStr(effectiveSettings.identity.phones, 200, ''),
+            doctorAr: sanitizeStr(
+              effectiveSettings.identity.doctorAr,
+              160,
+              'د. صلاح الدين السعيدي'
+            ),
+            specialtyAr: sanitizeStr(
+              effectiveSettings.identity.specialtyAr,
+              200,
+              'طب وجراحة الفم والأسنان'
+            ),
+            clinicEn: sanitizeStr(
+              effectiveSettings.identity.clinicEn,
+              160,
+              'ALSSAEDY CLINIC FOR DENTISTRY'
+            ),
+            doctorEn: sanitizeStr(
+              effectiveSettings.identity.doctorEn,
+              160,
+              'Dr. Salahaldeen Alssaedy'
+            ),
+            address: sanitizeStr(
+              effectiveSettings.identity.address,
+              250,
+              'ريمة - كسمة - عزلة الضبارة'
+            ),
+            phones: sanitizeStr(
+              effectiveSettings.identity.phones,
+              200,
+              '+967 716 339 366'
+            ),
             defaultCurrency: sanitizeStr(
               effectiveSettings.identity.defaultCurrency,
               40,
@@ -842,7 +925,13 @@ export async function ensureClinicDocumentInCloud(
             ),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-          });
+          };
+          try {
+            await setDoc(ref, createPayload);
+          } catch {
+            const { ownerId: _o, createdAt: _c, ...updateFields } = createPayload;
+            await updateDoc(ref, updateFields);
+          }
         }
       });
       verifiedClinicParentUids.add(safeUid);
@@ -887,14 +976,38 @@ export async function saveClinicSettingsToCloud(
         clinicAr: sanitizeStr(
           settings.identity.clinicAr,
           160,
-          'عيادة طب وجراحة الفم والأسنان'
+          'عيادة السعيدي لطب وجراحة الفم والأسنان'
         ),
-        doctorAr: sanitizeStr(settings.identity.doctorAr, 160, ''),
-        specialtyAr: sanitizeStr(settings.identity.specialtyAr, 200, ''),
-        clinicEn: sanitizeStr(settings.identity.clinicEn, 160, ''),
-        doctorEn: sanitizeStr(settings.identity.doctorEn, 160, ''),
-        address: sanitizeStr(settings.identity.address, 250, ''),
-        phones: sanitizeStr(settings.identity.phones, 200, ''),
+        doctorAr: sanitizeStr(
+          settings.identity.doctorAr,
+          160,
+          'د. صلاح الدين السعيدي'
+        ),
+        specialtyAr: sanitizeStr(
+          settings.identity.specialtyAr,
+          200,
+          'طب وجراحة الفم والأسنان'
+        ),
+        clinicEn: sanitizeStr(
+          settings.identity.clinicEn,
+          160,
+          'ALSSAEDY CLINIC FOR DENTISTRY'
+        ),
+        doctorEn: sanitizeStr(
+          settings.identity.doctorEn,
+          160,
+          'Dr. Salahaldeen Alssaedy'
+        ),
+        address: sanitizeStr(
+          settings.identity.address,
+          250,
+          'ريمة - كسمة - عزلة الضبارة'
+        ),
+        phones: sanitizeStr(
+          settings.identity.phones,
+          200,
+          '+967 716 339 366'
+        ),
         defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
         primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
         watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
@@ -910,13 +1023,25 @@ export async function saveClinicSettingsToCloud(
       };
 
       if (exists) {
-        await updateDoc(ref, payload);
+        try {
+          await updateDoc(ref, payload);
+        } catch {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...payload,
+            createdAt: serverTimestamp(),
+          });
+        }
       } else {
-        await setDoc(ref, {
-          ownerId: safeUid,
-          ...payload,
-          createdAt: serverTimestamp(),
-        });
+        try {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...payload,
+            createdAt: serverTimestamp(),
+          });
+        } catch {
+          await updateDoc(ref, payload);
+        }
       }
     });
 
@@ -1019,7 +1144,8 @@ export async function deleteServiceFromCloud(uid: string, serviceId: string): Pr
 
 export async function saveReceiptToCloud(
   uid: string,
-  receipt: ReceiptRecord
+  receipt: ReceiptRecord,
+  settings?: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
   if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
@@ -1033,7 +1159,7 @@ export async function saveReceiptToCloud(
   const ref = doc(db, 'receipts', docId);
 
   try {
-    await ensureClinicDocumentInCloud(safeUid);
+    await ensureClinicDocumentInCloud(safeUid, settings);
     await withCloudRetry(async () => {
       const exists = await checkDocExistsFast('receipts', safeUid, docId);
       const mutableFields = {
@@ -1057,13 +1183,25 @@ export async function saveReceiptToCloud(
       };
 
       if (exists) {
-        await updateDoc(ref, mutableFields);
+        try {
+          await updateDoc(ref, mutableFields);
+        } catch {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...mutableFields,
+            createdAt: serverTimestamp(),
+          });
+        }
       } else {
-        await setDoc(ref, {
-          ownerId: safeUid,
-          ...mutableFields,
-          createdAt: serverTimestamp(),
-        });
+        try {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...mutableFields,
+            createdAt: serverTimestamp(),
+          });
+        } catch {
+          await updateDoc(ref, mutableFields);
+        }
       }
     });
     clearPendingUpsert(safeUid, 'receipts', validated.id);
@@ -1091,7 +1229,8 @@ export async function deleteReceiptFromCloud(uid: string, receiptId: string): Pr
 
 export async function saveInventoryItemToCloud(
   uid: string,
-  item: InventoryItem
+  item: InventoryItem,
+  settings?: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
   if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
@@ -1105,12 +1244,12 @@ export async function saveInventoryItemToCloud(
   const ref = doc(db, 'inventory', docId);
 
   try {
-    await ensureClinicDocumentInCloud(safeUid);
+    await ensureClinicDocumentInCloud(safeUid, settings);
     await withCloudRetry(async () => {
       const exists = await checkDocExistsFast('inventory', safeUid, docId);
       const mutableFields = {
         name: validated.name,
-        category: validated.notes,
+        category: sanitizeStr(validated.notes, 160, 'مستلزمات سنية'),
         qty: validated.qty,
         minQty: validated.minQty,
         unit: validated.unit,
@@ -1121,13 +1260,25 @@ export async function saveInventoryItemToCloud(
       };
 
       if (exists) {
-        await updateDoc(ref, mutableFields);
+        try {
+          await updateDoc(ref, mutableFields);
+        } catch {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...mutableFields,
+            createdAt: serverTimestamp(),
+          });
+        }
       } else {
-        await setDoc(ref, {
-          ownerId: safeUid,
-          ...mutableFields,
-          createdAt: serverTimestamp(),
-        });
+        try {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...mutableFields,
+            createdAt: serverTimestamp(),
+          });
+        } catch {
+          await updateDoc(ref, mutableFields);
+        }
       }
     });
     clearPendingUpsert(safeUid, 'inventory', validated.id);
@@ -1155,7 +1306,8 @@ export async function deleteInventoryItemFromCloud(uid: string, itemId: string):
 
 export async function saveExpenseToCloud(
   uid: string,
-  expense: ExpenseRecord
+  expense: ExpenseRecord,
+  settings?: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
   if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
@@ -1169,7 +1321,7 @@ export async function saveExpenseToCloud(
   const ref = doc(db, 'expenses', docId);
 
   try {
-    await ensureClinicDocumentInCloud(safeUid);
+    await ensureClinicDocumentInCloud(safeUid, settings);
     await withCloudRetry(async () => {
       const exists = await checkDocExistsFast('expenses', safeUid, docId);
       const mutableFields = {
@@ -1182,13 +1334,25 @@ export async function saveExpenseToCloud(
       };
 
       if (exists) {
-        await updateDoc(ref, mutableFields);
+        try {
+          await updateDoc(ref, mutableFields);
+        } catch {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...mutableFields,
+            createdAt: serverTimestamp(),
+          });
+        }
       } else {
-        await setDoc(ref, {
-          ownerId: safeUid,
-          ...mutableFields,
-          createdAt: serverTimestamp(),
-        });
+        try {
+          await setDoc(ref, {
+            ownerId: safeUid,
+            ...mutableFields,
+            createdAt: serverTimestamp(),
+          });
+        } catch {
+          await updateDoc(ref, mutableFields);
+        }
       }
     });
     clearPendingUpsert(safeUid, 'expenses', validated.id);
@@ -1221,15 +1385,7 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
 
   const isBrowserOnline =
     typeof navigator === 'undefined' ? true : navigator.onLine !== false;
-  const isPermanentRuleOrDataError = (err: unknown): boolean => {
-    const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-    return (
-      isBrowserOnline &&
-      (msg.includes('permission-denied') ||
-        msg.includes('missing or insufficient permissions') ||
-        msg.includes('invalid-argument'))
-    );
-  };
+  if (!isBrowserOnline) return;
 
   const state = loadPendingSyncState(safeUid);
   const isOwner = auth.currentUser?.uid === safeUid;
@@ -1237,56 +1393,36 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
   if (isOwner && state.settings) {
     try {
       await saveClinicSettingsToCloud(safeUid, state.settings);
-    } catch (err) {
-      if (isPermanentRuleOrDataError(err)) {
-        const afterState = loadPendingSyncState(safeUid);
-        delete afterState.settings;
-        savePendingSyncState(safeUid, afterState);
-      }
+    } catch {
+      // Keep settings in pending queue to retry
     }
   } else {
     try {
       await ensureClinicDocumentInCloud(safeUid);
     } catch {
-      if (!isBrowserOnline) return;
+      // Ignore parent creation failure and let individual writes attempt it
     }
   }
 
   if (isOwner) {
     for (const srv of Object.values(state.upserts.services)) {
-      await saveServiceToCloud(safeUid, srv).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingUpsert(safeUid, 'services', srv.id);
-        }
-      });
+      await saveServiceToCloud(safeUid, srv).catch(() => {});
     }
     for (const srvId of [...state.deletes.services]) {
-      await deleteServiceFromCloud(safeUid, srvId).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingDelete(safeUid, 'services', srvId);
-        }
-      });
+      await deleteServiceFromCloud(safeUid, srvId).catch(() => {});
     }
   }
 
   for (const rec of Object.values(state.upserts.receipts)) {
     if (!SEED_DEMO_IDS.receipts.has(rec.id)) {
-      await saveReceiptToCloud(safeUid, rec).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingUpsert(safeUid, 'receipts', rec.id);
-        }
-      });
+      await saveReceiptToCloud(safeUid, rec).catch(() => {});
     } else {
       clearPendingUpsert(safeUid, 'receipts', rec.id);
     }
   }
   for (const recId of [...state.deletes.receipts]) {
     if (isOwner) {
-      await deleteReceiptFromCloud(safeUid, recId).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingDelete(safeUid, 'receipts', recId);
-        }
-      });
+      await deleteReceiptFromCloud(safeUid, recId).catch(() => {});
     } else {
       clearPendingDelete(safeUid, 'receipts', recId);
     }
@@ -1294,22 +1430,14 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
 
   for (const inv of Object.values(state.upserts.inventory)) {
     if (!SEED_DEMO_IDS.inventory.has(inv.id)) {
-      await saveInventoryItemToCloud(safeUid, inv).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingUpsert(safeUid, 'inventory', inv.id);
-        }
-      });
+      await saveInventoryItemToCloud(safeUid, inv).catch(() => {});
     } else {
       clearPendingUpsert(safeUid, 'inventory', inv.id);
     }
   }
   for (const invId of [...state.deletes.inventory]) {
     if (isOwner) {
-      await deleteInventoryItemFromCloud(safeUid, invId).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingDelete(safeUid, 'inventory', invId);
-        }
-      });
+      await deleteInventoryItemFromCloud(safeUid, invId).catch(() => {});
     } else {
       clearPendingDelete(safeUid, 'inventory', invId);
     }
@@ -1317,22 +1445,14 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
 
   for (const exp of Object.values(state.upserts.expenses)) {
     if (!SEED_DEMO_IDS.expenses.has(exp.id)) {
-      await saveExpenseToCloud(safeUid, exp).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingUpsert(safeUid, 'expenses', exp.id);
-        }
-      });
+      await saveExpenseToCloud(safeUid, exp).catch(() => {});
     } else {
       clearPendingUpsert(safeUid, 'expenses', exp.id);
     }
   }
   for (const expId of [...state.deletes.expenses]) {
     if (isOwner) {
-      await deleteExpenseFromCloud(safeUid, expId).catch((err) => {
-        if (isPermanentRuleOrDataError(err)) {
-          clearPendingDelete(safeUid, 'expenses', expId);
-        }
-      });
+      await deleteExpenseFromCloud(safeUid, expId).catch(() => {});
     } else {
       clearPendingDelete(safeUid, 'expenses', expId);
     }
@@ -1815,9 +1935,15 @@ export function subscribeToClinicCloudData(
           };
         });
 
+      const cloudIds = new Set(items.map((r) => r.id));
       const merged = applyPendingQueueToItems(safeUid, 'receipts', items).sort(
         (a, b) => b.receiptNo - a.receiptNo
       );
+      for (const rec of merged) {
+        if (!cloudIds.has(rec.id) && !SEED_DEMO_IDS.receipts.has(rec.id)) {
+          saveReceiptToCloud(safeUid, rec).catch(() => {});
+        }
+      }
       callbacks.onReceiptsUpdate(merged);
     },
     (err) => {
@@ -1855,7 +1981,13 @@ export function subscribeToClinicCloudData(
           };
         });
 
+      const cloudIds = new Set(items.map((i) => i.id));
       const merged = applyPendingQueueToItems(safeUid, 'inventory', items);
+      for (const inv of merged) {
+        if (!cloudIds.has(inv.id) && !SEED_DEMO_IDS.inventory.has(inv.id)) {
+          saveInventoryItemToCloud(safeUid, inv).catch(() => {});
+        }
+      }
       callbacks.onInventoryUpdate(merged);
     },
     (err) => {
@@ -1887,9 +2019,15 @@ export function subscribeToClinicCloudData(
           };
         });
 
+      const cloudIds = new Set(items.map((e) => e.id));
       const merged = applyPendingQueueToItems(safeUid, 'expenses', items).sort((a, b) =>
         b.date.localeCompare(a.date)
       );
+      for (const exp of merged) {
+        if (!cloudIds.has(exp.id) && !SEED_DEMO_IDS.expenses.has(exp.id)) {
+          saveExpenseToCloud(safeUid, exp).catch(() => {});
+        }
+      }
       callbacks.onExpensesUpdate(merged);
     },
     (err) => {
@@ -2555,7 +2693,7 @@ export async function lookupUserWorkspaceByEmail(
   addedBy: string;
 } | null> {
   const cleanEmail = String(email || '').trim().toLowerCase();
-  if (!cleanEmail) return null;
+  if (!cleanEmail || isSuperAdminEmail(cleanEmail)) return null;
   const memberKey = normalizeEmailKey(cleanEmail);
   const ref = doc(db, 'user_workspaces', memberKey);
 
@@ -2566,6 +2704,10 @@ export async function lookupUserWorkspaceByEmail(
     const addedBy = String(d.addedBy || '');
     // If the user added their own email to their own workspace, treat them as primary clinic owner
     if (!addedBy || (auth.currentUser && addedBy === auth.currentUser.uid)) {
+      return null;
+    }
+    const parentExists = await checkDocExistsFast('clinics', addedBy, addedBy);
+    if (!parentExists) {
       return null;
     }
     const role = (d.role || 'viewer') as WorkspaceRole;

@@ -63,6 +63,7 @@ import {
   ensureClinicDocumentInCloud,
   extractClinicIdFromEmail,
   flushPendingSyncQueue,
+  getDeletedRecordIds,
   initializeOrLoadUserClinicInCloud,
   issueServerSessionToken,
   lookupUserWorkspaceByEmail,
@@ -296,6 +297,26 @@ export default function App() {
     }
   }, [activeSection]);
 
+  const persistCollectionToLocal = <T,>(
+    baseKey: string,
+    items: T[],
+    explicitOwnerUid?: string | null
+  ) => {
+    try {
+      const targetUid =
+        explicitOwnerUid !== undefined
+          ? explicitOwnerUid
+          : activeClinicOwnerUid || currentUser?.uid || auth.currentUser?.uid || null;
+      const serialized = JSON.stringify(items);
+      if (targetUid) {
+        localStorage.setItem(getScopedStorageKey(baseKey, targetUid), serialized);
+      }
+      localStorage.setItem(baseKey, serialized);
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
+
   useEffect(() => {
     if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
       return;
@@ -308,24 +329,21 @@ export default function App() {
     if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
       return;
     }
-    const scopedKey = getScopedStorageKey(STORAGE_KEYS.RECEIPTS, activeClinicOwnerUid);
-    localStorage.setItem(scopedKey, JSON.stringify(receipts));
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, receipts, activeClinicOwnerUid);
   }, [receipts, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
     if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
       return;
     }
-    const scopedKey = getScopedStorageKey(STORAGE_KEYS.INVENTORY, activeClinicOwnerUid);
-    localStorage.setItem(scopedKey, JSON.stringify(inventory));
+    persistCollectionToLocal(STORAGE_KEYS.INVENTORY, inventory, activeClinicOwnerUid);
   }, [inventory, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
     if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
       return;
     }
-    const scopedKey = getScopedStorageKey(STORAGE_KEYS.EXPENSES, activeClinicOwnerUid);
-    localStorage.setItem(scopedKey, JSON.stringify(expenses));
+    persistCollectionToLocal(STORAGE_KEYS.EXPENSES, expenses, activeClinicOwnerUid);
   }, [expenses, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
@@ -576,10 +594,10 @@ export default function App() {
             const scopedInventory = mergeLocalArrays(rawScopedInventory, unscopedInventory);
             const scopedExpenses = mergeLocalArrays(rawScopedExpenses, unscopedExpenses);
 
-            // Clear unscoped records once merged into owner's clinic so they never leak to other accounts
-            if (unscopedReceipts.length > 0) localStorage.removeItem(STORAGE_KEYS.RECEIPTS);
-            if (unscopedInventory.length > 0) localStorage.removeItem(STORAGE_KEYS.INVENTORY);
-            if (unscopedExpenses.length > 0) localStorage.removeItem(STORAGE_KEYS.EXPENSES);
+            // Immediately persist merged records to the user-scoped storage keys so nothing is lost on refresh
+            persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, scopedReceipts, user.uid);
+            persistCollectionToLocal(STORAGE_KEYS.INVENTORY, scopedInventory, user.uid);
+            persistCollectionToLocal(STORAGE_KEYS.EXPENSES, scopedExpenses, user.uid);
 
             setSettings(scopedSettings);
             setReceipts(scopedReceipts);
@@ -596,6 +614,10 @@ export default function App() {
                 scopedInventory,
                 scopedExpenses
               );
+
+              persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, data.receipts, user.uid);
+              persistCollectionToLocal(STORAGE_KEYS.INVENTORY, data.inventory, user.uid);
+              persistCollectionToLocal(STORAGE_KEYS.EXPENSES, data.expenses, user.uid);
 
               setSettings(data.settings);
               setReceipts(data.receipts);
@@ -715,13 +737,61 @@ export default function App() {
         }
       },
       onReceiptsUpdate: (cloudReceipts) => {
-        setReceipts(cloudReceipts);
+        setReceipts((prev) => {
+          const deletedIds = getDeletedRecordIds(cloudTargetUid, 'receipts');
+          const map = new Map<string, ReceiptRecord>();
+          for (const r of prev) {
+            if (r && r.id && !deletedIds.has(r.id) && !SEED_DEMO_IDS.receipts.has(r.id)) {
+              map.set(r.id, r);
+            }
+          }
+          for (const r of cloudReceipts) {
+            if (r && r.id && !deletedIds.has(r.id) && !SEED_DEMO_IDS.receipts.has(r.id)) {
+              map.set(r.id, r);
+            }
+          }
+          const merged = Array.from(map.values()).sort((a, b) => b.receiptNo - a.receiptNo);
+          persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, merged, cloudTargetUid);
+          return merged;
+        });
       },
       onInventoryUpdate: (cloudInventory) => {
-        setInventory(cloudInventory);
+        setInventory((prev) => {
+          const deletedIds = getDeletedRecordIds(cloudTargetUid, 'inventory');
+          const map = new Map<string, InventoryItem>();
+          for (const i of prev) {
+            if (i && i.id && !deletedIds.has(i.id) && !SEED_DEMO_IDS.inventory.has(i.id)) {
+              map.set(i.id, i);
+            }
+          }
+          for (const i of cloudInventory) {
+            if (i && i.id && !deletedIds.has(i.id) && !SEED_DEMO_IDS.inventory.has(i.id)) {
+              map.set(i.id, i);
+            }
+          }
+          const merged = Array.from(map.values());
+          persistCollectionToLocal(STORAGE_KEYS.INVENTORY, merged, cloudTargetUid);
+          return merged;
+        });
       },
       onExpensesUpdate: (cloudExpenses) => {
-        setExpenses(cloudExpenses);
+        setExpenses((prev) => {
+          const deletedIds = getDeletedRecordIds(cloudTargetUid, 'expenses');
+          const map = new Map<string, ExpenseRecord>();
+          for (const e of prev) {
+            if (e && e.id && !deletedIds.has(e.id) && !SEED_DEMO_IDS.expenses.has(e.id)) {
+              map.set(e.id, e);
+            }
+          }
+          for (const e of cloudExpenses) {
+            if (e && e.id && !deletedIds.has(e.id) && !SEED_DEMO_IDS.expenses.has(e.id)) {
+              map.set(e.id, e);
+            }
+          }
+          const merged = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+          persistCollectionToLocal(STORAGE_KEYS.EXPENSES, merged, cloudTargetUid);
+          return merged;
+        });
       },
     });
 
@@ -1067,9 +1137,9 @@ export default function App() {
       return [record, ...receipts];
     })();
 
-    setReceipts(nextReceiptsList);
-
     const targetClinicUid = cloudTargetUid;
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
+    setReceipts(nextReceiptsList);
 
     let nextInventoryList = inventory;
     if (!isEdit && settings.features.autoInventory && record.services.length > 0) {
@@ -1083,27 +1153,27 @@ export default function App() {
             updatedAt: new Date().toISOString().slice(0, 10),
           });
           if (targetClinicUid) {
-            saveInventoryItemToCloud(targetClinicUid, updatedItem).catch(() => {});
+            saveInventoryItemToCloud(targetClinicUid, updatedItem, settings).catch(() => {});
           }
           return updatedItem;
         }
         return item;
       });
+      persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
       setInventory(nextInventoryList);
     }
 
     setEditingReceipt(null);
 
     if (targetClinicUid) {
-      ensureClinicDocumentInCloud(targetClinicUid, settings)
-        .then(() => saveReceiptToCloud(targetClinicUid, record))
+      saveReceiptToCloud(targetClinicUid, record, settings)
         .then(() => {
           notify(`تم حفظ السند #${record.receiptNo} ومزامنته سحابياً`, 'success');
         })
         .catch(() => {
           notify(
-            `تم حفظ السند #${record.receiptNo} محلياً فقط — تعذر المزامنة السحابية`,
-            'warning'
+            `تم حفظ السند #${record.receiptNo} محلياً وسيتم رفع النسخة السحابية تلقائياً`,
+            'info'
           );
         });
     } else {
@@ -1154,16 +1224,17 @@ export default function App() {
       return updated;
     });
 
+    const targetClinicUid = cloudTargetUid;
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
     setReceipts(nextReceiptsList);
 
-    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid && settledRecord) {
-      saveReceiptToCloud(targetClinicUid, settledRecord)
+      saveReceiptToCloud(targetClinicUid, settledRecord, settings)
         .then(() => {
           notify('تم تسديد الدفعة ومزامنتها سحابياً', 'success');
         })
         .catch(() => {
-          notify('تم تسديد الدفعة محلياً فقط — تعذر المزامنة السحابية', 'warning');
+          notify('تم تسديد الدفعة وحفظها محلياً — ستتم المزامنة السحابية تلقائياً', 'info');
         });
     } else {
       notify('تم تسديد الدفعة بنجاح', 'success');
@@ -1187,11 +1258,11 @@ export default function App() {
       return;
     }
 
+    const targetClinicUid = cloudTargetUid;
     const deletedReceipt = receipts.find((r) => r.id === receiptId);
     const nextReceiptsList = receipts.filter((r) => r.id !== receiptId);
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
     setReceipts(nextReceiptsList);
-
-    const targetClinicUid = cloudTargetUid;
 
     let nextInventoryList = inventory;
     if (
@@ -1211,12 +1282,13 @@ export default function App() {
             updatedAt: today,
           });
           if (targetClinicUid) {
-            saveInventoryItemToCloud(targetClinicUid, updatedItem).catch(() => {});
+            saveInventoryItemToCloud(targetClinicUid, updatedItem, settings).catch(() => {});
           }
           return updatedItem;
         }
         return item;
       });
+      persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
       setInventory(nextInventoryList);
     }
 
@@ -1242,6 +1314,7 @@ export default function App() {
       return;
     }
 
+    const targetClinicUid = cloudTargetUid;
     const today = new Date().toISOString().slice(0, 10);
     const newItem = validateAndNormalizeInventoryItem({
       ...payload,
@@ -1258,6 +1331,7 @@ export default function App() {
       }
       return [newItem, ...inventory];
     })();
+    persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
     setInventory(nextInventoryList);
 
     let createdExpense: ExpenseRecord | null = null;
@@ -1271,23 +1345,23 @@ export default function App() {
         date: today,
       });
       createdExpense = exp;
-      setExpenses([exp, ...expenses]);
+      const nextExpenses = [exp, ...expenses];
+      persistCollectionToLocal(STORAGE_KEYS.EXPENSES, nextExpenses, targetClinicUid);
+      setExpenses(nextExpenses);
     }
 
-    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid) {
-      ensureClinicDocumentInCloud(targetClinicUid, settings)
+      saveInventoryItemToCloud(targetClinicUid, newItem, settings)
         .then(async () => {
-          await saveInventoryItemToCloud(targetClinicUid, newItem);
           if (createdExpense) {
-            await saveExpenseToCloud(targetClinicUid, createdExpense);
+            await saveExpenseToCloud(targetClinicUid, createdExpense, settings);
           }
         })
         .then(() => {
           notify(`تم حفظ الصنف (${newItem.name}) ومزامنته سحابياً`, 'success');
         })
         .catch(() => {
-          notify(`تم حفظ الصنف (${newItem.name}) محلياً فقط — تعذر المزامنة السحابية`, 'warning');
+          notify(`تم حفظ الصنف (${newItem.name}) محلياً وستتم المزامنة تلقائياً`, 'info');
         });
     } else {
       notify(`تم حفظ الصنف (${newItem.name})`, 'success');
@@ -1300,6 +1374,7 @@ export default function App() {
       return;
     }
 
+    const targetClinicUid = cloudTargetUid;
     let updatedTarget: InventoryItem | null = null;
     const nextInventoryList = inventory.map((item) => {
       if (item.id !== id) return item;
@@ -1313,12 +1388,12 @@ export default function App() {
       updatedTarget = updated;
       return updated;
     });
+    persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
     setInventory(nextInventoryList);
 
-    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid && updatedTarget) {
-      saveInventoryItemToCloud(targetClinicUid, updatedTarget).catch(() => {
-        notify('تم خصم الاستهلاك محلياً فقط — تعذر المزامنة السحابية', 'warning');
+      saveInventoryItemToCloud(targetClinicUid, updatedTarget, settings).catch(() => {
+        notify('تم خصم الاستهلاك محلياً وستتم المزامنة تلقائياً', 'info');
       });
     }
     notify('تم خصم الاستهلاك', 'info');
@@ -1330,6 +1405,7 @@ export default function App() {
       return;
     }
 
+    const targetClinicUid = cloudTargetUid;
     const today = new Date().toISOString().slice(0, 10);
     let nextExpensesList = expenses;
     let updatedTarget: InventoryItem | null = null;
@@ -1349,6 +1425,7 @@ export default function App() {
         });
         restockExpense = exp;
         nextExpensesList = [exp, ...nextExpensesList];
+        persistCollectionToLocal(STORAGE_KEYS.EXPENSES, nextExpensesList, targetClinicUid);
         setExpenses(nextExpensesList);
       }
       const updated = validateAndNormalizeInventoryItem({
@@ -1360,18 +1437,18 @@ export default function App() {
       updatedTarget = updated;
       return updated;
     });
+    persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
     setInventory(nextInventoryList);
 
-    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid && updatedTarget) {
-      saveInventoryItemToCloud(targetClinicUid, updatedTarget)
+      saveInventoryItemToCloud(targetClinicUid, updatedTarget, settings)
         .then(async () => {
           if (restockExpense) {
-            await saveExpenseToCloud(targetClinicUid, restockExpense);
+            await saveExpenseToCloud(targetClinicUid, restockExpense, settings);
           }
         })
         .catch(() => {
-          notify('تم تزويد المخزون محلياً فقط — تعذر المزامنة السحابية', 'warning');
+          notify('تم تزويد المخزون محلياً وستتم المزامنة تلقائياً', 'info');
         });
     }
     notify(`تم تزويد المخزون +${amount}`, 'success');
@@ -1681,10 +1758,12 @@ export default function App() {
             onQuickConsume={handleQuickConsumeInventory}
             onQuickRestock={handleQuickRestockInventory}
             onDeleteItem={(id) => {
+              const targetClinicUid = cloudTargetUid;
               const nextInventoryList = inventory.filter((i) => i.id !== id);
+              persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
               setInventory(nextInventoryList);
-              if (cloudTargetUid) {
-                deleteInventoryItemFromCloud(cloudTargetUid, id)
+              if (targetClinicUid) {
+                deleteInventoryItemFromCloud(targetClinicUid, id)
                   .then(() => notify('تم حذف الصنف ومزامنة الحذف سحابياً', 'info'))
                   .catch(() => notify('تم حذف الصنف محلياً — تعذر المزامنة السحابية', 'warning'));
               } else {
@@ -1707,6 +1786,7 @@ export default function App() {
                   notify('غير مصرح لك بإضافة مصروفات مالية.', 'error');
                   return;
                 }
+                const targetClinicUid = cloudTargetUid;
                 const newExp = validateAndNormalizeExpense({
                   id: 'exp_' + Date.now(),
                   title,
@@ -1716,14 +1796,13 @@ export default function App() {
                   date: new Date().toISOString().slice(0, 10),
                 });
                 const nextExpensesList = [newExp, ...expenses];
+                persistCollectionToLocal(STORAGE_KEYS.EXPENSES, nextExpensesList, targetClinicUid);
                 setExpenses(nextExpensesList);
-                const targetClinicUid = cloudTargetUid;
                 if (targetClinicUid) {
-                  ensureClinicDocumentInCloud(targetClinicUid, settings)
-                    .then(() => saveExpenseToCloud(targetClinicUid, newExp))
+                  saveExpenseToCloud(targetClinicUid, newExp, settings)
                     .then(() => notify('تم إضافة المصروف ومزامنته سحابياً', 'success'))
                     .catch(() =>
-                      notify('تم إضافة المصروف محلياً فقط — تعذر المزامنة السحابية', 'warning')
+                      notify('تم إضافة المصروف محلياً وستتم المزامنة تلقائياً', 'info')
                     );
                 } else {
                   notify('تم إضافة المصروف', 'success');
@@ -1734,9 +1813,10 @@ export default function App() {
                   notify('غير مصرح لك بحذف المصروفات المالية.', 'error');
                   return;
                 }
-                const nextExpensesList = expenses.filter((e) => e.id !== id);
-                setExpenses(nextExpensesList);
                 const targetClinicUid = cloudTargetUid;
+                const nextExpensesList = expenses.filter((e) => e.id !== id);
+                persistCollectionToLocal(STORAGE_KEYS.EXPENSES, nextExpensesList, targetClinicUid);
+                setExpenses(nextExpensesList);
                 if (targetClinicUid) {
                   deleteExpenseFromCloud(targetClinicUid, id)
                     .then(() => notify('تم حذف المصروف ومزامنة الحذف سحابياً', 'info'))

@@ -132,10 +132,17 @@ export function createInitialClinicSettingsForUser(
   displayName?: string | null
 ): ClinicSettings {
   const cleanEmail = String(email || '').trim().toLowerCase();
-  if (!cleanEmail || cleanEmail === 'alssaedy50@gmail.com') {
+  if (
+    !cleanEmail ||
+    cleanEmail === 'alssaedy50@gmail.com' ||
+    cleanEmail === 'alssaedy500@gmail.com'
+  ) {
     return {
       ...DEFAULT_SETTINGS,
-      identity: { ...DEFAULT_SETTINGS.identity },
+      identity: {
+        ...DEFAULT_SETTINGS.identity,
+        ownerEmail: cleanEmail || DEFAULT_SETTINGS.identity.ownerEmail || 'alssaedy50@gmail.com',
+      },
       appearance: { ...DEFAULT_SETTINGS.appearance },
       features: { ...DEFAULT_SETTINGS.features },
       services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
@@ -145,9 +152,9 @@ export function createInitialClinicSettingsForUser(
     };
   }
 
-  const cleanName = String(displayName || '').trim();
-  const initialClinicName = cleanName
-    ? `عيادة ${cleanName} لطب الأسنان`
+  const cleanName = String(displayName || '').trim() || 'طبيب وجراح الفم والأسنان';
+  const initialClinicName = displayName?.trim()
+    ? `عيادة ${displayName.trim()} لطب الأسنان`
     : 'عيادة طب وجراحة الفم والأسنان';
 
   return {
@@ -156,12 +163,12 @@ export function createInitialClinicSettingsForUser(
       clinicAr: initialClinicName,
       doctorAr: cleanName,
       specialtyAr: 'طب وجراحة الفم والأسنان',
-      clinicEn: '',
-      doctorEn: '',
-      address: '',
-      phones: '',
+      clinicEn: 'DENTAL & ORAL SURGERY CLINIC',
+      doctorEn: 'Dr. Dental Surgeon',
+      address: 'اليمن',
+      phones: '-',
       defaultCurrency: 'ريال يمني',
-      ownerEmail: cleanEmail || '',
+      ownerEmail: cleanEmail || 'alssaedy50@gmail.com',
     },
     appearance: {
       primaryColor: '#0B2545',
