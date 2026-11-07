@@ -5,8 +5,11 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  reload,
   signInWithEmailAndPassword,
   signInWithPopup,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
 import {
@@ -276,10 +279,13 @@ export async function issueServerSessionToken(params: {
   error?: string;
 }> {
   try {
+    const current = auth.currentUser;
+    if (!current) throw new Error('يجب تسجيل الدخول أولاً.');
+    const idToken = await current.getIdToken();
     const res = await fetch('/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify({ clinicId: params.clinicId, idToken }),
     });
     const rawText = await res.text();
     if (!rawText || rawText.trim().startsWith('<')) {
@@ -323,6 +329,38 @@ export async function signInWithGoogleAccount(): Promise<User> {
   return result.user;
 }
 
+export async function registerWithEmailAccount(email: string, password: string): Promise<User> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+  await sendEmailVerification(credential.user);
+  return credential.user;
+}
+
+export async function signInWithEmailAccount(email: string, password: string): Promise<User> {
+  const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+  if (!credential.user.emailVerified) {
+    await sendEmailVerification(credential.user);
+    throw new Error('لم يتم تأكيد البريد الإلكتروني بعد. أرسلنا رسالة تحقق جديدة إلى بريدك.');
+  }
+  return credential.user;
+}
+
+export async function resendEmailVerification(): Promise<void> {
+  if (!auth.currentUser) throw new Error('لا يوجد حساب مسجل الدخول.');
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function refreshEmailVerificationStatus(): Promise<User> {
+  if (!auth.currentUser) throw new Error('لا يوجد حساب مسجل الدخول.');
+  await reload(auth.currentUser);
+  await auth.currentUser.getIdToken(true);
+  return auth.currentUser;
+}
+
+export async function sendAccountPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+}
+
 export async function signOutAccount(): Promise<void> {
   await signOut(auth);
 }
@@ -349,7 +387,7 @@ export async function ensureClinicDocumentInCloud(
   settings: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('يجب تسجيل الدخول بحساب العيادة الموثق قبل الكتابة في السحابة.');
   }
   const clinicPath = `clinics/${safeUid}`;
@@ -402,7 +440,7 @@ export async function saveClinicSettingsToCloud(
   settings: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بتعديل إعدادات عيادة أخرى.');
   }
   const clinicPath = `clinics/${safeUid}`;
@@ -461,7 +499,7 @@ export async function saveServiceToCloud(
   service: DentalServiceItem
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحفظ خدمات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${service.id}`);
@@ -507,7 +545,7 @@ export async function saveServiceToCloud(
 
 export async function deleteServiceFromCloud(uid: string, serviceId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحذف خدمات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${serviceId}`);
@@ -524,7 +562,7 @@ export async function saveReceiptToCloud(
   receipt: ReceiptRecord
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحفظ سندات لعيادة أخرى.');
   }
   const validated = validateAndNormalizeReceipt(receipt);
@@ -572,7 +610,7 @@ export async function saveReceiptToCloud(
 
 export async function deleteReceiptFromCloud(uid: string, receiptId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحذف سندات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${receiptId}`);
@@ -589,7 +627,7 @@ export async function saveInventoryItemToCloud(
   item: InventoryItem
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بتعديل مخزون عيادة أخرى.');
   }
   const validated = validateAndNormalizeInventoryItem(item);
@@ -629,7 +667,7 @@ export async function saveInventoryItemToCloud(
 
 export async function deleteInventoryItemFromCloud(uid: string, itemId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحذف أصناف مخزون لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${itemId}`);
@@ -646,7 +684,7 @@ export async function saveExpenseToCloud(
   expense: ExpenseRecord
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحفظ مصروفات لعيادة أخرى.');
   }
   const validated = validateAndNormalizeExpense(expense);
@@ -683,7 +721,7 @@ export async function saveExpenseToCloud(
 
 export async function deleteExpenseFromCloud(uid: string, expenseId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بحذف مصروفات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${expenseId}`);
@@ -1339,7 +1377,7 @@ export async function pushDirectWorkspaceToCloud(
   const safeId = normalizeClinicWorkspaceId(clinicId);
   const safeUid = sanitizeId(ownerUid);
 
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!auth.currentUser) {
     throw new Error('غير مصرح بالمزامنة السحابية: الجلسة غير موثقة.');
   }
 

@@ -86,6 +86,52 @@ function createSignedSessionToken(clinicId: string, ownerUid: string): {
   };
 }
 
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'active-branch-w83d0';
+let firebaseJwksCache: { keys: any[]; expiresAt: number } | null = null;
+
+async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; email?: string } | null> {
+  try {
+    const parts = String(idToken || '').split('.');
+    if (parts.length !== 3) return null;
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (
+      header.alg !== 'RS256' ||
+      typeof header.kid !== 'string' ||
+      claims.aud !== FIREBASE_PROJECT_ID ||
+      claims.iss !== `https://securetoken.google.com/${FIREBASE_PROJECT_ID}` ||
+      typeof claims.sub !== 'string' ||
+      claims.sub.length < 1 ||
+      claims.sub.length > 128 ||
+      typeof claims.exp !== 'number' ||
+      claims.exp <= Math.floor(Date.now() / 1000) ||
+      typeof claims.iat !== 'number' ||
+      claims.iat > Math.floor(Date.now() / 1000) + 60
+    ) return null;
+
+    if (!firebaseJwksCache || firebaseJwksCache.expiresAt <= Date.now()) {
+      const response = await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');
+      if (!response.ok) return null;
+      const body = await response.json() as { keys?: any[] };
+      if (!Array.isArray(body.keys)) return null;
+      firebaseJwksCache = { keys: body.keys, expiresAt: Date.now() + 50 * 60 * 1000 };
+    }
+    const jwk = firebaseJwksCache.keys.find((key) => key.kid === header.kid);
+    if (!jwk) return null;
+    const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+    const valid = crypto.verify(
+      'RSA-SHA256',
+      Buffer.from(`${parts[0]}.${parts[1]}`),
+      publicKey,
+      Buffer.from(parts[2], 'base64url')
+    );
+    if (!valid) return null;
+    return { uid: claims.sub, email: typeof claims.email === 'string' ? claims.email : undefined };
+  } catch {
+    return null;
+  }
+}
+
 function verifySignedSessionToken(token: string): SignedSessionPayload | null {
   try {
     const raw = String(token || '').trim();
@@ -420,7 +466,7 @@ export default async function handler(req: any, res: any) {
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
 
   try {
-    // 1. Session Issuance & Scrypt Password Verification Endpoint
+    // 1. Issue a server session only after cryptographically verifying a Firebase ID token.
     if (url.includes('/auth/session')) {
       if (!checkRateLimit(`auth:${clientIp}`, 20, 60_000)) {
         return res.status(429).json({
@@ -429,42 +475,22 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      const clinicId = normalizeServerlessClinicId(body.clinicId || 'default-clinic');
-      const ownerUid = String(body.ownerUid || '')
-        .trim()
-        .replace(/[^a-zA-Z0-9_-]/g, '_')
-        .slice(0, 128);
-
-      if (!ownerUid || ownerUid.length < 3) {
-        return res.status(400).json({
+      const verifiedUser = await verifyFirebaseIdToken(String(body.idToken || ''));
+      if (!verifiedUser) {
+        return res.status(401).json({
           ok: false,
-          error: 'معرّف ملكية الحساب غير صالح.',
+          error: 'تعذر التحقق من هوية Firebase. يرجى تسجيل الدخول مجدداً.',
         });
       }
 
-      let passwordVerifier: string | undefined;
-      if (body.password && typeof body.password === 'string' && body.password.trim().length >= 4) {
-        if (body.storedPasswordVerifier && typeof body.storedPasswordVerifier === 'string') {
-          if (!verifyPasswordScrypt(body.password, body.storedPasswordVerifier)) {
-            return res.status(401).json({
-              ok: false,
-              error: 'كلمة المرور غير صحيحة لهذا الحساب.',
-            });
-          }
-          passwordVerifier = body.storedPasswordVerifier;
-        } else {
-          passwordVerifier = hashPasswordScrypt(body.password);
-        }
-      }
-
-      const { sessionToken, expiresAt } = createSignedSessionToken(clinicId, ownerUid);
+      const clinicId = normalizeServerlessClinicId(body.clinicId || verifiedUser.uid);
+      const { sessionToken, expiresAt } = createSignedSessionToken(clinicId, verifiedUser.uid);
       return res.status(200).json({
         ok: true,
         clinicId,
-        ownerUid,
+        ownerUid: verifiedUser.uid,
         sessionToken,
         expiresAt,
-        passwordVerifier,
       });
     }
 
