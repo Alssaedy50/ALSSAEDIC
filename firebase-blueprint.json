@@ -514,6 +514,18 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["workspaceId", "email", "role", "permissions", "addedBy", "updatedAt"]
+    },
+    "AccountIdentifier": {
+      "title": "AccountIdentifier",
+      "description": "Index mapping custom user identifiers to their verified account email and UID.",
+      "type": "object",
+      "properties": {
+        "identifier": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email" },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["identifier", "email", "uid", "createdAt"]
     }
   },
   "firestore": {
@@ -548,6 +560,10 @@
     "/user_workspaces/{memberKey}": {
       "schema": { "$ref": "#/entities/UserWorkspaceIndex" },
       "description": "User email mapping to workspace."
+    },
+    "/account_identifiers/{identifier}": {
+      "schema": { "$ref": "#/entities/AccountIdentifier" },
+      "description": "Public lookup mapping unique clinic identifiers to the account email."
     }
   }
 }

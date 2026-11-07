@@ -331,9 +331,11 @@ export async function signInWithGoogleAccount(): Promise<User> {
 
 export async function registerWithEmailAndPassword(
   email: string,
-  pass: string
-): Promise<{ user: User; verificationSent: boolean }> {
-  const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+  pass: string,
+  customIdentifier?: string
+): Promise<{ user: User; verificationSent: boolean; assignedIdentifier: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
   let verificationSent = false;
   try {
     await sendEmailVerification(cred.user);
@@ -341,14 +343,79 @@ export async function registerWithEmailAndPassword(
   } catch (e) {
     console.warn('Could not send email verification immediately:', e);
   }
-  return { user: cred.user, verificationSent };
+
+  // Derive unique identifier if not provided
+  let candidate = normalizeClinicWorkspaceId(
+    customIdentifier || cleanEmail.split('@')[0] || `user-${cred.user.uid.slice(0, 6)}`
+  );
+
+  // Check if identifier is already taken, if so append random digits
+  try {
+    const identDoc = await getDocFromServer(doc(db, 'account_identifiers', candidate));
+    if (identDoc.exists() && identDoc.data()?.uid !== cred.user.uid) {
+      candidate = `${candidate}-${Math.floor(100 + Math.random() * 900)}`;
+    }
+  } catch {
+    // continue
+  }
+
+  // Save the identifier binding in Firestore
+  try {
+    await setDoc(doc(db, 'account_identifiers', candidate), {
+      identifier: candidate,
+      email: cleanEmail,
+      uid: cred.user.uid,
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('Could not save account identifier link:', err);
+  }
+
+  return { user: cred.user, verificationSent, assignedIdentifier: candidate };
+}
+
+export async function resolveEmailFromIdentifier(identifier: string): Promise<string | null> {
+  const safeId = normalizeClinicWorkspaceId(identifier);
+  if (!safeId) return null;
+  try {
+    const snap = await getDocFromServer(doc(db, 'account_identifiers', safeId));
+    if (snap.exists()) {
+      const email = snap.data()?.email;
+      if (typeof email === 'string' && email.includes('@')) {
+        return email;
+      }
+    }
+  } catch (err) {
+    console.warn('Identifier lookup notice:', err);
+  }
+  return null;
+}
+
+export async function bindAccountIdentifier(uid: string, email: string, identifier: string): Promise<string> {
+  const safeId = normalizeClinicWorkspaceId(identifier);
+  const cleanEmail = email.trim().toLowerCase();
+  await setDoc(doc(db, 'account_identifiers', safeId), {
+    identifier: safeId,
+    email: cleanEmail,
+    uid,
+    createdAt: serverTimestamp(),
+  });
+  return safeId;
 }
 
 export async function loginWithEmailAndPassword(
-  email: string,
+  emailOrIdentifier: string,
   pass: string
 ): Promise<User> {
-  const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+  let effectiveEmail = emailOrIdentifier.trim();
+  if (!effectiveEmail.includes('@')) {
+    const resolved = await resolveEmailFromIdentifier(effectiveEmail);
+    if (!resolved) {
+      throw new Error('المعرّف غير مسجل أو غير مرتبط بأي حساب. يرجى إدخال البريد الإلكتروني.');
+    }
+    effectiveEmail = resolved;
+  }
+  const cred = await signInWithEmailAndPassword(auth, effectiveEmail, pass);
   return cred.user;
 }
 

@@ -526,5 +526,23 @@ service cloud.firestore {
         (resource != null && existing().addedBy == request.auth.uid)
       );
     }
+
+    // 8. Unique Account Identifier Lookup Index (/account_identifiers/{identifier})
+    match /account_identifiers/{identifier} {
+      // Allows anyone to resolve an identifier to an email during sign-in, or check availability
+      allow get: if true;
+      allow list: if false;
+      // Creation allowed by the owner of the UID when creating the identifier
+      allow create: if isSignedIn() &&
+        isValidId(identifier) &&
+        incoming().identifier == identifier &&
+        incoming().uid == request.auth.uid &&
+        incoming().email is string &&
+        incoming().createdAt == request.time;
+      // Updating or deleting allowed only by the owner
+      allow update, delete: if isStrictlyVerified() &&
+        isValidId(identifier) &&
+        existing().uid == request.auth.uid;
+    }
   }
 }
