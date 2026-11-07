@@ -34,6 +34,7 @@ import {
   DEFAULT_INVENTORY,
   DEFAULT_RECEIPTS,
   DEFAULT_SETTINGS,
+  SEED_DEMO_IDS,
 } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 import { LOCAL_API_SESSION_KEY } from './utils/aiClient';
@@ -63,6 +64,7 @@ import {
   lookupUserWorkspaceByEmail,
   onAuthStateChanged,
   pushDirectWorkspaceToCloud,
+  reloadAndCheckEmailVerified,
   resendVerificationEmail,
   saveClinicSettingsToCloud,
   saveExpenseToCloud,
@@ -106,16 +108,7 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as T;
-    if (
-      Array.isArray(parsed) &&
-      parsed.length === 0 &&
-      Array.isArray(fallback) &&
-      fallback.length > 0
-    ) {
-      return fallback;
-    }
-    return parsed;
+    return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
@@ -187,15 +180,36 @@ export default function App() {
   const [settings, setSettings] = useState<ClinicSettings>(() =>
     loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
   );
-  const [receipts, setReceipts] = useState<ReceiptRecord[]>(() =>
-    loadFromStorage<ReceiptRecord[]>(STORAGE_KEYS.RECEIPTS, DEFAULT_RECEIPTS)
-  );
-  const [inventory, setInventory] = useState<InventoryItem[]>(() =>
-    loadFromStorage<InventoryItem[]>(STORAGE_KEYS.INVENTORY, DEFAULT_INVENTORY)
-  );
-  const [expenses, setExpenses] = useState<ExpenseRecord[]>(() =>
-    loadFromStorage<ExpenseRecord[]>(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES)
-  );
+  const [receipts, setReceipts] = useState<ReceiptRecord[]>(() => {
+    const loaded = loadFromStorage<ReceiptRecord[]>(STORAGE_KEYS.RECEIPTS, DEFAULT_RECEIPTS);
+    const cleaned = Array.isArray(loaded)
+      ? loaded.filter((r) => r && !SEED_DEMO_IDS.receipts.has(r.id))
+      : [];
+    if (Array.isArray(loaded) && cleaned.length !== loaded.length) {
+      localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(cleaned));
+    }
+    return cleaned;
+  });
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => {
+    const loaded = loadFromStorage<InventoryItem[]>(STORAGE_KEYS.INVENTORY, DEFAULT_INVENTORY);
+    const cleaned = Array.isArray(loaded)
+      ? loaded.filter((i) => i && !SEED_DEMO_IDS.inventory.has(i.id))
+      : [];
+    if (Array.isArray(loaded) && cleaned.length !== loaded.length) {
+      localStorage.setItem(STORAGE_KEYS.INVENTORY, JSON.stringify(cleaned));
+    }
+    return cleaned;
+  });
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>(() => {
+    const loaded = loadFromStorage<ExpenseRecord[]>(STORAGE_KEYS.EXPENSES, DEFAULT_EXPENSES);
+    const cleaned = Array.isArray(loaded)
+      ? loaded.filter((e) => e && !SEED_DEMO_IDS.expenses.has(e.id))
+      : [];
+    if (Array.isArray(loaded) && cleaned.length !== loaded.length) {
+      localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(cleaned));
+    }
+    return cleaned;
+  });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [editingReceipt, setEditingReceipt] = useState<ReceiptRecord | null>(null);
   const [settlingReceiptIdFromStudio, setSettlingReceiptIdFromStudio] = useState<string | null>(null);
@@ -352,15 +366,13 @@ export default function App() {
       if (user) {
         setIsSyncingCloud(true);
         try {
-          if (!user.emailVerified && user.providerData.some((p) => p.providerId === 'password')) {
-            setEmailVerificationNotice(true);
-            notify(
-              'تنبيه: يرجى تأكيد بريدك الإلكتروني عبر الرابط المرسل لتأمين وصولك إلى كافة الصلاحيات.',
-              'warning'
-            );
-          } else {
-            setEmailVerificationNotice(false);
+          const isSyntheticLocalEmail = Boolean(
+            user.email && user.email.endsWith('@clinic.alssaedic.local')
+          );
+          if (!isSyntheticLocalEmail && !user.emailVerified) {
+            await reloadAndCheckEmailVerified();
           }
+          setEmailVerificationNotice(false);
 
           // Check if this user was invited to a clinic workspace
           const workspaceLookup = user.email ? await lookupUserWorkspaceByEmail(user.email) : null;
@@ -488,24 +500,38 @@ export default function App() {
         }
       },
       onReceiptsUpdate: (cloudReceipts) => {
-        if (cloudReceipts.length > 0) {
-          setReceipts(cloudReceipts);
-        }
+        setReceipts(cloudReceipts);
       },
       onInventoryUpdate: (cloudInventory) => {
-        if (cloudInventory.length > 0) {
-          setInventory(cloudInventory);
-        }
+        setInventory(cloudInventory);
       },
       onExpensesUpdate: (cloudExpenses) => {
-        if (cloudExpenses.length > 0) {
-          setExpenses(cloudExpenses);
-        }
+        setExpenses(cloudExpenses);
       },
     });
 
     return () => unsubCloud();
   }, [authReady, cloudTargetUid, currentUser]);
+
+  // Automatically re-check email verification when user returns to browser tab after clicking link
+  useEffect(() => {
+    const handleWindowFocus = async () => {
+      if (
+        auth.currentUser &&
+        auth.currentUser.email &&
+        !auth.currentUser.email.endsWith('@clinic.alssaedic.local') &&
+        !auth.currentUser.emailVerified
+      ) {
+        const verified = await reloadAndCheckEmailVerified();
+        if (verified) {
+          setEmailVerificationNotice(false);
+          setCurrentUser(auth.currentUser);
+        }
+      }
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    return () => window.removeEventListener('focus', handleWindowFocus);
+  }, []);
 
   // Support Android/Browser Back Button so the user can always return to the main screen
   useEffect(() => {
@@ -592,18 +618,15 @@ export default function App() {
           options?.mode === 'register' && (options.clinicNameAr || options.doctorNameAr)
             ? updatedSettings
             : result.data.settings || updatedSettings;
-        const nextReceipts =
-          Array.isArray(result.data.receipts) && result.data.receipts.length > 0
-            ? result.data.receipts
-            : receipts;
-        const nextInventory =
-          Array.isArray(result.data.inventory) && result.data.inventory.length > 0
-            ? result.data.inventory
-            : inventory;
-        const nextExpenses =
-          Array.isArray(result.data.expenses) && result.data.expenses.length > 0
-            ? result.data.expenses
-            : expenses;
+        const nextReceipts = Array.isArray(result.data.receipts)
+          ? result.data.receipts.filter((r) => r && !SEED_DEMO_IDS.receipts.has(r.id))
+          : receipts;
+        const nextInventory = Array.isArray(result.data.inventory)
+          ? result.data.inventory.filter((i) => i && !SEED_DEMO_IDS.inventory.has(i.id))
+          : inventory;
+        const nextExpenses = Array.isArray(result.data.expenses)
+          ? result.data.expenses.filter((e) => e && !SEED_DEMO_IDS.expenses.has(e.id))
+          : expenses;
 
         setSettings(nextSettings);
         setReceipts(nextReceipts);
@@ -1066,9 +1089,15 @@ export default function App() {
     navSections.find((s) => s.id === activeSection) || navSections[0];
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+    <div
+      className={`w-full max-w-full overflow-x-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 ${
+        activeSection === 'assistant'
+          ? 'h-[100dvh] max-h-[100dvh] overflow-hidden'
+          : 'min-h-screen'
+      }`}
+    >
       {/* ==================== CLEAN NON-OVERLAPPING MOBILE HEADER ==================== */}
-      <header className="sticky top-0 z-30 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs no-print">
+      <header className="shrink-0 sticky top-0 z-30 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs no-print">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           {/* Right: Menu Button + Clear Page Title */}
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1242,11 +1271,16 @@ export default function App() {
       <main
         className={`flex-1 w-full max-w-4xl mx-auto ${
           activeSection === 'assistant'
-            ? 'p-0 sm:px-6 sm:py-3 flex flex-col'
+            ? 'min-h-0 p-0 sm:px-6 sm:py-3 flex flex-col overflow-hidden'
             : 'px-3 sm:px-6 py-4 pb-6'
         }`}
       >
-        {emailVerificationNotice && currentUser && !currentUser.emailVerified && (
+        {activeSection !== 'assistant' &&
+          emailVerificationNotice &&
+          currentUser &&
+          currentUser.email &&
+          !currentUser.email.endsWith('@clinic.alssaedic.local') &&
+          !currentUser.emailVerified && (
           <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 no-print shadow-xs">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-amber-500 font-bold">⚠️</span>

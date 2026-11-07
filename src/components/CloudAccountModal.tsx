@@ -17,10 +17,11 @@ import {
 } from 'lucide-react';
 import {
   User,
+  isValidRealEmail,
   loginWithEmailAndPassword,
   registerWithEmailAndPassword,
+  reloadAndCheckEmailVerified,
   requestPasswordReset,
-  resolveEmailFromIdentifier,
 } from '../firebase';
 import { WorkspaceRole } from '../types/clinic';
 
@@ -86,9 +87,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   notify,
 }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
-  const [identifier, setIdentifier] = useState(
-    directSession?.clinicId || (user?.email ? user.email : '')
-  );
+  const [email, setEmail] = useState(user?.email ? user.email : '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -96,33 +95,37 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   const [authLoading, setAuthLoading] = useState(false);
   const [isOpNotAllowed, setIsOpNotAllowed] = useState(false);
 
-  const [registeredIdentifier, setRegisteredIdentifier] = useState<string | null>(null);
-  const [customRegisterIdentifier, setCustomRegisterIdentifier] = useState('');
+  const [isEmailVerifiedState, setIsEmailVerifiedState] = useState<boolean>(
+    Boolean(user?.emailVerified)
+  );
+  const [checkingVerification, setCheckingVerification] = useState<boolean>(false);
+
+  useEffect(() => {
+    setIsEmailVerifiedState(Boolean(user?.emailVerified));
+  }, [user]);
 
   useEffect(() => {
     if (!isOpen) return;
     setAuthError(null);
     setAuthInfo(null);
     setIsOpNotAllowed(false);
-    setRegisteredIdentifier(null);
-    if (user?.email) {
-      setIdentifier(user.email);
-    } else if (directSession?.clinicId) {
-      setIdentifier(directSession.clinicId);
+    if (user?.email && !user.email.endsWith('@clinic.alssaedic.local')) {
+      setEmail(user.email);
+      if (!user.emailVerified) {
+        reloadAndCheckEmailVerified()
+          .then((verified) => {
+            if (verified) {
+              setIsEmailVerifiedState(true);
+            }
+          })
+          .catch(() => {});
+      }
     }
-  }, [isOpen, directSession, user]);
+  }, [isOpen, user]);
 
   if (!isOpen) return null;
 
-  const isConnected = Boolean(user || directSession);
-  const derivedClinicId =
-    registeredIdentifier ||
-    directSession?.clinicId ||
-    (user?.email
-      ? user.email.endsWith('@clinic.alssaedic.local')
-        ? user.email.replace('@clinic.alssaedic.local', '')
-        : user.email.split('@')[0]
-      : null);
+  const isConnected = Boolean(user);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,31 +133,26 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     setAuthInfo(null);
     setIsOpNotAllowed(false);
 
-    const cleanIdentifier = identifier.trim();
+    const cleanEmail = email.trim().toLowerCase();
     const cleanPassword = password.trim();
 
-    if (!cleanIdentifier) {
-      setAuthError(authMode === 'register' ? 'يرجى إدخال البريد الإلكتروني.' : 'يرجى إدخال البريد أو المعرّف.');
+    if (!cleanEmail) {
+      setAuthError('يرجى إدخال البريد الإلكتروني.');
+      return;
+    }
+
+    if (!isValidRealEmail(cleanEmail)) {
+      setAuthError('يرجى إدخال بريد إلكتروني حقيقي وصحيح (مثال: example@gmail.com).');
       return;
     }
 
     // 1. Password Reset Mode
     if (authMode === 'forgot') {
-      let resetEmail = cleanIdentifier;
-      if (!resetEmail.includes('@')) {
-        const resolved = await resolveEmailFromIdentifier(resetEmail);
-        if (resolved) {
-          resetEmail = resolved;
-        } else {
-          setAuthError('المعرّف غير مسجل. يرجى إدخال بريدك الإلكتروني لاستعادة كلمة المرور.');
-          return;
-        }
-      }
       setAuthLoading(true);
       try {
-        await requestPasswordReset(resetEmail);
-        setAuthInfo(`تم إرسال رابط استعادة كلمة المرور إلى البريد: ${resetEmail}`);
-        notify('تم إرسال رابط استعادة كلمة المرور', 'success');
+        await requestPasswordReset(cleanEmail);
+        setAuthInfo(`تم إرسال رابط استعادة كلمة المرور إلى البريد: ${cleanEmail}`);
+        notify('تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني', 'success');
       } catch (err: unknown) {
         setAuthError(err instanceof Error ? err.message : 'تعذر إرسال رابط الاستعادة.');
       } finally {
@@ -163,51 +161,24 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       return;
     }
 
-    // 2. Register Mode: Supports Email OR Clinic Phone/Identifier
-    if (authMode === 'register') {
-      if (cleanPassword.length < 4) {
-        setAuthError('كلمة المرور يجب أن لا تقل عن 4 خانات.');
-        return;
-      }
+    if (cleanPassword.length < 6) {
+      setAuthError('كلمة المرور يجب أن لا تقل عن 6 خانات.');
+      return;
+    }
 
+    // 2. Register Mode: Strictly Real Email + Password
+    if (authMode === 'register') {
       setAuthLoading(true);
       try {
-        if (cleanIdentifier.includes('@')) {
-          if (!cleanIdentifier.includes('.')) {
-            setAuthError('صيغة البريد الإلكتروني غير صالحة.');
-            setAuthLoading(false);
-            return;
-          }
-          if (cleanPassword.length < 6) {
-            setAuthError('كلمة المرور للبريد يجب أن لا تقل عن 6 خانات لتأمين الحساب.');
-            setAuthLoading(false);
-            return;
-          }
-          const { assignedIdentifier } = await registerWithEmailAndPassword(
-            cleanIdentifier,
-            cleanPassword,
-            customRegisterIdentifier.trim() || undefined
-          );
-          setRegisteredIdentifier(assignedIdentifier);
-          setAuthInfo(`تم إنشاء الحساب بنجاح! معرّف عيادتك: [ ${assignedIdentifier} ]`);
-          notify(`تم إنشاء الحساب بنجاح، معرّفك هو: ${assignedIdentifier}`, 'success');
-          setPassword('');
-          onClose();
-          return;
+        const { verificationSent } = await registerWithEmailAndPassword(cleanEmail, cleanPassword);
+        if (verificationSent) {
+          notify('تم إنشاء الحساب بنجاح وإرسال رابط التوثيق إلى بريدك الإلكتروني', 'success');
         } else {
-          // Clinic Identifier or Phone
-          const directOk = await onDirectLogin(cleanIdentifier, cleanPassword, {
-            mode: 'register',
-          });
-          if (directOk) {
-            notify('تم إنشاء حساب العيادة ومزامنة البيانات بنجاح', 'success');
-            setPassword('');
-            onClose();
-            return;
-          } else {
-            setAuthError('معرّف العيادة أو الهاتف مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".');
-          }
+          notify('تم إنشاء الحساب بنجاح', 'success');
         }
+        setPassword('');
+        onClose();
+        return;
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code || '';
         const rawErr = err instanceof Error ? err.message : String(err);
@@ -216,11 +187,11 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
           setIsOpNotAllowed(true);
           msg = 'تسجيل الحساب بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام زر الدخول الفوري عبر Google.';
         } else if (code === 'auth/email-already-in-use') {
-          msg = 'هذا المعرّف أو البريد مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".';
+          msg = 'هذا البريد الإلكتروني مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".';
         } else if (code === 'auth/invalid-email') {
-          msg = 'صيغة البريد أو المعرّف غير صالحة.';
+          msg = 'صيغة البريد الإلكتروني غير صالحة.';
         } else if (code === 'auth/weak-password') {
-          msg = 'كلمة المرور ضعيفة. يرجى اختيار كلمة مرور أقوى.';
+          msg = 'كلمة المرور ضعيفة. يرجى اختيار كلمة مرور لا تقل عن 6 خانات.';
         } else if (err instanceof Error) {
           msg = err.message;
         }
@@ -231,46 +202,22 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       return;
     }
 
-    // 3. Login Mode: Accepts either Email or Identifier
-    if (cleanPassword.length < 4) {
-      setAuthError('كلمة المرور يجب أن لا تقل عن 4 خانات.');
-      return;
-    }
-
+    // 3. Login Mode: Strictly Real Email + Password
     setAuthLoading(true);
     try {
-      try {
-        const loggedInUser = await loginWithEmailAndPassword(cleanIdentifier, cleanPassword);
-        if (!loggedInUser.emailVerified) {
-          notify('تم تسجيل الدخول بنجاح', 'success');
-        } else {
-          notify('تم تسجيل الدخول بنجاح', 'success');
-        }
-        setPassword('');
-        onClose();
-        return;
-      } catch (firstErr: unknown) {
-        if (!cleanIdentifier.includes('@')) {
-          const directOk = await onDirectLogin(cleanIdentifier, cleanPassword, {
-            mode: 'login',
-          });
-          if (directOk) {
-            setPassword('');
-            onClose();
-            return;
-          }
-        }
-        throw firstErr;
-      }
+      await loginWithEmailAndPassword(cleanEmail, cleanPassword);
+      notify('تم تسجيل الدخول بنجاح', 'success');
+      setPassword('');
+      onClose();
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
       const rawErr = err instanceof Error ? err.message : String(err);
-      let msg = 'البريد أو المعرّف أو كلمة المرور غير صحيحة.';
+      let msg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
       if (code === 'auth/operation-not-allowed' || rawErr.includes('operation-not-allowed')) {
         setIsOpNotAllowed(true);
-        msg = 'تسجيل الدخول بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام الدخول الفوري عبر Google أدناه لمزامنة بياناتك فوراً.';
+        msg = 'تسجيل الدخول بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام الدخول الفوري عبر Google أدناه.';
       } else if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-        msg = 'بيانات الدخول غير صحيحة أو الحساب غير مسجل بعد.';
+        msg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة، أو الحساب غير مسجل بعد.';
       } else if (code === 'auth/wrong-password') {
         msg = 'كلمة المرور غير صحيحة.';
       } else if (code === 'auth/too-many-requests') {
@@ -293,7 +240,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       if (ok) {
         onClose();
       } else {
-        setAuthError('تعذر الدخول عبر Google. يمكنك الدخول بالبريد أو المعرّف.');
+        setAuthError('تعذر الدخول عبر Google. يمكنك الدخول بالبريد الإلكتروني وكلمة المرور.');
       }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
@@ -361,39 +308,73 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                 <div className="space-y-1 text-xs font-bold text-slate-800 dark:text-slate-200">
                   {user?.email && (
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-slate-500">البريد:</span>
+                      <span className="text-slate-500">البريد الإلكتروني:</span>
                       <span dir="ltr" className="font-mono text-slate-900 dark:text-slate-100 break-all">
                         {user.email}
                       </span>
-                    </div>
-                  )}
-                  {derivedClinicId && (
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-slate-500">المعرّف:</span>
-                      <span dir="ltr" className="font-mono text-emerald-700 dark:text-emerald-300">
-                        {derivedClinicId}
-                      </span>
+                      {isEmailVerifiedState && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-black">
+                          <CheckCircle2 className="w-3 h-3" />
+                          موثّق
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {user && !user.emailVerified && (
-                  <div className="mt-2 pt-2 border-t border-amber-500/30 text-amber-800 dark:text-amber-300 text-[11px] font-bold space-y-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                      <span>البريد الإلكتروني غير مؤكد بعد.</span>
+                {user &&
+                  user.email &&
+                  !isEmailVerifiedState && (
+                    <div className="mt-2 pt-2 border-t border-amber-500/30 text-amber-800 dark:text-amber-300 text-[11px] font-bold space-y-2">
+                      <div className="flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                        <span>إذا قمت بالضغط على رابط التوثيق في بريدك، اضغط "تحقق الآن" لتحديث الحالة.</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={checkingVerification}
+                          onClick={async () => {
+                            setCheckingVerification(true);
+                            try {
+                              const verified = await reloadAndCheckEmailVerified();
+                              if (verified) {
+                                setIsEmailVerifiedState(true);
+                                notify('تم توثيق البريد الإلكتروني بنجاح!', 'success');
+                              } else {
+                                notify(
+                                  'لم يتم تأكيد الرابط بعد. يرجى فتح الرسالة في بريدك (أو الرسائل غير المرغوب فيها Spam) والضغط على الرابط.',
+                                  'info'
+                                );
+                              }
+                            } finally {
+                              setCheckingVerification(false);
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black transition-colors disabled:opacity-50"
+                        >
+                          {checkingVerification ? 'جارٍ التحقق...' : 'تحقق الآن (تم التوثيق)'}
+                        </button>
+                        {onResendVerification && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const alreadyVerified = await reloadAndCheckEmailVerified();
+                              if (alreadyVerified) {
+                                setIsEmailVerifiedState(true);
+                                notify('بريدك الإلكتروني موثّق بالفعل!', 'success');
+                                return;
+                              }
+                              await onResendVerification();
+                            }}
+                            className="px-2.5 py-1 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 text-[10px] font-black transition-colors"
+                          >
+                            إعادة إرسال الرابط
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    {onResendVerification && (
-                      <button
-                        type="button"
-                        onClick={onResendVerification}
-                        className="text-[10px] underline text-sky-600 dark:text-sky-400 hover:text-sky-500"
-                      >
-                        إعادة إرسال التحقق
-                      </button>
-                    )}
-                  </div>
-                )}
+                  )}
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -457,7 +438,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               <div className="relative flex items-center justify-center my-1">
                 <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
                 <span className="bg-white dark:bg-slate-900 px-2.5 text-[10px] font-bold text-slate-400 shrink-0">
-                  أو بالبريد / المعرّف
+                  أو بالبريد الإلكتروني وكلمة المرور
                 </span>
                 <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
               </div>
@@ -511,42 +492,21 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               <form onSubmit={handleSubmit} className="space-y-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {authMode === 'register' ? 'البريد الإلكتروني' : 'البريد أو المعرّف'}
+                    البريد الإلكتروني
                   </label>
                   <div className="relative">
                     <input
-                      type={authMode === 'register' || authMode === 'forgot' ? 'email' : 'text'}
+                      type="email"
                       required
                       dir="ltr"
-                      value={identifier}
-                      onChange={(e) => setIdentifier(e.target.value)}
-                      placeholder={authMode === 'register' ? 'doctor@example.com' : 'doctor@example.com أو المعرّف'}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="example@gmail.com"
                       className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-3 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
                     />
                     <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
                   </div>
                 </div>
-
-                {authMode === 'register' && (
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                        معرّف الحساب (اختياري)
-                      </label>
-                      <span className="text-[10px] text-slate-400">لتسجيل الدخول السريع</span>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        dir="ltr"
-                        value={customRegisterIdentifier}
-                        onChange={(e) => setCustomRegisterIdentifier(e.target.value)}
-                        placeholder="alssaedy-clinic (تلقائي إن ترك فارغاً)"
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {authMode !== 'forgot' && (
                   <div>
@@ -619,7 +579,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                             }}
                             className="text-sky-600 dark:text-sky-400 underline font-black block pr-6 text-xs hover:text-sky-500"
                           >
-                            اضغط هنا لتسجيل الدخول بهذا المعرّف ←
+                            اضغط هنا لتسجيل الدخول بهذا البريد الإلكتروني ←
                           </button>
                         )}
                         {authMode === 'login' && (

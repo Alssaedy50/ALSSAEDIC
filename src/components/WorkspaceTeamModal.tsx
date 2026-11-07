@@ -21,6 +21,7 @@ import {
 } from '../types/clinic';
 import {
   addWorkspaceMemberInCloud,
+  isValidRealEmail,
   loadLocalWorkspaceMembers,
   removeWorkspaceMemberFromCloud,
   subscribeToWorkspaceMembers,
@@ -119,9 +120,9 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    const rawIdentifier = newEmailOrId.trim();
-    if (!rawIdentifier) {
-      notify('يرجى إدخال البريد الإلكتروني أو معرّف الحساب / رقم الهاتف', 'warning');
+    const rawEmail = newEmailOrId.trim().toLowerCase();
+    if (!rawEmail || !isValidRealEmail(rawEmail)) {
+      notify('يرجى إدخال بريد إلكتروني حقيقي وصحيح (مثال: accountant@gmail.com)', 'warning');
       return;
     }
 
@@ -130,7 +131,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
       const added = await addWorkspaceMemberInCloud(
         effectiveWsId,
         ownerUid,
-        rawIdentifier,
+        rawEmail,
         selectedRole,
         DEFAULT_ROLE_PERMISSIONS[selectedRole],
         newDisplayName.trim() || undefined
@@ -235,16 +236,16 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                  البريد الإلكتروني أو المعرّف / الهاتف
+                  البريد الإلكتروني للحساب
                 </label>
                 <div className="relative">
                   <input
-                    type="text"
+                    type="email"
                     required
                     dir="ltr"
                     value={newEmailOrId}
                     onChange={(e) => setNewEmailOrId(e.target.value)}
-                    placeholder="accountant@gmail.com أو 777123456"
+                    placeholder="accountant@gmail.com"
                     className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 pl-3 pr-9 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
                   />
                   <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />

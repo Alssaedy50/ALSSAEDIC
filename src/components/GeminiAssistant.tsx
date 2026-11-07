@@ -64,7 +64,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
   const currencySummaries = useMemo<CurrencyFinancialSummary[]>(() => {
     const defaultCur = String(settings.identity.defaultCurrency || 'ريال يمني');
@@ -112,7 +112,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   }, [receipts, expenses, settings.identity.defaultCurrency]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesContainerRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
   }, [messages, isSending]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -337,7 +340,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   };
 
   return (
-    <div className="w-full h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-5rem)] sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs">
+    <div className="flex-1 min-h-0 w-full h-full sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs">
       {/* Quick Prompts Strip + Clear Chat Action */}
       <div className="shrink-0 px-3 sm:px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {messages.length > 0 && (
@@ -364,8 +367,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       </div>
 
       {/* Scrollable Messages Area */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-5 py-3">
-        <div className="max-w-4xl mx-auto h-full flex flex-col">
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 sm:px-5 py-3"
+      >
+        <div className="max-w-4xl mx-auto min-h-full flex flex-col">
           {messages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-2.5 px-4">
               <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
@@ -376,7 +382,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               </p>
             </div>
           ) : (
-            <div className="space-y-3.5 pb-2">
+            <div className="space-y-3 pb-2">
               {messages.map((msg) => (
                 <div
                   key={msg.id}
@@ -405,25 +411,20 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                       : 'bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
                   }`}
                 >
-                  {/* Mobile compact sender header so bubble gets 100% width */}
+                  {/* Mobile compact sender header */}
                   <div
-                    className={`flex sm:hidden items-center justify-between gap-2 pb-1.5 border-b text-[11px] font-bold ${
+                    className={`flex sm:hidden items-center gap-1.5 pb-1 border-b text-[11px] font-bold ${
                       msg.role === 'user'
                         ? 'border-white/20 text-white/90'
                         : 'border-slate-200 dark:border-slate-800 text-sky-600 dark:text-sky-400'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5">
-                      {msg.role === 'user' ? (
-                        <User className="w-3.5 h-3.5 shrink-0" />
-                      ) : (
-                        <Bot className="w-3.5 h-3.5 shrink-0" />
-                      )}
-                      <span>{msg.role === 'user' ? 'أنت' : 'المساعد'}</span>
-                    </div>
-                    <span className="font-mono tabular-nums text-[10px] opacity-80">
-                      {msg.timestamp}
-                    </span>
+                    {msg.role === 'user' ? (
+                      <User className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <Bot className="w-3.5 h-3.5 shrink-0" />
+                    )}
+                    <span>{msg.role === 'user' ? 'أنت' : 'المساعد'}</span>
                   </div>
 
                   {msg.attachmentPreview && (
@@ -479,8 +480,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               <span>جاري التحليل...</span>
             </div>
           )}
-
-          <div ref={messagesEndRef} />
         </div>
       </div>
 

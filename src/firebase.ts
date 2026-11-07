@@ -15,6 +15,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocFromServer,
   getDocs,
   initializeFirestore,
@@ -22,6 +23,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  setLogLevel,
   updateDoc,
   where,
 } from 'firebase/firestore';
@@ -38,13 +40,15 @@ import {
   WorkspaceMember,
   DEFAULT_ROLE_PERMISSIONS,
 } from './types/clinic';
+import { SEED_DEMO_IDS } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 
 const app = initializeApp(firebaseConfig);
+setLogLevel('silent');
 export const db = initializeFirestore(
   app,
   {
-    experimentalAutoDetectLongPolling: true,
+    experimentalForceLongPolling: true,
   },
   firebaseConfig.firestoreDatabaseId
 );
@@ -335,93 +339,48 @@ export async function signInWithGoogleAccount(): Promise<User> {
   return result.user;
 }
 
+const REAL_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+export function isValidRealEmail(email: string): boolean {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!REAL_EMAIL_REGEX.test(clean)) return false;
+  if (clean.endsWith('.local') || clean.endsWith('@clinic.alssaedic.local')) return false;
+  return true;
+}
+
 export async function registerWithEmailAndPassword(
   email: string,
-  pass: string,
-  customIdentifier?: string
-): Promise<{ user: User; verificationSent: boolean; assignedIdentifier: string }> {
+  pass: string
+): Promise<{ user: User; verificationSent: boolean }> {
   const cleanEmail = email.trim().toLowerCase();
+  if (!isValidRealEmail(cleanEmail)) {
+    throw new Error('يرجى إدخال بريد إلكتروني حقيقي وصحيح لإنشاء الحساب.');
+  }
   const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
   let verificationSent = false;
   try {
-    await sendEmailVerification(cred.user);
+    const actionSettings =
+      typeof window !== 'undefined' && window.location?.origin
+        ? { url: window.location.origin }
+        : undefined;
+    await sendEmailVerification(cred.user, actionSettings);
     verificationSent = true;
   } catch (e) {
     console.warn('Could not send email verification immediately:', e);
   }
 
-  // Derive unique identifier if not provided
-  let candidate = normalizeClinicWorkspaceId(
-    customIdentifier || cleanEmail.split('@')[0] || `user-${cred.user.uid.slice(0, 6)}`
-  );
-
-  // Check if identifier is already taken, if so append random digits
-  try {
-    const identDoc = await getDocFromServer(doc(db, 'account_identifiers', candidate));
-    if (identDoc.exists() && identDoc.data()?.uid !== cred.user.uid) {
-      candidate = `${candidate}-${Math.floor(100 + Math.random() * 900)}`;
-    }
-  } catch {
-    // continue
-  }
-
-  // Save the identifier binding in Firestore
-  try {
-    await setDoc(doc(db, 'account_identifiers', candidate), {
-      identifier: candidate,
-      email: cleanEmail,
-      uid: cred.user.uid,
-      createdAt: serverTimestamp(),
-    });
-  } catch (err) {
-    console.warn('Could not save account identifier link:', err);
-  }
-
-  return { user: cred.user, verificationSent, assignedIdentifier: candidate };
-}
-
-export async function resolveEmailFromIdentifier(identifier: string): Promise<string | null> {
-  const safeId = normalizeClinicWorkspaceId(identifier);
-  if (!safeId) return null;
-  try {
-    const snap = await getDocFromServer(doc(db, 'account_identifiers', safeId));
-    if (snap.exists()) {
-      const email = snap.data()?.email;
-      if (typeof email === 'string' && email.includes('@')) {
-        return email;
-      }
-    }
-  } catch (err) {
-    console.warn('Identifier lookup notice:', err);
-  }
-  return null;
-}
-
-export async function bindAccountIdentifier(uid: string, email: string, identifier: string): Promise<string> {
-  const safeId = normalizeClinicWorkspaceId(identifier);
-  const cleanEmail = email.trim().toLowerCase();
-  await setDoc(doc(db, 'account_identifiers', safeId), {
-    identifier: safeId,
-    email: cleanEmail,
-    uid,
-    createdAt: serverTimestamp(),
-  });
-  return safeId;
+  return { user: cred.user, verificationSent };
 }
 
 export async function loginWithEmailAndPassword(
-  emailOrIdentifier: string,
+  email: string,
   pass: string
 ): Promise<User> {
-  let effectiveEmail = emailOrIdentifier.trim();
-  if (!effectiveEmail.includes('@')) {
-    const resolved = await resolveEmailFromIdentifier(effectiveEmail);
-    if (!resolved) {
-      throw new Error('المعرّف غير مسجل أو غير مرتبط بأي حساب. يرجى إدخال البريد الإلكتروني.');
-    }
-    effectiveEmail = resolved;
+  const cleanEmail = email.trim().toLowerCase();
+  if (!isValidRealEmail(cleanEmail)) {
+    throw new Error('يرجى إدخال بريد إلكتروني حقيقي وصحيح لتسجيل الدخول.');
   }
-  const cred = await signInWithEmailAndPassword(auth, effectiveEmail, pass);
+  const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
   return cred.user;
 }
 
@@ -430,10 +389,26 @@ export async function requestPasswordReset(email: string): Promise<void> {
 }
 
 export async function resendVerificationEmail(): Promise<void> {
-  if (auth.currentUser) {
-    await sendEmailVerification(auth.currentUser);
+  if (auth.currentUser && !auth.currentUser.email?.endsWith('@clinic.alssaedic.local')) {
+    const actionSettings =
+      typeof window !== 'undefined' && window.location?.origin
+        ? { url: window.location.origin }
+        : undefined;
+    await sendEmailVerification(auth.currentUser, actionSettings);
   } else {
-    throw new Error('لا يوجد مستخدم مسجل لإرسال رابط التحقق إليه.');
+    throw new Error('لا يوجد بريد إلكتروني صالح لإرسال رابط التحقق إليه.');
+  }
+}
+
+export async function reloadAndCheckEmailVerified(): Promise<boolean> {
+  if (!auth.currentUser) return false;
+  if (auth.currentUser.email?.endsWith('@clinic.alssaedic.local')) return true;
+  try {
+    await auth.currentUser.reload();
+    await auth.currentUser.getIdToken(true);
+    return Boolean(auth.currentUser.emailVerified);
+  } catch {
+    return Boolean(auth.currentUser.emailVerified);
   }
 }
 
@@ -843,13 +818,19 @@ export async function syncLocalDataToCloud(
       await saveServiceToCloud(safeUid, srv);
     }
     for (const rec of receipts) {
-      await saveReceiptToCloud(safeUid, rec);
+      if (!SEED_DEMO_IDS.receipts.has(rec.id)) {
+        await saveReceiptToCloud(safeUid, rec);
+      }
     }
     for (const inv of inventory) {
-      await saveInventoryItemToCloud(safeUid, inv);
+      if (!SEED_DEMO_IDS.inventory.has(inv.id)) {
+        await saveInventoryItemToCloud(safeUid, inv);
+      }
     }
     for (const exp of expenses) {
-      await saveExpenseToCloud(safeUid, exp);
+      if (!SEED_DEMO_IDS.expenses.has(exp.id)) {
+        await saveExpenseToCloud(safeUid, exp);
+      }
     }
   }
 }
@@ -935,69 +916,101 @@ async function fetchClinicCollectionsFromFirestore(
     };
   }
 
-  const cloudReceipts: ReceiptRecord[] = receiptsSnap.docs.map((docSnap) => {
-    const d = docSnap.data();
-    return {
-      id: stripPrefix(docSnap.id),
-      receiptNo: Number(d.receiptNo || 1001),
-      date: String(d.date || ''),
-      patientName: String(d.patientName || ''),
-      patientPhone: String(d.patientPhone || ''),
-      services: Array.isArray(d.services) ? d.services.map(String) : [],
-      toothFDI: String(d.toothFDI || ''),
-      totalAmount: Number(d.totalAmount || 0),
-      paidAmount: Number(d.paidAmount || 0),
-      remainingAmount: Number(d.remainingAmount || 0),
-      currency: String(d.currency || 'ريال يمني') as CurrencyCode,
-      paymentMethod: String(d.paymentMethod || 'نقداً (Cash)'),
-      notes: String(d.notes || ''),
-      amountWords: String(d.amountWords || ''),
-      accountantSig: String(d.accountantSig || ''),
-      receiverSig: String(d.receiverSig || ''),
-      paperFormat: (d.paperFormat === 'thermal80' ? 'thermal80' : 'a5') as 'a5' | 'thermal80',
-      createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
-    };
-  });
+  const cloudReceipts: ReceiptRecord[] = receiptsSnap.docs
+    .filter((docSnap) => {
+      const id = stripPrefix(docSnap.id);
+      if (SEED_DEMO_IDS.receipts.has(id)) {
+        deleteDoc(docSnap.ref).catch(() => {});
+        return false;
+      }
+      return true;
+    })
+    .map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: stripPrefix(docSnap.id),
+        receiptNo: Number(d.receiptNo || 1001),
+        date: String(d.date || ''),
+        patientName: String(d.patientName || ''),
+        patientPhone: String(d.patientPhone || ''),
+        services: Array.isArray(d.services) ? d.services.map(String) : [],
+        toothFDI: String(d.toothFDI || ''),
+        totalAmount: Number(d.totalAmount || 0),
+        paidAmount: Number(d.paidAmount || 0),
+        remainingAmount: Number(d.remainingAmount || 0),
+        currency: String(d.currency || 'ريال يمني') as CurrencyCode,
+        paymentMethod: String(d.paymentMethod || 'نقداً (Cash)'),
+        notes: String(d.notes || ''),
+        amountWords: String(d.amountWords || ''),
+        accountantSig: String(d.accountantSig || ''),
+        receiverSig: String(d.receiverSig || ''),
+        paperFormat: (d.paperFormat === 'thermal80' ? 'thermal80' : 'a5') as 'a5' | 'thermal80',
+        createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
+      };
+    });
 
-  const cloudInventory: InventoryItem[] = inventorySnap.docs.map((docSnap) => {
-    const d = docSnap.data();
-    return {
-      id: stripPrefix(docSnap.id),
-      name: String(d.name || ''),
-      notes: String(d.category || ''),
-      qty: Number(d.qty || 0),
-      minQty: Number(d.minQty || 0),
-      unit: String(d.unit || 'قطعة'),
-      unitPrice: Number(d.unitPrice || 0),
-      totalCost: Number(d.totalCost || 0),
-      linkedService: String(d.linkedService || ''),
-      updatedAt: d.updatedAt?.toDate
-        ? d.updatedAt.toDate().toISOString().slice(0, 10)
-        : new Date().toISOString().slice(0, 10),
-    };
-  });
+  const cloudInventory: InventoryItem[] = inventorySnap.docs
+    .filter((docSnap) => {
+      const id = stripPrefix(docSnap.id);
+      if (SEED_DEMO_IDS.inventory.has(id)) {
+        deleteDoc(docSnap.ref).catch(() => {});
+        return false;
+      }
+      return true;
+    })
+    .map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: stripPrefix(docSnap.id),
+        name: String(d.name || ''),
+        notes: String(d.category || ''),
+        qty: Number(d.qty || 0),
+        minQty: Number(d.minQty || 0),
+        unit: String(d.unit || 'قطعة'),
+        unitPrice: Number(d.unitPrice || 0),
+        totalCost: Number(d.totalCost || 0),
+        linkedService: String(d.linkedService || ''),
+        updatedAt: d.updatedAt?.toDate
+          ? d.updatedAt.toDate().toISOString().slice(0, 10)
+          : new Date().toISOString().slice(0, 10),
+      };
+    });
 
-  const cloudExpenses: ExpenseRecord[] = expensesSnap.docs.map((docSnap) => {
-    const d = docSnap.data();
-    return {
-      id: stripPrefix(docSnap.id),
-      title: String(d.title || ''),
-      amount: Number(d.amount || 0),
-      category: String(d.category || 'تشغيل'),
-      currency: String(d.currency || 'ريال يمني') as CurrencyCode,
-      date: String(d.date || ''),
-    };
-  });
+  const cloudExpenses: ExpenseRecord[] = expensesSnap.docs
+    .filter((docSnap) => {
+      const id = stripPrefix(docSnap.id);
+      if (SEED_DEMO_IDS.expenses.has(id)) {
+        deleteDoc(docSnap.ref).catch(() => {});
+        return false;
+      }
+      return true;
+    })
+    .map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: stripPrefix(docSnap.id),
+        title: String(d.title || ''),
+        amount: Number(d.amount || 0),
+        category: String(d.category || 'تشغيل'),
+        currency: String(d.currency || 'ريال يمني') as CurrencyCode,
+        date: String(d.date || ''),
+      };
+    });
 
   return {
     settings: nextSettings,
-    receipts: mergeByIdPreservingExisting(cloudReceipts, fallbackData.receipts).sort(
-      (a, b) => b.receiptNo - a.receiptNo
+    receipts: mergeByIdPreservingExisting(
+      cloudReceipts,
+      fallbackData.receipts.filter((r) => !SEED_DEMO_IDS.receipts.has(r.id))
+    ).sort((a, b) => b.receiptNo - a.receiptNo),
+    inventory: mergeByIdPreservingExisting(
+      cloudInventory,
+      fallbackData.inventory.filter((i) => !SEED_DEMO_IDS.inventory.has(i.id))
     ),
-    inventory: mergeByIdPreservingExisting(cloudInventory, fallbackData.inventory),
-    expenses: mergeByIdPreservingExisting(cloudExpenses, fallbackData.expenses).sort((a, b) =>
-      b.date.localeCompare(a.date)
-    ),
+    expenses: mergeByIdPreservingExisting(
+      cloudExpenses,
+      fallbackData.expenses.filter((e) => !SEED_DEMO_IDS.expenses.has(e.id))
+    ).sort((a, b) => b.date.localeCompare(a.date)),
   };
 }
 
@@ -1090,6 +1103,14 @@ export function subscribeToClinicCloudData(
     query(collection(db, 'receipts'), where('ownerId', '==', safeUid)),
     (snap) => {
       const items: ReceiptRecord[] = snap.docs
+        .filter((docSnap) => {
+          const id = stripPrefix(docSnap.id);
+          if (SEED_DEMO_IDS.receipts.has(id)) {
+            deleteDoc(docSnap.ref).catch(() => {});
+            return false;
+          }
+          return true;
+        })
         .map((docSnap) => {
           const d = docSnap.data();
           return {
@@ -1114,7 +1135,7 @@ export function subscribeToClinicCloudData(
           };
         })
         .sort((a, b) => b.receiptNo - a.receiptNo);
-      if (items.length > 0) {
+      if (snap.docs.length > 0 || items.length > 0) {
         callbacks.onReceiptsUpdate(items);
       }
     },
@@ -1126,24 +1147,33 @@ export function subscribeToClinicCloudData(
   const unsubInventory = onSnapshot(
     query(collection(db, 'inventory'), where('ownerId', '==', safeUid)),
     (snap) => {
-      const items: InventoryItem[] = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: stripPrefix(docSnap.id),
-          name: String(d.name || ''),
-          notes: String(d.category || ''),
-          qty: Number(d.qty || 0),
-          minQty: Number(d.minQty || 0),
-          unit: String(d.unit || 'قطعة'),
-          unitPrice: Number(d.unitPrice || 0),
-          totalCost: Number(d.totalCost || 0),
-          linkedService: String(d.linkedService || ''),
-          updatedAt: d.updatedAt?.toDate
-            ? d.updatedAt.toDate().toISOString().slice(0, 10)
-            : new Date().toISOString().slice(0, 10),
-        };
-      });
-      if (items.length > 0) {
+      const items: InventoryItem[] = snap.docs
+        .filter((docSnap) => {
+          const id = stripPrefix(docSnap.id);
+          if (SEED_DEMO_IDS.inventory.has(id)) {
+            deleteDoc(docSnap.ref).catch(() => {});
+            return false;
+          }
+          return true;
+        })
+        .map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: stripPrefix(docSnap.id),
+            name: String(d.name || ''),
+            notes: String(d.category || ''),
+            qty: Number(d.qty || 0),
+            minQty: Number(d.minQty || 0),
+            unit: String(d.unit || 'قطعة'),
+            unitPrice: Number(d.unitPrice || 0),
+            totalCost: Number(d.totalCost || 0),
+            linkedService: String(d.linkedService || ''),
+            updatedAt: d.updatedAt?.toDate
+              ? d.updatedAt.toDate().toISOString().slice(0, 10)
+              : new Date().toISOString().slice(0, 10),
+          };
+        });
+      if (snap.docs.length > 0 || items.length > 0) {
         callbacks.onInventoryUpdate(items);
       }
     },
@@ -1156,6 +1186,14 @@ export function subscribeToClinicCloudData(
     query(collection(db, 'expenses'), where('ownerId', '==', safeUid)),
     (snap) => {
       const items: ExpenseRecord[] = snap.docs
+        .filter((docSnap) => {
+          const id = stripPrefix(docSnap.id);
+          if (SEED_DEMO_IDS.expenses.has(id)) {
+            deleteDoc(docSnap.ref).catch(() => {});
+            return false;
+          }
+          return true;
+        })
         .map((docSnap) => {
           const d = docSnap.data();
           return {
@@ -1168,7 +1206,7 @@ export function subscribeToClinicCloudData(
           };
         })
         .sort((a, b) => b.date.localeCompare(a.date));
-      if (items.length > 0) {
+      if (snap.docs.length > 0 || items.length > 0) {
         callbacks.onExpensesUpdate(items);
       }
     },
@@ -1578,36 +1616,22 @@ function saveLocalWorkspaceMembers(workspaceId: string, members: WorkspaceMember
 export async function addWorkspaceMemberInCloud(
   workspaceId: string,
   ownerUid: string,
-  memberEmailOrId: string,
+  memberEmail: string,
   role: WorkspaceRole,
   permissions?: WorkspacePermissions,
   displayName?: string
 ): Promise<WorkspaceMember> {
   const safeWsId = normalizeClinicWorkspaceId(workspaceId);
-  const rawInput = String(memberEmailOrId || '').trim();
-  if (!rawInput) {
-    throw new Error('يرجى إدخال البريد الإلكتروني أو معرّف الحساب للعضو الجديد.');
-  }
-
-  let cleanEmail = rawInput.toLowerCase();
-  if (!cleanEmail.includes('@')) {
-    try {
-      const resolved = await resolveEmailFromIdentifier(cleanEmail);
-      if (resolved) {
-        cleanEmail = resolved.toLowerCase();
-      } else {
-        cleanEmail = formatMemberIdentifierToEmail(cleanEmail).emailKey;
-      }
-    } catch {
-      cleanEmail = formatMemberIdentifierToEmail(cleanEmail).emailKey;
-    }
+  const cleanEmail = String(memberEmail || '').trim().toLowerCase();
+  if (!isValidRealEmail(cleanEmail)) {
+    throw new Error('يرجى إدخال بريد إلكتروني حقيقي وصحيح للعضو (مثال: accountant@gmail.com).');
   }
 
   const effectivePermissions = permissions || DEFAULT_ROLE_PERMISSIONS[role];
   const memberKey = normalizeEmailKey(cleanEmail);
   const effectiveOwnerUid = auth.currentUser?.uid || ownerUid || 'local_owner';
   const nowIso = new Date().toISOString();
-  const cleanDisplayName = displayName?.trim() || (!rawInput.includes('@') ? rawInput : undefined);
+  const cleanDisplayName = displayName?.trim() || undefined;
 
   const memberData: WorkspaceMember = {
     uid: memberKey,
@@ -1851,7 +1875,7 @@ export async function lookupUserWorkspaceByEmail(
   const ref = doc(db, 'user_workspaces', memberKey);
 
   try {
-    const snap = await getDocFromServer(ref);
+    const snap = await getDoc(ref);
     if (!snap.exists()) return null;
     const d = snap.data();
     const role = (d.role || 'viewer') as WorkspaceRole;
