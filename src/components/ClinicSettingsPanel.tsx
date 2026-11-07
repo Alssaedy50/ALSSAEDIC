@@ -61,7 +61,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   onOpenTeamModal,
   notify,
 }) => {
-  const [subTab, setSubTab] = useState<'identity' | 'services' | 'team' | 'backup'>('identity');
+  const [subTab, setSubTab] = useState<'identity' | 'services' | 'team' | 'backup'>(() => {
+    try {
+      const saved = localStorage.getItem('docai_settings_subtab_v1');
+      if (saved === 'identity' || saved === 'services' || saved === 'team' || saved === 'backup') {
+        return saved;
+      }
+    } catch {
+      // Ignore
+    }
+    return 'identity';
+  });
   const [formState, setFormState] = useState<ClinicSettings>(settings);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -83,6 +93,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       setSubTab('identity');
     }
   }, [isNewAccountSetup]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('docai_settings_subtab_v1', subTab);
+    } catch {
+      // Ignore
+    }
+  }, [subTab]);
 
   const handleIdentityChange = (field: keyof ClinicSettings['identity'], value: string) => {
     setFormState((prev) => ({

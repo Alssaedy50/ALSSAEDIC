@@ -47,8 +47,26 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
   onDeleteExpense,
   notify,
 }) => {
-  const [subTab, setSubTab] = useState<'overview' | 'expenses'>('overview');
+  const [subTab, setSubTab] = useState<'overview' | 'expenses'>(() => {
+    try {
+      const saved = localStorage.getItem('docai_finance_subtab_v1');
+      if (saved === 'overview' || saved === 'expenses') {
+        return saved;
+      }
+    } catch {
+      // Ignore
+    }
+    return 'overview';
+  });
   const [selectedCurrency, setSelectedCurrency] = useState<string>(String(defaultCurrency));
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('docai_finance_subtab_v1', subTab);
+    } catch {
+      // Ignore
+    }
+  }, [subTab]);
 
   // Pop-up Expense Modal
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState<boolean>(false);

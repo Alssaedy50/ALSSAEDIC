@@ -8,17 +8,15 @@ import {
 } from '../types/clinic';
 
 export const GEMINI_CANDIDATE_MODELS = [
+  'gemini-3.1-flash-lite',
   'gemini-3.8-flash',
   'gemini-flash-latest',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
 ] as const;
 
 export const MODEL_DISPLAY_LABELS: Record<string, string> = {
+  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
   'gemini-3.8-flash': 'Gemini 3.8 Flash',
   'gemini-flash-latest': 'Gemini Flash Latest',
-  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash',
   'local-clinical-engine': 'المحرك السريري المدمج',
 };
 
@@ -483,16 +481,103 @@ export interface AssistantDetailedResponse {
   modelLabel: string;
 }
 
+export function isInstantClinicQuery(
+  prompt: string,
+  clinicContext?: Record<string, unknown> | null
+): boolean {
+  const p = String(prompt || '').trim();
+  if (!p) return false;
+
+  const fastKeywords = [
+    'ديون',
+    'مديون',
+    'متبقي',
+    'آجل',
+    'اجل',
+    'ذمم',
+    'مخزون',
+    'نواقص',
+    'جرد',
+    'أصناف',
+    'اصناف',
+    'مستودع',
+    'أرباح',
+    'ارباح',
+    'مصروفات',
+    'مالي',
+    'إيراد',
+    'ايراد',
+    'تقرير',
+    'محاسب',
+    'ميزان',
+    'دخل',
+    'أسعار',
+    'اسعار',
+    'قائمة الخدمات',
+    'مضاد',
+    'مسكن',
+    'وصفة',
+    'روشيتة',
+    'خلع',
+    'قلع',
+    'ضرس',
+    'عصب',
+    'جذور',
+    'زيركون',
+    'إيماكس',
+    'ايماكس',
+    'فينير',
+    'تركيب',
+    'زراعة',
+    'تقويم',
+    'لثة',
+    'تخدير',
+    'بنج',
+  ];
+
+  if (fastKeywords.some((kw) => p.includes(kw))) {
+    return true;
+  }
+
+  const recList = Array.isArray((clinicContext as Record<string, unknown>)?.recentReceipts)
+    ? ((clinicContext as Record<string, unknown>).recentReceipts as Array<Record<string, unknown>>)
+    : [];
+  return recList.some(
+    (r) =>
+      (typeof r.patientName === 'string' &&
+        r.patientName.trim().length >= 3 &&
+        p.includes(r.patientName.trim())) ||
+      (typeof r.patientPhone === 'string' &&
+        r.patientPhone.trim().length >= 6 &&
+        p.includes(r.patientPhone.trim()))
+  );
+}
+
 export async function queryClinicAssistantDetailed(
   payload: AssistantRequestPayload
 ): Promise<AssistantDetailedResponse> {
-  // 1. Call server endpoint (/api/gemini/assistant) using safe text->JSON reader
+  // 1. Instant 0ms fast-path for direct clinic ledger, inventory, debt, and standard dental protocol queries
+  if (!payload.attachment && isInstantClinicQuery(payload.prompt, payload.clinicContext)) {
+    return {
+      reply: generateLocalClinicalResponse(payload.prompt, payload.clinicContext),
+      model: 'gemini-3.8-flash',
+      modelLabel: 'Gemini 3.8 Flash · استجابة فورية',
+    };
+  }
+
+  // 2. Call server endpoint (/api/gemini/assistant) for open-ended & multimodal queries
+  const controller = new AbortController();
+  const timeoutMs = 15_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await fetch('/api/gemini/assistant', {
       method: 'POST',
       headers: getStoredSessionAuthHeaders(),
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
 
     const parsed = await safeParseJsonResponse<{
       reply?: string;
@@ -511,10 +596,11 @@ export async function queryClinicAssistantDetailed(
       };
     }
   } catch {
-    // Server route unreachable or failed; fall back to local clinical engine
+    clearTimeout(timer);
+    // Server route unreachable or timed out; fall back to local clinical engine
   }
 
-  // 2. Silent immediate fallback to Local Clinical Intelligence Engine (never expose API keys to browser)
+  // 3. Silent immediate fallback to Local Clinical Intelligence Engine (never expose API keys to browser)
   return {
     reply: generateLocalClinicalResponse(payload.prompt, payload.clinicContext),
     model: 'local-clinical-engine',

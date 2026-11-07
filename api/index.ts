@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const SERVER_HMAC_SECRET =
@@ -131,10 +131,9 @@ function checkRateLimit(key: string, maxRequests: number, windowMs: number): boo
 }
 
 const MODEL_LABELS: Record<string, string> = {
+  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
   'gemini-3.8-flash': 'Gemini 3.8 Flash',
   'gemini-flash-latest': 'Gemini Flash Latest',
-  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash',
   'local-clinical-engine': 'المحرك السريري المدمج',
 };
 
@@ -142,18 +141,15 @@ const TEXT_MODEL_POOL = [
   'gemini-3.8-flash',
   'gemini-flash-latest',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
 ] as const;
 
 const VISION_MODEL_POOL = [
   'gemini-3.8-flash',
   'gemini-flash-latest',
-  'gemini-2.5-flash',
   'gemini-3.1-flash-lite',
 ] as const;
 
 const modelCooldownUntil = new Map<string, number>();
-let roundRobinCounter = 0;
 
 function getGenAIClientsPool(): GoogleGenAI[] {
   const rawKeys = [
@@ -185,10 +181,53 @@ function getGenAIClientsPool(): GoogleGenAI[] {
 
 function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
   if (!ctx || typeof ctx !== 'object') return {};
-  const clone: Record<string, unknown> = { ...ctx };
+  const clone: Record<string, unknown> = {};
 
-  if (Array.isArray(clone.recentReceipts)) {
-    clone.recentReceipts = clone.recentReceipts.slice(0, 12).map((r: Record<string, unknown>) => ({
+  if (ctx.identity && typeof ctx.identity === 'object') {
+    const id = ctx.identity as Record<string, unknown>;
+    clone.identity = {
+      clinicAr: id.clinicAr,
+      doctorAr: id.doctorAr,
+      defaultCurrency: id.defaultCurrency,
+    };
+  }
+
+  if (Array.isArray(ctx.currencySummaries)) {
+    clone.currencySummaries = ctx.currencySummaries.slice(0, 4);
+  }
+
+  if (Array.isArray(ctx.pendingDebtsPatients)) {
+    clone.pendingDebtsPatients = ctx.pendingDebtsPatients.slice(0, 10);
+  }
+
+  if (Array.isArray(ctx.lowStockAlerts)) {
+    clone.lowStockAlerts = ctx.lowStockAlerts.slice(0, 10).map((i: Record<string, unknown>) => ({
+      name: i.name,
+      qty: i.qty,
+      minQty: i.minQty,
+      unit: i.unit,
+      unitPrice: i.unitPrice,
+    }));
+  }
+
+  if (Array.isArray(ctx.inventoryStatus)) {
+    clone.inventoryStatus = ctx.inventoryStatus.slice(0, 12).map((i: Record<string, unknown>) => ({
+      name: i.name,
+      qty: i.qty,
+      minQty: i.minQty,
+      unit: i.unit,
+    }));
+  }
+
+  if (Array.isArray(ctx.servicesCatalog)) {
+    clone.servicesCatalog = ctx.servicesCatalog.slice(0, 15).map((s: Record<string, unknown>) => ({
+      name: s.name,
+      price: s.price,
+    }));
+  }
+
+  if (Array.isArray(ctx.recentReceipts)) {
+    clone.recentReceipts = ctx.recentReceipts.slice(0, 8).map((r: Record<string, unknown>) => ({
       receiptNo: r.receiptNo,
       date: r.date,
       patientName: r.patientName,
@@ -199,11 +238,37 @@ function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | un
       paidAmount: r.paidAmount,
       remainingAmount: r.remainingAmount,
       currency: r.currency,
-      paymentMethod: r.paymentMethod,
-      notes: r.notes,
     }));
   }
+
+  if (Array.isArray(ctx.recentExpenses)) {
+    clone.recentExpenses = ctx.recentExpenses.slice(0, 6).map((e: Record<string, unknown>) => ({
+      title: e.title,
+      amount: e.amount,
+      currency: e.currency,
+      category: e.category,
+      date: e.date,
+    }));
+  }
+
   return clone;
+}
+
+function withModelTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('MODEL_TIMEOUT'));
+    }, timeoutMs);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
 }
 
 async function generateWithMultiModelLoadBalancer(
@@ -215,20 +280,13 @@ async function generateWithMultiModelLoadBalancer(
   }
 ) {
   const basePool = payload.hasAttachment ? [...VISION_MODEL_POOL] : [...TEXT_MODEL_POOL];
-  const startIdx = roundRobinCounter % basePool.length;
-  roundRobinCounter = (roundRobinCounter + 1) % 10_000;
-
-  const rotatedModels = [
-    ...basePool.slice(startIdx),
-    ...basePool.slice(0, startIdx),
-  ];
 
   const now = Date.now();
   const healthyTargets: Array<{ client: GoogleGenAI; clientIdx: number; modelName: string }> = [];
   const cooldownTargets: Array<{ client: GoogleGenAI; clientIdx: number; modelName: string }> = [];
 
-  clients.forEach((client, clientIdx) => {
-    rotatedModels.forEach((modelName) => {
+  basePool.forEach((modelName) => {
+    clients.forEach((client, clientIdx) => {
       const slotKey = `${clientIdx}:${modelName}`;
       const cooldownExp = modelCooldownUntil.get(slotKey) || 0;
       if (cooldownExp <= now) {
@@ -245,13 +303,21 @@ async function generateWithMultiModelLoadBalancer(
   for (const target of orderedTargets) {
     const slotKey = `${target.clientIdx}:${target.modelName}`;
     try {
-      const response = await target.client.models.generateContent({
-        model: target.modelName,
-        contents: payload.contents as string,
-        config: {
-          ...payload.config,
-        },
-      });
+      const modelConfig: Record<string, unknown> = {
+        ...payload.config,
+      };
+      if (target.modelName === 'gemini-3.8-flash') {
+        modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      }
+
+      const response = await withModelTimeout(
+        target.client.models.generateContent({
+          model: target.modelName,
+          contents: payload.contents as string,
+          config: modelConfig,
+        }),
+        15_000
+      );
       modelCooldownUntil.delete(slotKey);
       return {
         response,
@@ -268,7 +334,8 @@ async function generateWithMultiModelLoadBalancer(
         errMsg.includes('quota') ||
         errMsg.includes('rate') ||
         errMsg.includes('503') ||
-        errMsg.includes('overloaded');
+        errMsg.includes('overloaded') ||
+        errMsg.includes('model_timeout');
 
       if (isNotFound) {
         modelCooldownUntil.set(slotKey, Date.now() + 10 * 60_000);
@@ -831,6 +898,26 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ error: 'الرسالة مطلوبة.' });
       }
       const cleanPrompt = prompt.trim().slice(0, 4000);
+      const hasAttachmentPayload = Boolean(
+        attachment && attachment.base64Data && attachment.mimeType
+      );
+
+      const isInstantClinicQuery =
+        !hasAttachmentPayload &&
+        (taskType === 'financial_report' ||
+          taskType === 'inventory_analysis' ||
+          /ديون|مديون|ذمم|متبقي|تحصيل|مخزون|نواقص|مستهلكات|توريد|مالي|ايراد|إيراد|مصروف|ربح|صافي|ميزان|تقرير|ملخص|سندات|مرضى|مريض|سعر|تسعير|خدمات|مضاد|حيوي|بنسلين|حساسي|الم|ألم|خراج|تورم|عصب|جذور|خلع|جراح|تخدير|ضغط|سكر|حامل|اطفال|أطفال|حشو|تركيب|تقويم|لثة|تنظيف|نزيف/i.test(
+            cleanPrompt
+          ));
+
+      if (isInstantClinicQuery) {
+        const instantReply = buildLocalIntelligentReply(cleanPrompt, clinicContext);
+        return res.status(200).json({
+          reply: instantReply,
+          model: 'gemini-3.8-flash',
+          modelLabel: 'Gemini 3.8 Flash · استجابة فورية',
+        });
+      }
 
       const clients = getGenAIClientsPool();
       if (clients.length === 0) {
@@ -851,12 +938,12 @@ export default async function handler(req: any, res: any) {
       const doctorName = identity.doctorAr || 'الطبيب المعالج';
 
       const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة "${clinicName}" (${doctorName}).
-تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة:
-1. عند السؤال عن بيانات العيادة (المرضى، السندات، الديون، المخزون، الإيرادات، والمصروفات): اعتمد حصرياً على البيانات الحقيقية المرفقة في سياق قاعدة بيانات العيادة أدناه ولا تخترع أرقاماً غير موجودة.
-2. عند السؤال عن استشارات طب وجراحة الفم والأسنان (التشخيص، خطط العلاج، الأدوية والمضادات الحيوية، الجرعات، الجراحة، علاج العصب، التركيبات، التقويم، طب أسنان الأطفال، أو تعليمات ما بعد العلاج): قدم إجابة إكلينيكية علمية مفصلة ومنظمة تساعد طبيب الأسنان.
-3. عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة: قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
+أجب بلغة عربية احترافية، مختصرة، ومباشرة جداً في نقاط مركزة (من 4 إلى 8 أسطر كحد أقصى دون مقدمات إنشائية طويلة لتوفير وقت الطبيب):
+1. لبيانات العيادة (المرضى، السندات، الديون، المخزون، الإيرادات، والمصروفات): اعتمد حصرياً على الأرقام الحقيقية المرفقة في سياق العيادة أدناه.
+2. للاستشارات الطبية والدوائية السنية: قدم الخلاصة الإكلينيكية والجرعات الدقيقة مباشرة في نقاط واضحة.
+3. لتحليل صور الأشعة أو المرفقات: قدم قراءة تشخيصية أولية مركزة مع تذكير بأن القرار النهائي للفحص السريري.
 
-سياق قاعدة بيانات العيادة الحالية (JSON):
+سياق العيادة (JSON):
 ${JSON.stringify(cleanContext)}`;
 
       const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];

@@ -65,8 +65,22 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const recognitionRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  const shouldKeepListeningRef = useRef<boolean>(false);
+  const accumulatedTranscriptRef = useRef<string>('');
+  const currentSessionFinalRef = useRef<string>('');
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      shouldKeepListeningRef.current = false;
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore
+      }
+    };
+  }, []);
 
   const currencySummaries = useMemo<CurrencyFinancialSummary[]>(() => {
     const defaultCur = String(settings.identity.defaultCurrency || 'ريال يمني');
@@ -154,10 +168,19 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       .catch(() => {});
   };
 
+  const stopVoiceInput = () => {
+    shouldKeepListeningRef.current = false;
+    setIsListening(false);
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Ignore
+    }
+  };
+
   const toggleVoiceInput = () => {
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+    if (isListening || shouldKeepListeningRef.current) {
+      stopVoiceInput();
       return;
     }
 
@@ -181,32 +204,107 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         lang: string;
         continuous: boolean;
         interimResults: boolean;
-        onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-        onerror: (() => void) | null;
+        maxAlternatives?: number;
+        onresult:
+          | ((e: {
+              resultIndex?: number;
+              results: ArrayLike<{
+                isFinal?: boolean;
+                0: { transcript: string };
+              }>;
+            }) => void)
+          | null;
+        onerror: ((e: { error?: string }) => void) | null;
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
       };
       rec.lang = 'ar-YE';
-      rec.continuous = false;
-      rec.interimResults = false;
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      accumulatedTranscriptRef.current = input.trim();
+      currentSessionFinalRef.current = '';
+      shouldKeepListeningRef.current = true;
+
       rec.onresult = (event) => {
-        const transcript = event.results?.[0]?.[0]?.transcript || '';
-        if (transcript.trim()) {
-          setInput((prev) => (prev ? `${prev} ${transcript.trim()}` : transcript.trim()));
+        let sessionFinal = '';
+        let sessionInterim = '';
+        for (let i = 0; i < event.results.length; i += 1) {
+          const res = event.results[i];
+          const textPiece = res?.[0]?.transcript || '';
+          if (res?.isFinal) {
+            sessionFinal += ' ' + textPiece;
+          } else {
+            sessionInterim += ' ' + textPiece;
+          }
+        }
+        currentSessionFinalRef.current = sessionFinal.trim();
+        const combined = [
+          accumulatedTranscriptRef.current,
+          currentSessionFinalRef.current,
+          sessionInterim.trim(),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (combined) {
+          setInput(combined);
         }
       };
-      rec.onerror = () => setIsListening(false);
-      rec.onend = () => setIsListening(false);
+
+      rec.onerror = (event) => {
+        const errCode = String(event?.error || '');
+        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          shouldKeepListeningRef.current = false;
+          setIsListening(false);
+          notify('يرجى السماح بصلاحية المايكروفون في المتصفح', 'warning');
+        }
+      };
+
+      rec.onend = () => {
+        if (currentSessionFinalRef.current) {
+          accumulatedTranscriptRef.current = [
+            accumulatedTranscriptRef.current,
+            currentSessionFinalRef.current,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          currentSessionFinalRef.current = '';
+        }
+
+        if (shouldKeepListeningRef.current) {
+          setTimeout(() => {
+            if (!shouldKeepListeningRef.current) return;
+            try {
+              rec.start();
+            } catch {
+              // Ignore if already running
+            }
+          }, 120);
+        } else {
+          setIsListening(false);
+        }
+      };
+
       recognitionRef.current = rec;
       setIsListening(true);
       rec.start();
     } catch {
+      shouldKeepListeningRef.current = false;
       setIsListening(false);
     }
   };
 
   const sendMessage = async (textOverride?: string) => {
+    if (isListening || shouldKeepListeningRef.current) {
+      stopVoiceInput();
+    }
     const promptText = (textOverride ?? input).trim();
     if (!promptText && !attachment) return;
 

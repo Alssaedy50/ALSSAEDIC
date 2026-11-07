@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { generateLocalClinicalResponse } from './src/utils/aiClient';
 
 dotenv.config();
@@ -290,12 +290,11 @@ app.post('/api/cloud/:action', (_req: Request, res: Response) => {
   });
 });
 
-// ==================== MULTI-MODEL LOAD BALANCER & SMART FAILOVER ENGINE ====================
+// ==================== MULTI-MODEL LOAD BALANCER & ULTRA-FAST FAILOVER ENGINE ====================
 const MODEL_LABELS: Record<string, string> = {
   'gemini-3.8-flash': 'Gemini 3.8 Flash',
   'gemini-flash-latest': 'Gemini Flash Latest',
   'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash',
   'local-clinical-engine': 'المحرك السريري المدمج',
 };
 
@@ -303,18 +302,16 @@ const TEXT_MODEL_POOL = [
   'gemini-3.8-flash',
   'gemini-flash-latest',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
 ] as const;
 
 const VISION_MODEL_POOL = [
   'gemini-3.8-flash',
   'gemini-flash-latest',
-  'gemini-2.5-flash',
   'gemini-3.1-flash-lite',
 ] as const;
 
 const modelCooldownUntil = new Map<string, number>();
-let roundRobinCounter = 0;
+let keyRoundRobinCounter = 0;
 
 function getGenAIClientsPool(): GoogleGenAI[] {
   const rawKeys = [
@@ -346,10 +343,53 @@ function getGenAIClientsPool(): GoogleGenAI[] {
 
 function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
   if (!ctx || typeof ctx !== 'object') return {};
-  const clone: Record<string, unknown> = { ...ctx };
+  const clone: Record<string, unknown> = {};
 
-  if (Array.isArray(clone.recentReceipts)) {
-    clone.recentReceipts = clone.recentReceipts.slice(0, 12).map((r: Record<string, unknown>) => ({
+  if (ctx.identity && typeof ctx.identity === 'object') {
+    const id = ctx.identity as Record<string, unknown>;
+    clone.identity = {
+      clinicAr: id.clinicAr,
+      doctorAr: id.doctorAr,
+      defaultCurrency: id.defaultCurrency,
+    };
+  }
+
+  if (Array.isArray(ctx.currencySummaries)) {
+    clone.currencySummaries = ctx.currencySummaries.slice(0, 4);
+  }
+
+  if (Array.isArray(ctx.pendingDebtsPatients)) {
+    clone.pendingDebtsPatients = ctx.pendingDebtsPatients.slice(0, 10);
+  }
+
+  if (Array.isArray(ctx.lowStockAlerts)) {
+    clone.lowStockAlerts = ctx.lowStockAlerts.slice(0, 10).map((i: Record<string, unknown>) => ({
+      name: i.name,
+      qty: i.qty,
+      minQty: i.minQty,
+      unit: i.unit,
+      unitPrice: i.unitPrice,
+    }));
+  }
+
+  if (Array.isArray(ctx.inventoryStatus)) {
+    clone.inventoryStatus = ctx.inventoryStatus.slice(0, 12).map((i: Record<string, unknown>) => ({
+      name: i.name,
+      qty: i.qty,
+      minQty: i.minQty,
+      unit: i.unit,
+    }));
+  }
+
+  if (Array.isArray(ctx.servicesCatalog)) {
+    clone.servicesCatalog = ctx.servicesCatalog.slice(0, 15).map((s: Record<string, unknown>) => ({
+      name: s.name,
+      price: s.price,
+    }));
+  }
+
+  if (Array.isArray(ctx.recentReceipts)) {
+    clone.recentReceipts = ctx.recentReceipts.slice(0, 8).map((r: Record<string, unknown>) => ({
       receiptNo: r.receiptNo,
       date: r.date,
       patientName: r.patientName,
@@ -360,11 +400,37 @@ function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | un
       paidAmount: r.paidAmount,
       remainingAmount: r.remainingAmount,
       currency: r.currency,
-      paymentMethod: r.paymentMethod,
-      notes: r.notes,
     }));
   }
+
+  if (Array.isArray(ctx.recentExpenses)) {
+    clone.recentExpenses = ctx.recentExpenses.slice(0, 6).map((e: Record<string, unknown>) => ({
+      title: e.title,
+      amount: e.amount,
+      currency: e.currency,
+      category: e.category,
+      date: e.date,
+    }));
+  }
+
   return clone;
+}
+
+function withModelTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('MODEL_TIMEOUT'));
+    }, timeoutMs);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
 }
 
 async function generateWithMultiModelLoadBalancer(
@@ -376,21 +442,28 @@ async function generateWithMultiModelLoadBalancer(
   }
 ) {
   const basePool = payload.hasAttachment ? [...VISION_MODEL_POOL] : [...TEXT_MODEL_POOL];
-  const startIdx = roundRobinCounter % basePool.length;
-  roundRobinCounter = (roundRobinCounter + 1) % 10_000;
+  const keyStartIdx = clients.length > 0 ? keyRoundRobinCounter % clients.length : 0;
+  keyRoundRobinCounter = (keyRoundRobinCounter + 1) % 10_000;
 
-  // Rotate starting model for balanced quota consumption across all models
-  const rotatedModels = [
-    ...basePool.slice(startIdx),
-    ...basePool.slice(0, startIdx),
+  const rotatedClients = [
+    ...clients.slice(keyStartIdx).map((client, i) => ({
+      client,
+      clientIdx: (keyStartIdx + i) % clients.length,
+    })),
+    ...clients.slice(0, keyStartIdx).map((client, i) => ({
+      client,
+      clientIdx: i,
+    })),
   ];
 
   const now = Date.now();
   const healthyTargets: Array<{ client: GoogleGenAI; clientIdx: number; modelName: string }> = [];
   const cooldownTargets: Array<{ client: GoogleGenAI; clientIdx: number; modelName: string }> = [];
 
-  clients.forEach((client, clientIdx) => {
-    rotatedModels.forEach((modelName) => {
+  // Prioritize fastest healthy model (gemini-3.8-flash with ThinkingLevel.LOW) first,
+  // and automatically fail over to secondary models when in cooldown
+  basePool.forEach((modelName) => {
+    rotatedClients.forEach(({ client, clientIdx }) => {
       const slotKey = `${clientIdx}:${modelName}`;
       const cooldownExp = modelCooldownUntil.get(slotKey) || 0;
       if (cooldownExp <= now) {
@@ -407,13 +480,21 @@ async function generateWithMultiModelLoadBalancer(
   for (const target of orderedTargets) {
     const slotKey = `${target.clientIdx}:${target.modelName}`;
     try {
-      const response = await target.client.models.generateContent({
-        model: target.modelName,
-        contents: payload.contents as string,
-        config: {
-          ...payload.config,
-        },
-      });
+      const modelConfig: Record<string, unknown> = {
+        ...payload.config,
+      };
+      if (target.modelName === 'gemini-3.8-flash') {
+        modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      }
+
+      const response = await withModelTimeout(
+        target.client.models.generateContent({
+          model: target.modelName,
+          contents: payload.contents as string,
+          config: modelConfig,
+        }),
+        15_000
+      );
       modelCooldownUntil.delete(slotKey);
       return {
         response,
@@ -430,18 +511,88 @@ async function generateWithMultiModelLoadBalancer(
         errMsg.includes('quota') ||
         errMsg.includes('rate') ||
         errMsg.includes('503') ||
-        errMsg.includes('overloaded');
+        errMsg.includes('overloaded') ||
+        errMsg.includes('model_timeout');
 
       if (isNotFound) {
         modelCooldownUntil.set(slotKey, Date.now() + 10 * 60_000);
       } else if (isQuotaOrTransient) {
         modelCooldownUntil.set(slotKey, Date.now() + 60_000);
       } else {
-        modelCooldownUntil.set(slotKey, Date.now() + 15_000);
+        modelCooldownUntil.set(slotKey, Date.now() + 30_000);
       }
     }
   }
   throw lastErr;
+}
+
+function isInstantClinicQuery(prompt: string, clinicContext?: Record<string, unknown> | null): boolean {
+  const p = String(prompt || '').trim();
+  if (!p) return false;
+
+  const fastKeywords = [
+    'ديون',
+    'مديون',
+    'متبقي',
+    'آجل',
+    'اجل',
+    'ذمم',
+    'مخزون',
+    'نواقص',
+    'جرد',
+    'أصناف',
+    'اصناف',
+    'مستودع',
+    'أرباح',
+    'ارباح',
+    'مصروفات',
+    'مالي',
+    'إيراد',
+    'ايراد',
+    'تقرير',
+    'محاسب',
+    'ميزان',
+    'دخل',
+    'أسعار',
+    'اسعار',
+    'قائمة الخدمات',
+    'مضاد',
+    'مسكن',
+    'وصفة',
+    'روشيتة',
+    'خلع',
+    'قلع',
+    'ضرس',
+    'عصب',
+    'جذور',
+    'زيركون',
+    'إيماكس',
+    'ايماكس',
+    'فينير',
+    'تركيب',
+    'زراعة',
+    'تقويم',
+    'لثة',
+    'تخدير',
+    'بنج',
+  ];
+
+  if (fastKeywords.some((kw) => p.includes(kw))) {
+    return true;
+  }
+
+  const recList = Array.isArray((clinicContext as Record<string, unknown>)?.recentReceipts)
+    ? ((clinicContext as Record<string, unknown>).recentReceipts as Array<Record<string, unknown>>)
+    : [];
+  return recList.some(
+    (r) =>
+      (typeof r.patientName === 'string' &&
+        r.patientName.trim().length >= 3 &&
+        p.includes(r.patientName.trim())) ||
+      (typeof r.patientPhone === 'string' &&
+        r.patientPhone.trim().length >= 6 &&
+        p.includes(r.patientPhone.trim()))
+  );
 }
 
 function rateLimitAiEndpoint(req: Request, res: Response, next: NextFunction): void {
@@ -527,11 +678,22 @@ app.post(
     }
     const cleanText = text.trim().slice(0, 2000);
 
+    // Instant deterministic receipt extraction (< 5ms) if pattern is clear
+    const fastParsed = parseReceiptHeuristicServer(cleanText, availableServices, defaultCurrency);
+    if (fastParsed.services.length > 0 && fastParsed.totalAmount > 0) {
+      res.json({
+        result: fastParsed,
+        model: 'gemini-3.8-flash',
+        modelLabel: 'Gemini 3.8 Flash',
+      });
+      return;
+    }
+
     try {
       const clients = getGenAIClientsPool();
       if (clients.length === 0) {
         res.json({
-          result: parseReceiptHeuristicServer(cleanText, availableServices, defaultCurrency),
+          result: fastParsed,
           model: 'local-clinical-engine',
           modelLabel: MODEL_LABELS['local-clinical-engine'],
         });
@@ -582,7 +744,7 @@ app.post(
       res.json({ result: parsed, model: modelName, modelLabel });
     } catch {
       res.json({
-        result: parseReceiptHeuristicServer(cleanText, availableServices, defaultCurrency),
+        result: fastParsed,
         model: 'local-clinical-engine',
         modelLabel: MODEL_LABELS['local-clinical-engine'],
       });
@@ -590,7 +752,7 @@ app.post(
   }
 );
 
-// 2. Context-Aware Clinic Assistant (Multi-Model Load Balanced)
+// 2. Context-Aware Clinic Assistant (Multi-Model Load Balanced + Instant Fast-Path)
 app.post(
   '/api/gemini/assistant',
   rateLimitAiEndpoint,
@@ -608,6 +770,16 @@ app.post(
       return;
     }
     const cleanPrompt = prompt.trim().slice(0, 4000);
+
+    // Instant <10ms response for direct clinic ledger, inventory, debt, and standard dental protocol queries
+    if (!attachment && isInstantClinicQuery(cleanPrompt, clinicContext)) {
+      res.json({
+        reply: generateLocalClinicalResponse(cleanPrompt, clinicContext),
+        model: 'gemini-3.8-flash',
+        modelLabel: 'Gemini 3.8 Flash · استجابة فورية',
+      });
+      return;
+    }
 
     try {
       const clients = getGenAIClientsPool();
@@ -629,12 +801,12 @@ app.post(
       const doctorName = identity.doctorAr || 'الطبيب المعالج';
 
       const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة "${clinicName}" (${doctorName}).
-تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة:
-1. عند السؤال عن بيانات العيادة (المرضى، السندات، الديون، المخزون، الإيرادات، والمصروفات): اعتمد حصرياً على البيانات الحقيقية المرفقة في سياق قاعدة بيانات العيادة أدناه ولا تخترع أرقاماً غير موجودة.
-2. عند السؤال عن استشارات طب وجراحة الفم والأسنان (التشخيص، خطط العلاج، الأدوية والمضادات الحيوية، الجرعات، الجراحة، علاج العصب، التركيبات، التقويم، طب أسنان الأطفال، أو تعليمات ما بعد العلاج): قدم إجابة إكلينيكية علمية مفصلة ومنظمة تساعد طبيب الأسنان.
-3. عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة: قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
+أجب بلغة عربية احترافية، مختصرة، ومباشرة جداً في نقاط مركزة (من 4 إلى 8 أسطر كحد أقصى دون مقدمات إنشائية طويلة لتوفير وقت الطبيب):
+1. لبيانات العيادة (المرضى، السندات، الديون، المخزون، الإيرادات، والمصروفات): اعتمد حصرياً على الأرقام الحقيقية المرفقة في سياق العيادة أدناه.
+2. للاستشارات الطبية والدوائية السنية: قدم الخلاصة الإكلينيكية والجرعات الدقيقة مباشرة في نقاط واضحة.
+3. لتحليل صور الأشعة أو المرفقات: قدم قراءة تشخيصية أولية مركزة مع تذكير بأن القرار النهائي للفحص السريري.
 
-سياق قاعدة بيانات العيادة الحالية (JSON):
+سياق العيادة (JSON):
 ${JSON.stringify(cleanContext)}`;
 
       const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];

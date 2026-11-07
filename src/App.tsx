@@ -104,7 +104,37 @@ const STORAGE_KEYS = {
   EXPENSES: 'docai_gemini_expenses_v3',
   THEME: 'docai_theme_mode_v1',
   DIRECT_CLOUD_SESSION: 'docai_direct_cloud_session_v1',
+  ACTIVE_SECTION: 'docai_active_section_v1',
 };
+
+const VALID_MAIN_SECTIONS: MainSectionId[] = [
+  'receipt',
+  'records',
+  'inventory',
+  'finance',
+  'assistant',
+  'settings',
+];
+
+function isValidMainSection(val: unknown): val is MainSectionId {
+  return typeof val === 'string' && (VALID_MAIN_SECTIONS as string[]).includes(val);
+}
+
+function getInitialActiveSection(): MainSectionId {
+  try {
+    const hashSection = window.location.hash.replace(/^#/, '').trim();
+    if (isValidMainSection(hashSection)) {
+      return hashSection;
+    }
+    const storedSection = localStorage.getItem(STORAGE_KEYS.ACTIVE_SECTION);
+    if (isValidMainSection(storedSection)) {
+      return storedSection;
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return 'receipt';
+}
 
 function getScopedStorageKey(baseKey: string, ownerUid?: string | null): string {
   if (!ownerUid) return baseKey;
@@ -162,7 +192,9 @@ export default function App() {
     return saved ? saved === 'dark' : true;
   });
 
-  const [activeSection, setActiveSection] = useState<MainSectionId>('receipt');
+  const [activeSection, setActiveSection] = useState<MainSectionId>(() =>
+    getInitialActiveSection()
+  );
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState<boolean>(false);
 
@@ -238,6 +270,17 @@ export default function App() {
     }
     localStorage.setItem(STORAGE_KEYS.THEME, darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_SECTION, activeSection);
+      if (window.location.hash !== `#${activeSection}`) {
+        window.history.replaceState({ section: activeSection }, '', `#${activeSection}`);
+      }
+    } catch {
+      // Ignore storage or history errors
+    }
+  }, [activeSection]);
 
   useEffect(() => {
     const scopedKey = getScopedStorageKey(STORAGE_KEYS.SETTINGS, activeClinicOwnerUid);
@@ -614,7 +657,13 @@ export default function App() {
         setIsDrawerOpen(false);
         return;
       }
-      const targetSection = (e.state?.section as MainSectionId) || 'receipt';
+      const fromState = e.state?.section;
+      const fromHash = window.location.hash.replace(/^#/, '').trim();
+      const targetSection: MainSectionId = isValidMainSection(fromState)
+        ? fromState
+        : isValidMainSection(fromHash)
+          ? fromHash
+          : getInitialActiveSection();
       setActiveSection(targetSection);
     };
     window.addEventListener('popstate', handlePopState);
@@ -622,6 +671,11 @@ export default function App() {
   }, [isDrawerOpen, isCloudModalOpen]);
 
   const navigateToSection = (sectionId: MainSectionId) => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_SECTION, sectionId);
+    } catch {
+      // Ignore
+    }
     if (sectionId !== activeSection) {
       window.history.pushState({ section: sectionId }, '', `#${sectionId}`);
       setActiveSection(sectionId);

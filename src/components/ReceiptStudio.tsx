@@ -78,7 +78,26 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   const [smartInput, setSmartInput] = useState<string>('');
   const [isParsingAI, setIsParsingAI] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
-  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const recognitionRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  const shouldKeepListeningRef = useRef<boolean>(false);
+  const accumulatedTranscriptRef = useRef<string>('');
+  const currentSessionFinalRef = useRef<string>('');
+  const latestSmartInputRef = useRef<string>('');
+
+  useEffect(() => {
+    latestSmartInputRef.current = smartInput;
+  }, [smartInput]);
+
+  useEffect(() => {
+    return () => {
+      shouldKeepListeningRef.current = false;
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore
+      }
+    };
+  }, []);
 
   // Pop-up Modals
   const [isServicesModalOpen, setIsServicesModalOpen] = useState<boolean>(false);
@@ -284,10 +303,23 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     }
   };
 
+  const stopVoiceDictation = (triggerParse = false) => {
+    shouldKeepListeningRef.current = false;
+    setIsListening(false);
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Ignore
+    }
+    const finalText = latestSmartInputRef.current.trim();
+    if (triggerParse && finalText) {
+      handleSmartParse(finalText);
+    }
+  };
+
   const toggleVoiceDictation = () => {
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+    if (isListening || shouldKeepListeningRef.current) {
+      stopVoiceDictation(true);
       return;
     }
 
@@ -311,31 +343,101 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         lang: string;
         continuous: boolean;
         interimResults: boolean;
-        onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-        onerror: (() => void) | null;
+        maxAlternatives?: number;
+        onresult:
+          | ((e: {
+              resultIndex?: number;
+              results: ArrayLike<{
+                isFinal?: boolean;
+                0: { transcript: string };
+              }>;
+            }) => void)
+          | null;
+        onerror: ((e: { error?: string }) => void) | null;
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
       };
       rec.lang = 'ar-YE';
-      rec.continuous = false;
-      rec.interimResults = false;
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      accumulatedTranscriptRef.current = smartInput.trim();
+      currentSessionFinalRef.current = '';
+      shouldKeepListeningRef.current = true;
 
       rec.onresult = (event) => {
-        const transcript = event.results?.[0]?.[0]?.transcript || '';
-        if (transcript.trim()) {
-          setSmartInput(transcript.trim());
-          handleSmartParse(transcript.trim());
+        let sessionFinal = '';
+        let sessionInterim = '';
+        for (let i = 0; i < event.results.length; i += 1) {
+          const res = event.results[i];
+          const textPiece = res?.[0]?.transcript || '';
+          if (res?.isFinal) {
+            sessionFinal += ' ' + textPiece;
+          } else {
+            sessionInterim += ' ' + textPiece;
+          }
+        }
+        currentSessionFinalRef.current = sessionFinal.trim();
+        const combined = [
+          accumulatedTranscriptRef.current,
+          currentSessionFinalRef.current,
+          sessionInterim.trim(),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (combined) {
+          latestSmartInputRef.current = combined;
+          setSmartInput(combined);
+          applyLocalHeuristic(combined);
         }
       };
 
-      rec.onerror = () => setIsListening(false);
-      rec.onend = () => setIsListening(false);
+      rec.onerror = (event) => {
+        const errCode = String(event?.error || '');
+        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          shouldKeepListeningRef.current = false;
+          setIsListening(false);
+          notify('يرجى السماح بصلاحية المايكروفون في المتصفح', 'warning');
+        }
+      };
+
+      rec.onend = () => {
+        if (currentSessionFinalRef.current) {
+          accumulatedTranscriptRef.current = [
+            accumulatedTranscriptRef.current,
+            currentSessionFinalRef.current,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          currentSessionFinalRef.current = '';
+        }
+
+        if (shouldKeepListeningRef.current) {
+          setTimeout(() => {
+            if (!shouldKeepListeningRef.current) return;
+            try {
+              rec.start();
+            } catch {
+              // Ignore if already started
+            }
+          }, 120);
+        } else {
+          setIsListening(false);
+        }
+      };
 
       recognitionRef.current = rec;
       setIsListening(true);
       rec.start();
     } catch {
+      shouldKeepListeningRef.current = false;
       setIsListening(false);
       notify('تعذر تشغيل المايكروفون', 'error');
     }
@@ -497,18 +599,23 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   onClick={toggleVoiceDictation}
                   className={`inline-flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-lg border transition-colors ${
                     isListening
-                      ? 'bg-rose-600 border-rose-500 text-white'
+                      ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
                       : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
                   }`}
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isListening ? 'جاري الاستماع...' : 'إملاء صوتي'}</span>
+                  <span>{isListening ? 'إنهاء الإملاء والتحليل' : 'إملاء صوتي'}</span>
                 </button>
 
                 <button
                   type="button"
                   disabled={isParsingAI}
-                  onClick={() => handleSmartParse()}
+                  onClick={() => {
+                    if (isListening || shouldKeepListeningRef.current) {
+                      stopVoiceDictation(false);
+                    }
+                    handleSmartParse();
+                  }}
                   className="inline-flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-lg transition-colors"
                 >
                   {isParsingAI ? (
