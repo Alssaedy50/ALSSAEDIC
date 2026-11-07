@@ -80,10 +80,10 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
     },
     {
       id: 'srv_scal',
-      name: 'تنظيف وتجليح لثة',
+      name: 'تنظيف وتقليح اللثة',
       price: 10000,
       category: 'وقائي ولثة',
-      keywords: ['تنظيف', 'تجليح', 'لثة', 'إزالة جير', 'تلميع'],
+      keywords: ['تنظيف', 'تقليح', 'تقليح اللثة', 'لثة', 'إزالة جير', 'تلميع'],
     },
     {
       id: 'srv_pros',

@@ -66,7 +66,7 @@ function convertUnderThousand(n: number): string {
 export function numberToArabicWords(amount: number, currency = 'ريال يمني'): string {
   const curr = currency || 'ريال يمني';
   const num = Math.floor(Math.abs(Number(amount) || 0));
-  if (num === 0) return `صفر ${curr} لا غير`;
+  if (num === 0) return `صفر ${curr} فقط لا غير`;
 
   const mil = Math.floor(num / 1000000);
   const tho = Math.floor((num % 1000000) / 1000);
@@ -77,27 +77,27 @@ export function numberToArabicWords(amount: number, currency = 'ريال يمن�
     if (mil === 1) segments.push('مليون');
     else if (mil === 2) segments.push('مليونان');
     else if (mil >= 3 && mil <= 10) segments.push(`${convertUnderThousand(mil)} ملايين`);
-    else segments.push(`${convertUnderThousand(mil)} مليوناً`);
+    else segments.push(`${convertUnderThousand(mil)} مليون`);
   }
 
   if (tho > 0) {
     if (tho === 1) segments.push('ألف');
     else if (tho === 2) segments.push('ألفان');
     else if (tho >= 3 && tho <= 10) segments.push(`${convertUnderThousand(tho)} آلاف`);
-    else segments.push(`${convertUnderThousand(tho)} ألفاً`);
+    else segments.push(`${convertUnderThousand(tho)} ألف`);
   }
 
   if (rem > 0) {
     segments.push(convertUnderThousand(rem));
   }
 
-  return `فقط ${segments.join(' و')} ${curr} لا غير`;
+  return `${segments.join(' و')} ${curr} فقط لا غير`;
 }
 
 export function parseFDIToothNumbers(value: string): { values: string[]; invalid: string[] } {
   const tokens = String(value || '')
     .trim()
-    .split(/[,،;\s]+/)
+    .split(/[,،;\s-]+/)
     .filter(Boolean);
   const valid = new Set<string>();
   [11, 21, 31, 41, 51, 61, 71, 81].forEach((start) => {

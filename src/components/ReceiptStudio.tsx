@@ -172,12 +172,19 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
   const handleToggleService = (serviceName: string, price: number) => {
     setSelectedServices((prev) => {
-      const exists = prev.includes(serviceName);
-      const next = exists ? prev.filter((s) => s !== serviceName) : [...prev, serviceName];
+      const normalizeSrv = (val: string) =>
+        val.replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة').replace(/تجليح/g, 'تقليح');
+      const normalizedPrev = prev.map(normalizeSrv);
+      const exists = normalizedPrev.includes(serviceName);
+      const next = exists
+        ? normalizedPrev.filter((s) => s !== serviceName)
+        : [...normalizedPrev, serviceName];
 
       if (settings.features.autoPrice) {
         const nextTotal = next.reduce((sum, name) => {
-          const found = settings.services.find((srv) => srv.name === name);
+          const found = settings.services.find(
+            (srv) => srv.name === name || normalizeSrv(srv.name) === name
+          );
           return sum + (found ? Number(found.price) || 0 : 0);
         }, 0);
         setTotalAmount(nextTotal);
@@ -211,7 +218,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   const applyLocalHeuristic = (raw: string) => {
     let extractedName = '';
     const nameMatch = raw.match(
-      /(?:للمريض|مريض|باسم|الأخ|الاخ|المريضة)\s+([^\d،,]+?)(?=\s+(?:خدمة|علاج|حشو|خلع|عصب|تنظيف|تركيب|تقويم|كشف|أشعة|اشعة|بمبلغ|مبلغ|إجمالي|اجمالي|دفع|سدد|رقم|هاتف|جوال|$))/i
+      /(?:للمريض|مريض|باسم|الأخ|الاخ|المريضة)\s+([^\d،,]+?)(?=\s+(?:خدمة|علاج|حشو|خلع|عصب|تنظيف|تقليح|تركيب|تقويم|كشف|أشعة|اشعة|بمبلغ|مبلغ|إجمالي|اجمالي|دفع|سدد|رقم|هاتف|جوال|$))/i
     );
     if (nameMatch?.[1]) {
       extractedName = nameMatch[1].trim();
@@ -464,8 +471,10 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       date,
       patientName: patientName.trim(),
       patientPhone: patientPhone.trim(),
-      services: selectedServices,
-      toothFDI: parsedFdi.values.join(', '),
+      services: selectedServices.map((s) =>
+        s.replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة').replace(/تجليح/g, 'تقليح')
+      ),
+      toothFDI: parsedFdi.values.join(' - '),
       totalAmount: numericTotal,
       paidAmount: numericPaid,
       remainingAmount,
@@ -757,7 +766,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                     dir="ltr"
                     value={toothFDI}
                     onChange={(e) => setToothFDI(e.target.value)}
-                    placeholder="11, 16, 36"
+                    placeholder="14 - 41 - 28"
                     className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-mono tabular-nums text-slate-900 dark:text-slate-100"
                   />
                   <button
@@ -899,8 +908,12 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 onClick={() => setSigModalTarget('accountant')}
                 className="inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-sky-700 dark:text-sky-300"
               >
-                <PenTool className="w-3.5 h-3.5" />
-                <span>{accountantSig ? 'تعديل توقيع الطبيب' : 'توقيع الطبيب'}</span>
+                <PenTool className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">
+                  {accountantSig
+                    ? 'تعديل توقيع المستلم (المحاسب / الطبيب)'
+                    : 'توقيع المستلم (المحاسب / الطبيب)'}
+                </span>
               </button>
 
               <button
@@ -908,8 +921,12 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 onClick={() => setSigModalTarget('receiver')}
                 className="inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-amber-700 dark:text-amber-300"
               >
-                <PenTool className="w-3.5 h-3.5" />
-                <span>{receiverSig ? 'تعديل توقيع المريض' : 'توقيع المريض'}</span>
+                <PenTool className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">
+                  {receiverSig
+                    ? 'تعديل توقيع الدافع (المريض/ولي الأمر)'
+                    : 'توقيع الدافع (المريض/ولي الأمر)'}
+                </span>
               </button>
             </div>
 
@@ -966,12 +983,16 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
             <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-2.5">
               {settings.services.map((srv) => {
-                const isSelected = selectedServices.includes(srv.name);
+                const displayName = srv.name
+                  .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
+                  .replace(/تجليح/g, 'تقليح');
+                const isSelected =
+                  selectedServices.includes(displayName) || selectedServices.includes(srv.name);
                 return (
                   <button
                     key={srv.id}
                     type="button"
-                    onClick={() => handleToggleService(srv.name, srv.price)}
+                    onClick={() => handleToggleService(displayName, srv.price)}
                     className={`flex flex-col items-start justify-between p-3 rounded-xl border text-right transition-colors ${
                       isSelected
                         ? 'bg-sky-600 border-sky-500 text-white'
@@ -979,7 +1000,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between w-full gap-1">
-                      <span className="text-xs font-bold">{srv.name}</span>
+                      <span className="text-xs font-bold">{displayName}</span>
                       {isSelected && <Check className="w-4 h-4 shrink-0" />}
                     </div>
                     <span
@@ -1030,7 +1051,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         isOpen={isFdiModalOpen}
         selectedTeeth={selectedTeethList}
         onClose={() => setIsFdiModalOpen(false)}
-        onApply={(teeth) => setToothFDI(teeth.join(', '))}
+        onApply={(teeth) => setToothFDI(teeth.join(' - '))}
       />
     </div>
   );

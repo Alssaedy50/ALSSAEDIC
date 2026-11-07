@@ -196,7 +196,11 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
     patientName,
     patientPhone: sanitizeStr(receipt.patientPhone, 50, ''),
     services: (Array.isArray(receipt.services) ? receipt.services : [])
-      .map((s) => sanitizeStr(s, 140, ''))
+      .map((s) =>
+        sanitizeStr(s, 140, '')
+          .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
+          .replace(/تجليح/g, 'تقليح')
+      )
       .filter(Boolean)
       .slice(0, 25),
     toothFDI: sanitizeStr(receipt.toothFDI, 200, ''),
@@ -209,7 +213,7 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
     amountWords: sanitizeStr(
       receipt.amountWords || numberToArabicWords(paidAmount, currency),
       300,
-      'فقط صفر ريال يمني لا غير'
+      'صفر ريال يمني فقط لا غير'
     ),
     accountantSig: sanitizeStr(receipt.accountantSig, 250000, ''),
     receiverSig: sanitizeStr(receipt.receiverSig, 250000, ''),
