@@ -847,7 +847,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       const blob = await canvasToBlob(canvas);
       const fileName = `${getCleanBaseFileName()}.png`;
       triggerBlobDownload(blob, fileName);
-      notify(`تم تحميل صورة السند #${data.receiptNo} بجودة فائقة (3x HD)`, 'success');
+      notify(`تم تحميل صورة السند #${data.receiptNo}`, 'success');
     } catch {
       notify('تعذر تحميل صورة السند', 'error');
     } finally {
@@ -862,7 +862,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       const pdfBlob = await generatePDFBlob();
       const fileName = `${getCleanBaseFileName()}.pdf`;
       triggerBlobDownload(pdfBlob, fileName);
-      notify(`تم تحميل ملف السند #${data.receiptNo} بصيغة PDF عالية الجودة`, 'success');
+      notify(`تم تحميل ملف PDF للسند #${data.receiptNo}`, 'success');
     } catch {
       notify('تعذر إنشاء ملف PDF للسند', 'error');
     } finally {
@@ -912,10 +912,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       // Download the file directly AND copy caption to clipboard
       triggerBlobDownload(file, file.name);
       await navigator.clipboard?.writeText(shareCaption).catch(() => {});
-      notify(
-        `تم حفظ ملف السند (${format.toUpperCase()}) بجودة فائقة ونسخ التفاصيل لإرساله للعميل`,
-        'success'
-      );
+      notify(`تم حفظ السند (${format.toUpperCase()}) ونسخ التفاصيل`, 'success');
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         // User closed the share sheet

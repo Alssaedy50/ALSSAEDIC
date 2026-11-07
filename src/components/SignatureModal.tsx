@@ -144,9 +144,6 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            ارسم التوقيع داخل المربع الأبيض أدناه:
-          </p>
           <div className="relative rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white overflow-hidden">
             <canvas
               ref={canvasRef}

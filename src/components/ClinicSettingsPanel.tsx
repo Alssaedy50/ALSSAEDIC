@@ -131,7 +131,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         } catch {
           handleAppearanceChange('customLogoDataUrl', rawDataUrl);
         }
-        notify('تم اختيار الشعار وضغط حجمه تلقائياً، اضغط حفظ لاعتماده', 'info');
+        notify('تم اختيار الشعار، اضغط حفظ لاعتماده', 'info');
       };
       img.onerror = () => {
         handleAppearanceChange('customLogoDataUrl', rawDataUrl);
@@ -607,7 +607,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                إضافة خدمة علاجية
+                إضافة خدمة
               </h3>
               <button
                 type="button"
@@ -647,7 +647,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                كلمات مفتاحية للتحليل الذكي
+                كلمات مفتاحية
               </label>
               <input
                 type="text"

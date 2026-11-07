@@ -179,6 +179,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
         </button>
         <button
           type="button"
+          data-tab="expenses"
           onClick={() => setSubTab('expenses')}
           className={`py-2 px-3 rounded-lg text-xs font-bold transition-colors ${
             subTab === 'expenses'
@@ -186,7 +187,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               : 'text-slate-600 dark:text-slate-400'
           }`}
         >
-          سجل المصروفات ({expenses.length})
+          المصروفات ({expenses.length})
         </button>
       </div>
 
@@ -194,7 +195,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-4">
           <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-              المصروفات المسجلة
+              المصروفات
             </h2>
             <button
               type="button"
@@ -292,7 +293,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              <span>تقرير ذكي</span>
+              <span>تقرير مالي</span>
             </button>
           </div>
 
@@ -405,7 +406,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                تسجيل مصروف جديد
+                إضافة مصروف
               </h3>
               <button
                 type="button"
@@ -511,7 +512,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-sm font-bold text-sky-600 dark:text-sky-400">
-                التقرير المالي الذكي (Gemini)
+                التقرير المالي
               </h3>
               <button
                 type="button"

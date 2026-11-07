@@ -275,7 +275,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       if (r.paymentMethod) setPaymentMethod(String(r.paymentMethod));
       if (r.notes) setNotes(String(r.notes));
 
-      notify('تم تعبئة السند ذكياً عبر Gemini 2.5 Flash', 'success');
+      notify('تم استخراج بيانات السند', 'success');
     } catch {
       applyLocalHeuristic(textToAnalyze);
       notify('تم استخراج بيانات السند تلقائياً', 'info');
@@ -476,7 +476,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-sky-600 hover:bg-sky-500 text-white"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>إصدار سند جديد</span>
+                <span>سند جديد</span>
               </button>
 
               <button
@@ -506,12 +506,9 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-sky-500 shrink-0" />
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  المحلل الذكي
+                  الإدخال السريع
                 </h2>
               </div>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                Gemini 2.5 Flash
-              </span>
             </div>
 
             <div className="space-y-2.5">
@@ -554,7 +551,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   ) : (
                     <Sparkles className="w-4 h-4" />
                   )}
-                  <span>تحليل السند</span>
+                  <span>استخراج البيانات</span>
                 </button>
               </div>
             </div>
@@ -870,7 +867,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-sm transition-colors"
               >
                 <Save className="w-4 h-4" />
-                <span>{editingReceipt ? 'تحديث السند' : 'حفظ السند في السجل'}</span>
+                <span>{editingReceipt ? 'تحديث السند' : 'حفظ السند'}</span>
               </button>
 
               <button
@@ -879,7 +876,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-sm transition-colors"
               >
                 <Eye className="w-4 h-4" />
-                <span>معاينة وطباعة السند</span>
+                <span>معاينة وطباعة</span>
               </button>
             </div>
           </section>
@@ -978,7 +975,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
           } else {
             setReceiverSig(dataUrl);
           }
-          notify('تم اعتماد التوقيع الإلكتروني', 'success');
+          notify('تم اعتماد التوقيع', 'success');
         }}
       />
 

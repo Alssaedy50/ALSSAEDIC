@@ -183,7 +183,7 @@ export function generateLocalClinicalResponse(
       .map(([curr, sum]) => `${sum.toLocaleString()} ${curr}`)
       .join(' + ');
 
-    return `📋 كشف ديون المرضى بالتفصيل (${debtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المستحقة للتحصيل (حسب كل عملة): ${totalsSummary}\n💡 يمكنك تسديد أي دفعة مباشرة أو إرسال مطالبة واتساب رسمية للمريض من قسم "سجل السندات".`;
+    return `📋 كشف ديون المرضى بالتفصيل (${debtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المستحقة للتحصيل (حسب كل عملة): ${totalsSummary}\n💡 يمكنك تسديد أي دفعة مباشرة أو إرسال مطالبة واتساب من قسم "السندات".`;
   }
 
   // 2. تقرير نواقص المخزون الطبي / جرد المخزون
@@ -210,7 +210,7 @@ export function generateLocalClinicalResponse(
     );
 
     if (allItems.length === 0) {
-      return `📦 لا توجد أصناف مسجلة حالياً في المخزون الطبي.\nيمكنك إضافة المواد الطبية من قسم "المخزون الطبي".`;
+      return `📦 لا توجد أصناف مسجلة حالياً في المخزون.\nيمكنك إضافة المواد من قسم "المخزون".`;
     }
 
     if (lowList.length === 0) {
@@ -219,7 +219,7 @@ export function generateLocalClinicalResponse(
         .map((i, idx) => `${idx + 1}. ${i.name}: متوفر (${i.qty} ${i.unit})`)
         .join('\n');
 
-      return `📦 تقرير حالة المخزون الطبي (${clinicName}):\n• إجمالي الأصناف المسجلة: ${allItems.length} صنف\n• القيمة الإجمالية للمخزون: ${totalVal.toLocaleString()} ${defaultCurr}\n• النواقص الحالية: 0 (جميع الأصناف متوفرة فوق الحد الأدنى ✅)\n\nأبرز المواد المتوفرة:\n${topItems}`;
+      return `📦 تقرير حالة المخزون (${clinicName}):\n• إجمالي الأصناف المسجلة: ${allItems.length} صنف\n• القيمة الإجمالية للمخزون: ${totalVal.toLocaleString()} ${defaultCurr}\n• النواقص الحالية: 0 (جميع الأصناف متوفرة فوق الحد الأدنى ✅)\n\nأبرز المواد المتوفرة:\n${topItems}`;
     }
 
     let totalRestockCost = 0;
@@ -230,7 +230,7 @@ export function generateLocalClinicalResponse(
       return `${idx + 1}. ${item.name}\n   • المتبقي حالياً: ${item.qty} ${item.unit} (الحد الأدنى: ${item.minQty} ${item.unit})\n   • الكمية المقترح شراؤها: ${needed} ${item.unit} (بتكلفة تقديرية: ${estCost.toLocaleString()} ${defaultCurr})`;
     });
 
-    return `⚠️ تقرير نواقص وجرد المخزون الطبي:\n• إجمالي الأصناف في العيادة: ${allItems.length} صنف (بقيمة ${totalVal.toLocaleString()} ${defaultCurr})\n• عدد الأصناف التي وصلت لحد النقص: ${lowList.length} صنف\n\n${lowLines.join('\n\n')}\n\n💰 التكلفة التقديرية لإعادة التزويد: ${totalRestockCost.toLocaleString()} ${defaultCurr}\n💡 التوصية: سرعة توفير الأصناف أعلاه لضمان عدم توقف الجلسات العلاجية المرتبطة بها.`;
+    return `⚠️ تقرير نواقص وتحليل المخزون:\n• إجمالي الأصناف في العيادة: ${allItems.length} صنف (بقيمة ${totalVal.toLocaleString()} ${defaultCurr})\n• عدد الأصناف التي وصلت لحد النقص: ${lowList.length} صنف\n\n${lowLines.join('\n\n')}\n\n💰 التكلفة التقديرية لإعادة التزويد: ${totalRestockCost.toLocaleString()} ${defaultCurr}\n💡 التوصية: سرعة توفير الأصناف أعلاه لضمان عدم توقف الجلسات العلاجية المرتبطة بها.`;
   }
 
   // 3. ملخص صافي الأرباح والمصروفات / التقرير المالي
@@ -318,11 +318,11 @@ export function generateLocalClinicalResponse(
           `• عملة ${c.currency}: المقبوض ${Number(c.totalCollectedRevenue || 0).toLocaleString()} | الديون ${Number(c.totalPendingDebts || 0).toLocaleString()} | الصافي ${Number(c.netCashProfit || 0).toLocaleString()}`
       )
       .join('\n');
-    return `مرحباً بك في المساعد الطبي والمالي الذكي لـ ${clinicName} (${doctorName}):\n\n📌 الملخص المباشر لقاعدة بيانات العيادة الآن (حسب كل عملة):\n${currLines}\n• تنبيهات نواقص المخزون: ${lowCount} صنف\n\nيمكنك الضغط على أي من الأزرار السريعة بالأعلى للحصول على:\n- كشف ديون المرضى بالتفصيل\n- تقرير نواقص المخزون الطبي\n- ملخص صافي الأرباح والمصروفات\n- أو كتابة اسم مريض أو استشارة علاجية مباشرة.`;
+    return `📌 ملخص بيانات العيادة (${clinicName}):\n${currLines}\n• نواقص المخزون: ${lowCount} صنف`;
   }
 
   const fin = ctx.financialSummary || {};
-  return `مرحباً بك في المساعد الطبي والمالي الذكي لـ ${clinicName} (${doctorName}):\n\n📌 الملخص المباشر لقاعدة بيانات العيادة الآن:\n• السندات المسجلة: ${fin.totalReceipts || 0} سند\n• الإيرادات المقبوضة: ${Number(fin.totalCollected || 0).toLocaleString()} ${defaultCurr}\n• الديون المتبقية على المرضى: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ${defaultCurr} (${debtorsCount} مريض)\n• المصروفات المسجلة: ${Number(fin.totalExpenses || 0).toLocaleString()} ${defaultCurr}\n• تنبيهات نواقص المخزون: ${lowCount} صنف\n\nيمكنك الضغط على أي من الأزرار السريعة بالأعلى للحصول على:\n- كشف ديون المرضى بالتفصيل\n- تقرير نواقص المخزون الطبي\n- ملخص صافي الأرباح والمصروفات\n- أو كتابة اسم مريض أو استشارة علاجية مباشرة.`;
+  return `📌 ملخص بيانات العيادة (${clinicName}):\n• السندات: ${fin.totalReceipts || 0} سند\n• المقبوض: ${Number(fin.totalCollected || 0).toLocaleString()} ${defaultCurr}\n• الديون المتبقية: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ${defaultCurr} (${debtorsCount} مريض)\n• المصروفات: ${Number(fin.totalExpenses || 0).toLocaleString()} ${defaultCurr}\n• نواقص المخزون: ${lowCount} صنف`;
 }
 
 export async function queryClinicAssistant(payload: AssistantRequestPayload): Promise<string> {

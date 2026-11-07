@@ -104,7 +104,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      notify('يرجى إدخال اسم الصنف الطبي', 'warning');
+      notify('يرجى إدخال اسم الصنف', 'warning');
       return;
     }
 
@@ -141,7 +141,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       });
       setAuditReport(reply || '');
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'تعذر إجراء الجرد الذكي', 'error');
+      notify(err instanceof Error ? err.message : 'تعذر تحليل المخزون', 'error');
     } finally {
       setIsAuditing(false);
     }
@@ -219,7 +219,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               ) : (
                 <Sparkles className="w-3.5 h-3.5" />
               )}
-              <span>جرد ذكي</span>
+              <span>تحليل المخزون</span>
             </button>
 
             <button
@@ -350,7 +350,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           <table className="w-full text-right border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 dark:text-slate-400">
-                <th className="py-3 px-3">الصنف الطبي</th>
+                <th className="py-3 px-3">الصنف</th>
                 <th className="py-3 px-3">الكمية</th>
                 <th className="py-3 px-3">الحد الأدنى</th>
                 <th className="py-3 px-3">الخدمة المرتبطة</th>
@@ -461,7 +461,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                {editingId ? 'تعديل صنف' : 'إضافة صنف طبي'}
+                {editingId ? 'تعديل صنف' : 'إضافة صنف'}
               </h3>
               <button
                 type="button"
@@ -476,7 +476,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  اسم الصنف الطبي
+                  اسم الصنف
                 </label>
                 <input
                   type="text"
@@ -622,7 +622,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-sm font-bold text-sky-600 dark:text-sky-400">
-                تقرير جرد المخزون (Gemini AI)
+                تحليل المخزون
               </h3>
               <button
                 type="button"

@@ -281,7 +281,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               : 'text-slate-600 dark:text-slate-400'
           }`}
         >
-          مسدد بالكامل
+          مسدد
         </button>
       </div>
 
@@ -388,7 +388,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
         <div className="rounded-xl border border-sky-500/30 bg-sky-50/40 dark:bg-slate-900 p-3.5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-bold text-slate-800 dark:text-slate-100">
-              إعدادات أسعار الصرف (مقابل الريال اليمني) لربط البطاقات المالية:
+              أسعار الصرف (مقابل الريال اليمني)
             </div>
             <button
               type="button"
@@ -397,7 +397,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white text-xs font-bold transition-colors"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingRates ? 'animate-spin' : ''}`} />
-              <span>تحديث تلقائي للأسعار</span>
+              <span>تحديث تلقائي</span>
             </button>
           </div>
 
@@ -504,7 +504,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg"
             >
               <FilePlus2 className="w-4 h-4" />
-              <span>إصدار سند</span>
+              <span>سند جديد</span>
             </button>
           </div>
         ) : (

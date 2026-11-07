@@ -38,7 +38,7 @@ interface GeminiAssistantProps {
 
 const QUICK_PROMPTS = [
   'كشف ديون المرضى بالتفصيل',
-  'تقرير نواقص المخزون الطبي',
+  'تقرير نواقص المخزون',
   'ملخص صافي الأرباح والمصروفات',
   'تعليمات للمريض بعد خلع الضرس',
   'خطة علاج عصب للسن 16',
@@ -347,14 +347,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           </div>
           <div className="min-w-0">
             <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">
-              المساعد الطبي والمالي
+              المساعد
             </h2>
-            <p
-              dir="ltr"
-              className="text-[10px] sm:text-[11px] font-bold text-sky-600 dark:text-sky-400 text-right truncate"
-            >
-              Gemini 2.5 Flash
-            </p>
           </div>
         </div>
 
@@ -389,15 +383,15 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-5 py-3.5">
         <div className="max-w-4xl mx-auto space-y-3.5">
           {messages.length === 0 ? (
-            <div className="min-h-[42vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-3 px-4">
+            <div className="min-h-[42vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-2.5 px-4">
               <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
                 <Bot className="w-6 h-6" />
               </div>
               <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">
-                مساعد عيادة السعيدي الذكي
+                المساعد
               </h3>
-              <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                متصل مباشرة بقاعدة بيانات المرضى، السندات، الديون المفصولة حسب العملة، والمخزون الطبي. يمكنك الاستفسار عن أي حساب مالي أو إرفاق صورة أشعة سنية لتحليلها بدقة.
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                اختر استفساراً سريعاً من الأعلى أو اكتب سؤالك أدناه.
               </p>
             </div>
           ) : (
@@ -443,7 +437,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                       ) : (
                         <Bot className="w-3.5 h-3.5 shrink-0" />
                       )}
-                      <span>{msg.role === 'user' ? 'أنت' : 'المساعد الذكي'}</span>
+                      <span>{msg.role === 'user' ? 'أنت' : 'المساعد'}</span>
                     </div>
                     <span className="font-mono tabular-nums text-[10px] opacity-80">
                       {msg.timestamp}
@@ -499,7 +493,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           {isSending && (
             <div className="flex items-center gap-2 text-xs font-bold text-sky-600 dark:text-sky-400 px-2 py-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>جاري التحليل وإعداد الإجابة...</span>
+              <span>جاري التحليل...</span>
             </div>
           )}
 

@@ -509,8 +509,8 @@ export default function App() {
 
       notify(
         result.status === 'created'
-          ? `تم إنشاء الحساب السحابي (${result.clinicId}) وحفظ البيانات بنجاح`
-          : `تم تسجيل الدخول لحساب العيادة (${result.clinicId}) ومزامنة البيانات بنجاح`,
+          ? `تم إنشاء الحساب السحابي (${result.clinicId})`
+          : `تم تسجيل الدخول (${result.clinicId}) ومزامنة البيانات`,
         'success'
       );
       return true;
@@ -580,9 +580,9 @@ export default function App() {
           throw new Error('تعذر تحديث بيانات مساحة العمل السحابية.');
         }
       }
-      notify('تم التحقق من رفع ومزامنة جميع بيانات العيادة سحابياً بنجاح', 'success');
+      notify('تمت مزامنة البيانات سحابياً', 'success');
     } catch {
-      notify('فشلت المزامنة السحابية: لم يتم تأكيد الكتابة في Firestore.', 'error');
+      notify('فشلت المزامنة السحابية: لم يتم تأكيد الحفظ.', 'error');
     } finally {
       setIsSyncingCloud(false);
     }
@@ -658,16 +658,16 @@ export default function App() {
       ensureClinicDocumentInCloud(currentUser.uid, settings)
         .then(() => saveReceiptToCloud(currentUser.uid, record))
         .then(() => {
-          notify(`تم حفظ السند #${record.receiptNo} وتأكيد مزامنته سحابياً`, 'success');
+          notify(`تم حفظ السند #${record.receiptNo} ومزامنته`, 'success');
         })
         .catch(() => {
           notify(
-            `تم حفظ السند #${record.receiptNo} محلياً فقط — تعذر التأكيد السحابي حالياً`,
+            `تم حفظ السند #${record.receiptNo} محلياً فقط — تعذر المزامنة السحابية`,
             'warning'
           );
         });
     } else {
-      notify(`تم حفظ السند #${record.receiptNo} محلياً بنجاح`, 'success');
+      notify(`تم حفظ السند #${record.receiptNo}`, 'success');
     }
 
     return record;
@@ -705,13 +705,13 @@ export default function App() {
     if (currentUser && settledRecord) {
       saveReceiptToCloud(currentUser.uid, settledRecord)
         .then(() => {
-          notify('تم تسديد الدفعة وتأكيد مزامنتها سحابياً بنجاح', 'success');
+          notify('تم تسديد الدفعة ومزامنتها', 'success');
         })
         .catch(() => {
-          notify('تم تسديد الدفعة محلياً فقط — تعذر المزامنة السحابية حالياً', 'warning');
+          notify('تم تسديد الدفعة محلياً فقط — تعذر المزامنة السحابية', 'warning');
         });
     } else {
-      notify('تم تسديد الدفعة وتوثيقها في السند بنجاح', 'success');
+      notify('تم تسديد الدفعة بنجاح', 'success');
     }
   };
 
@@ -887,21 +887,21 @@ export default function App() {
 
   // Exactly 6 Non-Duplicate Core Sections (1-2 word titles)
   const navSections: NavSectionItem[] = [
-    { id: 'receipt', title: 'إصدار سند', icon: FileText },
+    { id: 'receipt', title: 'سند جديد', icon: FileText },
     {
       id: 'records',
-      title: 'سجل السندات',
+      title: 'السندات',
       icon: FileSpreadsheet,
       badge: pendingDebtsCount > 0 ? pendingDebtsCount : receipts.length,
     },
     {
       id: 'inventory',
-      title: 'المخزون الطبي',
+      title: 'المخزون',
       icon: Package,
       badge: lowStockCount > 0 ? lowStockCount : undefined,
     },
     { id: 'finance', title: 'المالية', icon: Wallet },
-    { id: 'assistant', title: 'المساعد الذكي', icon: Bot },
+    { id: 'assistant', title: 'المساعد', icon: Bot },
     { id: 'settings', title: 'الإعدادات', icon: Settings },
   ];
 
@@ -958,10 +958,10 @@ export default function App() {
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
               }`}
-              title="حساب العيادة والتثبيت"
+              title="الحساب السحابي"
             >
               <Cloud className="w-4 h-4 shrink-0" />
-              <span>{isCloudConnected ? 'متصل' : 'سحابي'}</span>
+              <span>{isCloudConnected ? 'متصل' : 'الحساب السحابي'}</span>
             </button>
 
             <button
@@ -1055,10 +1055,10 @@ export default function App() {
                 >
                   <div className="flex items-center gap-2.5">
                     <Cloud className="w-4 h-4 shrink-0" />
-                    <span>المنصة السحابية والربط</span>
+                    <span>الحساب السحابي</span>
                   </div>
                   <span className="text-[10px] px-2 py-0.5 rounded-md bg-sky-500/20 font-bold">
-                    {isCloudConnected ? 'متصل' : 'تسجيل'}
+                    {isCloudConnected ? 'متصل' : 'دخول'}
                   </span>
                 </button>
 
@@ -1101,7 +1101,7 @@ export default function App() {
             <div className="flex items-center gap-2 min-w-0">
               <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                لم يتم ربط الحساب السحابي بعد — سجّل الدخول أو أنشئ حساباً لحفظ البيانات ومزامنتها تلقائياً.
+                الحساب السحابي غير متصل — سجّل الدخول لحفظ ومزامنة البيانات.
               </span>
             </div>
             <button
@@ -1109,7 +1109,7 @@ export default function App() {
               onClick={() => setIsCloudModalOpen(true)}
               className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black transition-colors shrink-0"
             >
-              تسجيل الدخول / إنشاء حساب
+              تسجيل الدخول
             </button>
           </div>
         )}
@@ -1265,13 +1265,13 @@ export default function App() {
                   ...next.services.map((srv) => saveServiceToCloud(currentUser.uid, srv)),
                 ])
                   .then(() => {
-                    notify('تم حفظ الإعدادات وتأكيد مزامنتها سحابياً بنجاح', 'success');
+                    notify('تم حفظ الإعدادات ومزامنتها', 'success');
                   })
                   .catch(() => {
                     notify('تم حفظ الإعدادات محلياً فقط — تعذر المزامنة السحابية', 'warning');
                   });
               } else {
-                notify('تم حفظ الإعدادات محلياً بنجاح', 'success');
+                notify('تم حفظ الإعدادات', 'success');
               }
             }}
             onImportFullBackup={(payload) => {
@@ -1316,10 +1316,10 @@ export default function App() {
       >
         <div className="grid grid-cols-5 h-16 max-w-md mx-auto px-1">
           {[
-            { id: 'receipt' as MainSectionId, label: 'إصدار سند', icon: FileText },
+            { id: 'receipt' as MainSectionId, label: 'سند جديد', icon: FileText },
             {
               id: 'records' as MainSectionId,
-              label: 'السجل',
+              label: 'السندات',
               icon: FileSpreadsheet,
               badge: pendingDebtsCount > 0 ? pendingDebtsCount : undefined,
               badgeColor: 'bg-rose-500 text-white',
