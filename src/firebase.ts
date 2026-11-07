@@ -27,7 +27,6 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 import {
   ClinicSettings,
   CurrencyCode,
@@ -52,8 +51,20 @@ export interface CustomFirebaseConfig {
   storageBucket?: string;
   appId?: string;
   messagingSenderId?: string;
+  measurementId?: string;
   firestoreDatabaseId?: string;
 }
+
+const firebaseConfig: CustomFirebaseConfig = {
+  apiKey: 'AIzaSyDpjGbZrVLLOKCSkaNPeb1r3cE8Bfvx0jU',
+  authDomain: 'u-dental-app.firebaseapp.com',
+  projectId: 'u-dental-app',
+  storageBucket: 'u-dental-app.firebasestorage.app',
+  messagingSenderId: '704742320052',
+  appId: '1:704742320052:web:57e829a8fdc182ee32b4e1',
+  measurementId: 'G-4LG6PJHFLN',
+  firestoreDatabaseId: '(default)',
+};
 
 function resolveEffectiveFirebaseConfig(): {
   config: CustomFirebaseConfig;
@@ -82,7 +93,7 @@ function resolveEffectiveFirebaseConfig(): {
           firebaseConfig.messagingSenderId,
         firestoreDatabaseId: envDbId || '(default)',
       },
-      isCustomProject: envProjectId !== firebaseConfig.projectId,
+      isCustomProject: true,
       databaseId: envDbId || '(default)',
     };
   }
@@ -94,7 +105,7 @@ function resolveEffectiveFirebaseConfig(): {
         const parsed = JSON.parse(rawCustom) as Partial<CustomFirebaseConfig>;
         const customApiKey = String(parsed?.apiKey || '').trim();
         const customProjectId = String(parsed?.projectId || '').trim();
-        if (customApiKey && customProjectId) {
+        if (customApiKey && customProjectId && customProjectId !== 'refined-domain-53rp2') {
           const customDbId = String(parsed?.firestoreDatabaseId || '').trim();
           return {
             config: {
@@ -112,20 +123,20 @@ function resolveEffectiveFirebaseConfig(): {
                 firebaseConfig.messagingSenderId,
               firestoreDatabaseId: customDbId || '(default)',
             },
-            isCustomProject: customProjectId !== firebaseConfig.projectId,
+            isCustomProject: true,
             databaseId: customDbId || '(default)',
           };
         }
       }
     }
   } catch {
-    // Ignore localStorage parse error and fall back to firebase-applet-config.json
+    // Ignore localStorage parse error and fall back to firebaseConfig
   }
 
   const fallbackDbId = String(firebaseConfig.firestoreDatabaseId || '').trim();
   return {
     config: firebaseConfig,
-    isCustomProject: false,
+    isCustomProject: true,
     databaseId: fallbackDbId || '(default)',
   };
 }
@@ -135,9 +146,7 @@ const app = initializeApp(resolvedFirebase.config);
 setLogLevel('silent');
 
 const shouldUseCustomDatabaseId = Boolean(
-  resolvedFirebase.databaseId &&
-    resolvedFirebase.databaseId !== '(default)' &&
-    (!resolvedFirebase.isCustomProject || resolvedFirebase.databaseId !== firebaseConfig.firestoreDatabaseId)
+  resolvedFirebase.databaseId && resolvedFirebase.databaseId !== '(default)'
 );
 
 export const db = shouldUseCustomDatabaseId
