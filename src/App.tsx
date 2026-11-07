@@ -45,6 +45,8 @@ import {
   DirectClinicSession,
 } from './components/CloudAccountModal';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
+import { WorkspaceTeamManager } from './components/WorkspaceTeamManager';
+import { ensureOwnerWorkspaceMembership } from './workspaces';
 import {
   User,
   auth,
@@ -64,6 +66,9 @@ import {
   saveReceiptToCloud,
   saveServiceToCloud,
   signInWithGoogleAccount,
+  signInWithEmailAccount,
+  registerWithEmailAccount,
+  resendEmailVerification,
   signOutAccount,
   subscribeToClinicCloudData,
   syncLocalDataToCloud,
@@ -161,6 +166,7 @@ export default function App() {
   const [isCloudModalOpen, setIsCloudModalOpen] = useState<boolean>(false);
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [activeWorkspaceOwnerUid, setActiveWorkspaceOwnerUid] = useState<string | null>(null);
   const [directSession, setDirectSession] = useState<DirectClinicSession | null>(() =>
     loadSecureDirectSession()
   );
@@ -335,21 +341,31 @@ export default function App() {
       setAuthReady(true);
 
       if (user) {
+        const isGoogleUser = user.providerData.some((provider) => provider.providerId === 'google.com');
+        const isLegacyClinicUser = Boolean(user.email?.endsWith('@clinic.alssaedic.local'));
+        if (!user.emailVerified && !isGoogleUser && !isLegacyClinicUser) {
+          setActiveWorkspaceOwnerUid(null);
+          return;
+        }
+
         setIsSyncingCloud(true);
         try {
-          const derivedClinicId =
-            extractClinicIdFromEmail(user.email) || directSession?.clinicId || 'alssaedy-clinic';
+          // Every verified account owns a private workspace by default.
+          await ensureOwnerWorkspaceMembership(user);
+          setActiveWorkspaceOwnerUid(user.uid);
 
-          // Issue/refresh signed server session token for this Firebase Auth user
+          const derivedClinicId = isLegacyClinicUser
+            ? extractClinicIdFromEmail(user.email) || user.uid
+            : user.uid;
+
           const issued = await issueServerSessionToken({
             clinicId: derivedClinicId,
             ownerUid: user.uid,
           });
-          const token = issued.ok && issued.sessionToken ? issued.sessionToken : `fb_${user.uid}`;
-          const expIso =
-            issued.ok && issued.expiresAt
-              ? issued.expiresAt
-              : new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+          const token = issued.ok && issued.sessionToken ? issued.sessionToken : await user.getIdToken();
+          const expIso = issued.ok && issued.expiresAt
+            ? issued.expiresAt
+            : new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
 
           sessionStorage.setItem(
             LOCAL_API_SESSION_KEY,
@@ -361,7 +377,7 @@ export default function App() {
             })
           );
 
-          if (!directSession && extractClinicIdFromEmail(user.email)) {
+          if (isLegacyClinicUser && !directSession) {
             setDirectSession({
               clinicId: derivedClinicId,
               ownerUid: user.uid,
@@ -371,22 +387,15 @@ export default function App() {
             });
           }
 
-          await syncLocalDataToCloud(
-            user.uid,
-            settings,
-            receipts,
-            inventory,
-            expenses,
-            false
-          );
+          await syncLocalDataToCloud(user.uid, settings, receipts, inventory, expenses, false);
         } catch (err) {
           console.warn('Initial cloud sync notice:', err);
         } finally {
           setIsSyncingCloud(false);
         }
-      } else if (directSession) {
-        // Clear directSession if Firebase Auth session is no longer authenticated
-        setDirectSession(null);
+      }      } else {
+        setActiveWorkspaceOwnerUid(null);
+        if (directSession) setDirectSession(null);
       }
     });
     return () => unsubAuth();
@@ -401,7 +410,7 @@ export default function App() {
     }
   }, [authReady, currentUser, directSession]);
 
-  const activeOwnerUid = currentUser?.uid || directSession?.ownerUid || null;
+  const activeOwnerUid = activeWorkspaceOwnerUid || (currentUser && (currentUser.emailVerified || currentUser.providerData.some((p) => p.providerId === 'google.com') || currentUser.email?.endsWith('@clinic.alssaedic.local')) ? (activeOwnerUid || currentUser.uid) : null) || directSession?.ownerUid || null;
 
   useEffect(() => {
     if (!authReady || !activeOwnerUid || !currentUser) return;
@@ -420,27 +429,19 @@ export default function App() {
         }));
       },
       onServicesUpdate: (cloudServices) => {
-        if (cloudServices.length > 0) {
-          setSettings((prev) => ({
-            ...prev,
-            services: cloudServices,
-          }));
-        }
+        setSettings((prev) => ({
+          ...prev,
+          services: cloudServices,
+        }));
       },
       onReceiptsUpdate: (cloudReceipts) => {
-        if (cloudReceipts.length > 0) {
-          setReceipts(cloudReceipts);
-        }
+        setReceipts(cloudReceipts);
       },
       onInventoryUpdate: (cloudInventory) => {
-        if (cloudInventory.length > 0) {
-          setInventory(cloudInventory);
-        }
+        setInventory(cloudInventory);
       },
       onExpensesUpdate: (cloudExpenses) => {
-        if (cloudExpenses.length > 0) {
-          setExpenses(cloudExpenses);
-        }
+        setExpenses(cloudExpenses);
       },
     });
 
@@ -568,28 +569,49 @@ export default function App() {
     }
   };
 
+  const handleEmailLogin = async (email: string, password: string): Promise<boolean> => {
+    try {
+      await signInWithEmailAccount(email, password);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'تعذر تسجيل الدخول بالبريد الإلكتروني.', 'error');
+      return false;
+    }
+  };
+
+  const handleEmailRegister = async (email: string, password: string): Promise<boolean> => {
+    try {
+      await registerWithEmailAccount(email, password);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'تعذر إنشاء الحساب.', 'error');
+      return false;
+    }
+  };
+
+  const handleResendVerification = async () => {
+    await resendEmailVerification();
+  };
+
   const handleSignInWithGoogle = async (): Promise<boolean> => {
     try {
       const user = await signInWithGoogleAccount();
-      const issued = await issueServerSessionToken({
-        clinicId: 'alssaedy-clinic',
-        ownerUid: user.uid,
-      });
+      await ensureOwnerWorkspaceMembership(user);
+      setActiveWorkspaceOwnerUid(user.uid);
+      const issued = await issueServerSessionToken({ clinicId: user.uid, ownerUid: user.uid });
       if (issued.ok && issued.sessionToken) {
         setDirectSession({
-          clinicId: 'alssaedy-clinic',
+          clinicId: user.uid,
           ownerUid: user.uid,
           sessionToken: issued.sessionToken,
           expiresAt: issued.expiresAt,
           updatedAt: new Date().toISOString(),
         });
       }
-      notify(`تم تسجيل الدخول بنجاح (${user.email}) وتفعيل المزامنة السحابية`, 'success');
+      notify(`تم تسجيل الدخول بنجاح (${user.email}) وإنشاء مساحة العمل الخاصة بك`, 'success');
       return true;
-    } catch {
-      if (!isCloudModalOpen) {
-        notify('تعذر إكمال تسجيل الدخول عبر Google. يرجى المحاولة مرة أخرى.', 'error');
-      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'تعذر إكمال تسجيل الدخول عبر Google. تحقق من إعدادات Firebase.', 'error');
       return false;
     }
   };
@@ -597,6 +619,7 @@ export default function App() {
   const handleSignOut = async () => {
     try {
       setDirectSession(null);
+      setActiveWorkspaceOwnerUid(null);
       localStorage.removeItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
       if (currentUser) {
         await signOutAccount();
@@ -608,7 +631,7 @@ export default function App() {
   };
 
   const handleForceCloudSync = async () => {
-    if (!currentUser) {
+    if (!currentUser || !activeOwnerUid) {
       notify('يرجى تسجيل الدخول أولاً لتفعيل المزامنة السحابية.', 'warning');
       return;
     }
@@ -616,7 +639,7 @@ export default function App() {
     try {
       try {
         await syncLocalDataToCloud(
-          currentUser.uid,
+          activeOwnerUid,
           settings,
           receipts,
           inventory,
@@ -656,7 +679,7 @@ export default function App() {
     [inventory]
   );
 
-  const isCloudConnected = Boolean(currentUser);
+  const isCloudConnected = Boolean(currentUser && activeOwnerUid);
 
   const handleSaveReceipt = (
     payload: Omit<ReceiptRecord, 'id'> & { id?: string }
@@ -691,8 +714,8 @@ export default function App() {
             totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
             updatedAt: new Date().toISOString().slice(0, 10),
           });
-          if (currentUser) {
-            saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
+          if (currentUser && activeOwnerUid) {
+            saveInventoryItemToCloud((activeOwnerUid || currentUser.uid), updatedItem).catch(() => {});
           }
           return updatedItem;
         }
@@ -703,9 +726,9 @@ export default function App() {
 
     setEditingReceipt(null);
 
-    if (currentUser) {
-      ensureClinicDocumentInCloud(currentUser.uid, settings)
-        .then(() => saveReceiptToCloud(currentUser.uid, record))
+    if (currentUser && activeOwnerUid) {
+      ensureClinicDocumentInCloud((activeOwnerUid || currentUser.uid), settings)
+        .then(() => saveReceiptToCloud((activeOwnerUid || currentUser.uid), record))
         .then(() => {
           notify(`تم حفظ السند #${record.receiptNo} ومزامنته`, 'success');
         })
@@ -751,8 +774,8 @@ export default function App() {
 
     setReceipts(nextReceiptsList);
 
-    if (currentUser && settledRecord) {
-      saveReceiptToCloud(currentUser.uid, settledRecord)
+    if (currentUser && activeOwnerUid && settledRecord) {
+      saveReceiptToCloud((activeOwnerUid || currentUser.uid), settledRecord)
         .then(() => {
           notify('تم تسديد الدفعة ومزامنتها', 'success');
         })
@@ -786,8 +809,8 @@ export default function App() {
             totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
             updatedAt: today,
           });
-          if (currentUser) {
-            saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
+          if (currentUser && activeOwnerUid) {
+            saveInventoryItemToCloud((activeOwnerUid || currentUser.uid), updatedItem).catch(() => {});
           }
           return updatedItem;
         }
@@ -796,8 +819,8 @@ export default function App() {
       setInventory(nextInventoryList);
     }
 
-    if (currentUser) {
-      deleteReceiptFromCloud(currentUser.uid, receiptId)
+    if (currentUser && activeOwnerUid) {
+      deleteReceiptFromCloud((activeOwnerUid || currentUser.uid), receiptId)
         .then(() => {
           notify('تم حذف السند ومزامنة الحذف سحابياً', 'info');
         })
@@ -845,12 +868,12 @@ export default function App() {
       setExpenses([exp, ...expenses]);
     }
 
-    if (currentUser) {
-      ensureClinicDocumentInCloud(currentUser.uid, settings)
+    if (currentUser && activeOwnerUid) {
+      ensureClinicDocumentInCloud((activeOwnerUid || currentUser.uid), settings)
         .then(async () => {
-          await saveInventoryItemToCloud(currentUser.uid, newItem);
+          await saveInventoryItemToCloud((activeOwnerUid || currentUser.uid), newItem);
           if (createdExpense) {
-            await saveExpenseToCloud(currentUser.uid, createdExpense);
+            await saveExpenseToCloud((activeOwnerUid || currentUser.uid), createdExpense);
           }
         })
         .then(() => {
@@ -879,8 +902,8 @@ export default function App() {
       return updated;
     });
     setInventory(nextInventoryList);
-    if (currentUser && updatedTarget) {
-      saveInventoryItemToCloud(currentUser.uid, updatedTarget).catch(() => {
+    if (currentUser && activeOwnerUid && updatedTarget) {
+      saveInventoryItemToCloud((activeOwnerUid || currentUser.uid), updatedTarget).catch(() => {
         notify('تم خصم الاستهلاك محلياً فقط — تعذر المزامنة السحابية', 'warning');
       });
     }
@@ -920,11 +943,11 @@ export default function App() {
     });
     setInventory(nextInventoryList);
 
-    if (currentUser && updatedTarget) {
-      saveInventoryItemToCloud(currentUser.uid, updatedTarget)
+    if (currentUser && activeOwnerUid && updatedTarget) {
+      saveInventoryItemToCloud((activeOwnerUid || currentUser.uid), updatedTarget)
         .then(async () => {
           if (restockExpense) {
-            await saveExpenseToCloud(currentUser.uid, restockExpense);
+            await saveExpenseToCloud((activeOwnerUid || currentUser.uid), restockExpense);
           }
         })
         .catch(() => {
@@ -1134,6 +1157,9 @@ export default function App() {
         defaultDoctorName={settings.identity.doctorAr}
         isSyncing={isSyncingCloud}
         onSignInGoogle={handleSignInWithGoogle}
+        onEmailLogin={handleEmailLogin}
+        onEmailRegister={handleEmailRegister}
+        onResendVerification={handleResendVerification}
         onDirectLogin={handleDirectClinicLogin}
         onSignOut={handleSignOut}
         onForceSyncNow={handleForceCloudSync}
@@ -1180,8 +1206,8 @@ export default function App() {
                 appearance: { ...settings.appearance, permanentAccountantSig: sig },
               };
               setSettings(nextSettings);
-              if (currentUser) {
-                saveClinicSettingsToCloud(currentUser.uid, nextSettings).catch(() => {
+              if (currentUser && activeOwnerUid) {
+                saveClinicSettingsToCloud((activeOwnerUid || currentUser.uid), nextSettings).catch(() => {
                   notify('تم حفظ التوقيع محلياً فقط — تعذر المزامنة السحابية', 'warning');
                 });
               }
@@ -1223,8 +1249,8 @@ export default function App() {
             onDeleteItem={(id) => {
               const nextInventoryList = inventory.filter((i) => i.id !== id);
               setInventory(nextInventoryList);
-              if (currentUser) {
-                deleteInventoryItemFromCloud(currentUser.uid, id)
+              if (currentUser && activeOwnerUid) {
+                deleteInventoryItemFromCloud((activeOwnerUid || currentUser.uid), id)
                   .then(() => notify('تم حذف الصنف ومزامنة الحذف سحابياً', 'info'))
                   .catch(() => notify('تم حذف الصنف محلياً — تعذر المزامنة السحابية', 'warning'));
               } else {
@@ -1252,9 +1278,9 @@ export default function App() {
               });
               const nextExpensesList = [newExp, ...expenses];
               setExpenses(nextExpensesList);
-              if (currentUser) {
-                ensureClinicDocumentInCloud(currentUser.uid, settings)
-                  .then(() => saveExpenseToCloud(currentUser.uid, newExp))
+              if (currentUser && activeOwnerUid) {
+                ensureClinicDocumentInCloud((activeOwnerUid || currentUser.uid), settings)
+                  .then(() => saveExpenseToCloud((activeOwnerUid || currentUser.uid), newExp))
                   .then(() => notify('تم إضافة المصروف ومزامنته سحابياً', 'success'))
                   .catch(() =>
                     notify('تم إضافة المصروف محلياً فقط — تعذر المزامنة السحابية', 'warning')
@@ -1266,8 +1292,8 @@ export default function App() {
             onDeleteExpense={(id) => {
               const nextExpensesList = expenses.filter((e) => e.id !== id);
               setExpenses(nextExpensesList);
-              if (currentUser) {
-                deleteExpenseFromCloud(currentUser.uid, id)
+              if (currentUser && activeOwnerUid) {
+                deleteExpenseFromCloud((activeOwnerUid || currentUser.uid), id)
                   .then(() => notify('تم حذف المصروف ومزامنة الحذف سحابياً', 'info'))
                   .catch(() =>
                     notify('تم حذف المصروف محلياً — تعذر المزامنة السحابية', 'warning')
@@ -1295,6 +1321,22 @@ export default function App() {
           />
         )}
 
+        {activeSection === 'settings' && currentUser && activeOwnerUid && (
+          <WorkspaceTeamManager
+            user={currentUser}
+            activeOwnerUid={activeOwnerUid}
+            onSelectWorkspace={(ownerUid) => {
+              if (ownerUid === activeOwnerUid) return;
+              setSettings(DEFAULT_SETTINGS);
+              setReceipts([]);
+              setInventory([]);
+              setExpenses([]);
+              setActiveWorkspaceOwnerUid(ownerUid);
+            }}
+            notify={notify}
+          />
+        )}
+
         {activeSection === 'settings' && (
           <ClinicSettingsPanel
             settings={settings}
@@ -1302,16 +1344,16 @@ export default function App() {
             inventory={inventory}
             expenses={expenses}
             onDeleteService={(serviceId) => {
-              if (currentUser) {
-                deleteServiceFromCloud(currentUser.uid, serviceId).catch(() => {});
+              if (currentUser && activeOwnerUid) {
+                deleteServiceFromCloud((activeOwnerUid || currentUser.uid), serviceId).catch(() => {});
               }
             }}
             onSaveSettings={(next) => {
               setSettings(next);
-              if (currentUser) {
+              if (currentUser && activeOwnerUid) {
                 Promise.all([
-                  saveClinicSettingsToCloud(currentUser.uid, next),
-                  ...next.services.map((srv) => saveServiceToCloud(currentUser.uid, srv)),
+                  saveClinicSettingsToCloud((activeOwnerUid || currentUser.uid), next),
+                  ...next.services.map((srv) => saveServiceToCloud((activeOwnerUid || currentUser.uid), srv)),
                 ])
                   .then(() => {
                     notify('تم حفظ الإعدادات ومزامنتها', 'success');
@@ -1340,9 +1382,9 @@ export default function App() {
               if (Array.isArray(payload.inventory)) setInventory(nextInventory);
               if (Array.isArray(payload.expenses)) setExpenses(nextExpenses);
 
-              if (currentUser) {
+              if (currentUser && activeOwnerUid) {
                 syncLocalDataToCloud(
-                  currentUser.uid,
+                  (activeOwnerUid || currentUser.uid),
                   nextSettings,
                   nextReceipts,
                   nextInventory,
