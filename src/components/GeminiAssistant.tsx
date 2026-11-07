@@ -22,6 +22,10 @@ import {
   ReceiptRecord,
 } from '../types/clinic';
 import { queryClinicAssistantDetailed } from '../utils/aiClient';
+import {
+  buildCleanSpeechTranscript,
+  deduplicateSpeechText,
+} from '../utils/speechTranscript';
 
 interface GeminiAssistantProps {
   settings: ClinicSettings;
@@ -237,17 +241,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       .catch(() => {});
   };
 
-  const deduplicateConsecutiveWords = (text: string): string => {
-    const words = text.trim().split(/\s+/);
-    const cleaned: string[] = [];
-    for (let i = 0; i < words.length; i++) {
-      if (i === 0 || words[i] !== words[i - 1]) {
-        cleaned.push(words[i]);
-      }
-    }
-    return cleaned.join(' ');
-  };
-
   const stopVoiceInput = () => {
     shouldKeepListeningRef.current = false;
     setIsListening(false);
@@ -280,6 +273,13 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
 
     try {
+      // Stop any previous active recognition instance before starting a new one
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore
+      }
+
       const rec = new SpeechRec() as {
         lang: string;
         continuous: boolean;
@@ -300,47 +300,26 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         stop: () => void;
       };
 
-      // Use ar-SA for standard, reliable, uninterrupted speech recognition across all mobile/desktop engines
+      const isMobileBrowser =
+        typeof navigator !== 'undefined' &&
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
       rec.lang = 'ar-SA';
-      rec.continuous = true;
+      // Disable continuous mode on mobile browsers to prevent Android Chrome's cumulative buffer duplication bug
+      rec.continuous = !isMobileBrowser;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
 
-      const initialBase = input.trim();
+      const initialBase = deduplicateSpeechText(input.trim());
       accumulatedTranscriptRef.current = initialBase;
       currentSessionFinalRef.current = '';
       shouldKeepListeningRef.current = true;
 
       rec.onresult = (event) => {
-        let finalTranscripts = '';
-        let interimTranscripts = '';
-
-        for (let i = 0; i < event.results.length; i += 1) {
-          const res = event.results[i];
-          const textPiece = res?.[0]?.transcript?.trim() || '';
-          if (!textPiece) continue;
-          if (res?.isFinal) {
-            finalTranscripts += (finalTranscripts ? ' ' : '') + textPiece;
-          } else {
-            interimTranscripts += (interimTranscripts ? ' ' : '') + textPiece;
-          }
-        }
-
-        currentSessionFinalRef.current = finalTranscripts;
-
-        const combinedRaw = [
-          initialBase,
-          finalTranscripts,
-          interimTranscripts,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        const deduped = deduplicateConsecutiveWords(combinedRaw);
-        if (deduped) {
-          setInput(deduped);
+        const cleanTranscript = buildCleanSpeechTranscript(initialBase, event.results);
+        if (cleanTranscript) {
+          currentSessionFinalRef.current = cleanTranscript;
+          setInput(cleanTranscript);
         }
       };
 
@@ -354,10 +333,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       };
 
       rec.onend = () => {
-        // Smooth single-session completion: avoid rapid reconnect loops that cause repeated beep sounds
         shouldKeepListeningRef.current = false;
         setIsListening(false);
-        setInput((prev) => deduplicateConsecutiveWords(prev));
+        setInput((prev) => deduplicateSpeechText(prev));
       };
 
       recognitionRef.current = rec;

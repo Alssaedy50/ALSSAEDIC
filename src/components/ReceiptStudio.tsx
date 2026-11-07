@@ -26,6 +26,10 @@ import {
 import { CURRENCIES, PAYMENT_METHODS } from '../data/defaultData';
 import { numberToArabicWords, parseFDIToothNumbers } from '../utils/arabicTafqeet';
 import { parseSmartReceiptWithFallback } from '../utils/aiClient';
+import {
+  buildCleanSpeechTranscript,
+  deduplicateSpeechText,
+} from '../utils/speechTranscript';
 import { SignatureModal } from './SignatureModal';
 import { FdiToothModal } from './FdiToothModal';
 import { OfficialReceiptCard, ReceiptDisplayData } from './OfficialReceiptCard';
@@ -317,17 +321,6 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     }
   };
 
-  const deduplicateConsecutiveWords = (text: string): string => {
-    const words = text.trim().split(/\s+/);
-    const cleaned: string[] = [];
-    for (let i = 0; i < words.length; i++) {
-      if (i === 0 || words[i] !== words[i - 1]) {
-        cleaned.push(words[i]);
-      }
-    }
-    return cleaned.join(' ');
-  };
-
   const toggleVoiceDictation = () => {
     if (isListening || shouldKeepListeningRef.current) {
       stopVoiceDictation(true);
@@ -350,6 +343,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     }
 
     try {
+      // Stop any previous active recognition instance before starting a new one
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore
+      }
+
       const rec = new SpeechRec() as {
         lang: string;
         continuous: boolean;
@@ -369,46 +369,29 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         start: () => void;
         stop: () => void;
       };
-      // ar-SA ensures reliable, uninterrupted standard recognition without phone-chime loops
+
+      const isMobileBrowser =
+        typeof navigator !== 'undefined' &&
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
       rec.lang = 'ar-SA';
-      rec.continuous = true;
+      // Disable continuous mode on mobile browsers to prevent Android Chrome's cumulative buffer duplication bug
+      rec.continuous = !isMobileBrowser;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
 
-      const initialBase = smartInput.trim();
+      const initialBase = deduplicateSpeechText(smartInput.trim());
       accumulatedTranscriptRef.current = initialBase;
       currentSessionFinalRef.current = '';
       shouldKeepListeningRef.current = true;
 
       rec.onresult = (event) => {
-        let finalTranscripts = '';
-        let interimTranscripts = '';
-        for (let i = 0; i < event.results.length; i += 1) {
-          const res = event.results[i];
-          const textPiece = res?.[0]?.transcript?.trim() || '';
-          if (!textPiece) continue;
-          if (res?.isFinal) {
-            finalTranscripts += (finalTranscripts ? ' ' : '') + textPiece;
-          } else {
-            interimTranscripts += (interimTranscripts ? ' ' : '') + textPiece;
-          }
-        }
-        currentSessionFinalRef.current = finalTranscripts;
-        const combined = [
-          initialBase,
-          finalTranscripts,
-          interimTranscripts,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        const deduped = deduplicateConsecutiveWords(combined);
-        if (deduped) {
-          latestSmartInputRef.current = deduped;
-          setSmartInput(deduped);
-          applyLocalHeuristic(deduped);
+        const cleanTranscript = buildCleanSpeechTranscript(initialBase, event.results);
+        if (cleanTranscript) {
+          currentSessionFinalRef.current = cleanTranscript;
+          latestSmartInputRef.current = cleanTranscript;
+          setSmartInput(cleanTranscript);
+          applyLocalHeuristic(cleanTranscript);
         }
       };
 
@@ -422,11 +405,12 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       };
 
       rec.onend = () => {
-        // Stop cleanly without rapid restart loop to avoid sound chimes and repeated words
         shouldKeepListeningRef.current = false;
         setIsListening(false);
-        const finalText = latestSmartInputRef.current.trim();
+        const finalText = deduplicateSpeechText(latestSmartInputRef.current.trim());
         if (finalText) {
+          latestSmartInputRef.current = finalText;
+          setSmartInput(finalText);
           applyLocalHeuristic(finalText);
         }
       };
