@@ -109,12 +109,12 @@ service cloud.firestore {
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
       data.ownerId == request.auth.uid &&
       data.clinicAr is string && data.clinicAr.size() >= 1 && data.clinicAr.size() <= 160 &&
-      data.doctorAr is string && data.doctorAr.size() >= 1 && data.doctorAr.size() <= 160 &&
-      data.specialtyAr is string && data.specialtyAr.size() >= 1 && data.specialtyAr.size() <= 200 &&
-      data.clinicEn is string && data.clinicEn.size() >= 1 && data.clinicEn.size() <= 160 &&
-      data.doctorEn is string && data.doctorEn.size() >= 1 && data.doctorEn.size() <= 160 &&
-      data.address is string && data.address.size() >= 1 && data.address.size() <= 250 &&
-      data.phones is string && data.phones.size() >= 1 && data.phones.size() <= 200 &&
+      data.doctorAr is string && data.doctorAr.size() <= 160 &&
+      data.specialtyAr is string && data.specialtyAr.size() <= 200 &&
+      data.clinicEn is string && data.clinicEn.size() <= 160 &&
+      data.doctorEn is string && data.doctorEn.size() <= 160 &&
+      data.address is string && data.address.size() <= 250 &&
+      data.phones is string && data.phones.size() <= 200 &&
       data.defaultCurrency is string && data.defaultCurrency.size() >= 1 && data.defaultCurrency.size() <= 40 &&
       data.primaryColor is string && data.primaryColor.size() >= 4 && data.primaryColor.size() <= 20 &&
       data.watermarkOpacity is number && data.watermarkOpacity >= 0 && data.watermarkOpacity <= 30 &&

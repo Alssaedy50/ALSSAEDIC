@@ -35,6 +35,7 @@ import {
   DEFAULT_RECEIPTS,
   DEFAULT_SETTINGS,
   SEED_DEMO_IDS,
+  createInitialClinicSettingsForUser,
 } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 import { LOCAL_API_SESSION_KEY } from './utils/aiClient';
@@ -60,6 +61,7 @@ import {
   deleteServiceFromCloud,
   ensureClinicDocumentInCloud,
   extractClinicIdFromEmail,
+  initializeOrLoadUserClinicInCloud,
   issueServerSessionToken,
   lookupUserWorkspaceByEmail,
   onAuthStateChanged,
@@ -103,6 +105,11 @@ const STORAGE_KEYS = {
   THEME: 'docai_theme_mode_v1',
   DIRECT_CLOUD_SESSION: 'docai_direct_cloud_session_v1',
 };
+
+function getScopedStorageKey(baseKey: string, ownerUid?: string | null): string {
+  if (!ownerUid) return baseKey;
+  return `${baseKey}_${ownerUid}`;
+}
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -176,6 +183,8 @@ export default function App() {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('alssaedy-clinic');
   const [activeClinicOwnerUid, setActiveClinicOwnerUid] = useState<string | null>(null);
   const [emailVerificationNotice, setEmailVerificationNotice] = useState<boolean>(false);
+  const [isNewAccountSetup, setIsNewAccountSetup] = useState<boolean>(false);
+  const pendingNewAccountRedirectRef = useRef<boolean>(false);
 
   const [settings, setSettings] = useState<ClinicSettings>(() =>
     loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
@@ -231,20 +240,24 @@ export default function App() {
   }, [darkMode]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-  }, [settings]);
+    const scopedKey = getScopedStorageKey(STORAGE_KEYS.SETTINGS, activeClinicOwnerUid);
+    localStorage.setItem(scopedKey, JSON.stringify(settings));
+  }, [settings, activeClinicOwnerUid]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(receipts));
-  }, [receipts]);
+    const scopedKey = getScopedStorageKey(STORAGE_KEYS.RECEIPTS, activeClinicOwnerUid);
+    localStorage.setItem(scopedKey, JSON.stringify(receipts));
+  }, [receipts, activeClinicOwnerUid]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.INVENTORY, JSON.stringify(inventory));
-  }, [inventory]);
+    const scopedKey = getScopedStorageKey(STORAGE_KEYS.INVENTORY, activeClinicOwnerUid);
+    localStorage.setItem(scopedKey, JSON.stringify(inventory));
+  }, [inventory, activeClinicOwnerUid]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
-  }, [expenses]);
+    const scopedKey = getScopedStorageKey(STORAGE_KEYS.EXPENSES, activeClinicOwnerUid);
+    localStorage.setItem(scopedKey, JSON.stringify(expenses));
+  }, [expenses, activeClinicOwnerUid]);
 
   useEffect(() => {
     if (directSession) {
@@ -378,7 +391,9 @@ export default function App() {
           const workspaceLookup = user.email ? await lookupUserWorkspaceByEmail(user.email) : null;
           let effectiveOwnerUid = user.uid;
           let effectiveWorkspaceId =
-            extractClinicIdFromEmail(user.email) || directSession?.clinicId || 'alssaedy-clinic';
+            extractClinicIdFromEmail(user.email) ||
+            (user.email ? user.email.split('@')[0].replace(/[^a-zA-Z0-9_-]/g, '-') : '') ||
+            'alssaedy-clinic';
 
           if (workspaceLookup) {
             setCurrentRole(workspaceLookup.role);
@@ -387,6 +402,20 @@ export default function App() {
             effectiveOwnerUid = workspaceLookup.addedBy || user.uid;
             setActiveWorkspaceId(effectiveWorkspaceId);
             setActiveClinicOwnerUid(effectiveOwnerUid);
+
+            const memberFallbackSettings = createInitialClinicSettingsForUser(
+              user.email,
+              user.displayName
+            );
+            const { data } = await initializeOrLoadUserClinicInCloud(
+              effectiveOwnerUid,
+              memberFallbackSettings
+            );
+            setSettings(data.settings);
+            setReceipts(data.receipts);
+            setInventory(data.inventory);
+            setExpenses(data.expenses);
+
             const roleLabels: Record<WorkspaceRole, string> = {
               owner: 'مالك العيادة',
               doctor: 'طبيب',
@@ -404,15 +433,52 @@ export default function App() {
             setActiveWorkspaceId(effectiveWorkspaceId);
             setActiveClinicOwnerUid(user.uid);
 
-            // Automatic Non-Destructive Local Data Migration for first workspace connection
-            await syncLocalDataToCloud(
-              user.uid,
-              settings,
-              receipts,
-              inventory,
-              expenses,
-              false
+            // Load user-scoped local cache (if any) or clean per-user initial settings
+            const userDefaultSettings = createInitialClinicSettingsForUser(
+              user.email,
+              user.displayName
             );
+            const scopedSettings = loadFromStorage<ClinicSettings>(
+              getScopedStorageKey(STORAGE_KEYS.SETTINGS, user.uid),
+              userDefaultSettings
+            );
+            const scopedReceipts = loadFromStorage<ReceiptRecord[]>(
+              getScopedStorageKey(STORAGE_KEYS.RECEIPTS, user.uid),
+              []
+            ).filter((r) => r && !SEED_DEMO_IDS.receipts.has(r.id));
+            const scopedInventory = loadFromStorage<InventoryItem[]>(
+              getScopedStorageKey(STORAGE_KEYS.INVENTORY, user.uid),
+              []
+            ).filter((i) => i && !SEED_DEMO_IDS.inventory.has(i.id));
+            const scopedExpenses = loadFromStorage<ExpenseRecord[]>(
+              getScopedStorageKey(STORAGE_KEYS.EXPENSES, user.uid),
+              []
+            ).filter((e) => e && !SEED_DEMO_IDS.expenses.has(e.id));
+
+            setSettings(scopedSettings);
+            setReceipts(scopedReceipts);
+            setInventory(scopedInventory);
+            setExpenses(scopedExpenses);
+
+            const { isNewClinic, data } = await initializeOrLoadUserClinicInCloud(
+              user.uid,
+              scopedSettings,
+              scopedReceipts,
+              scopedInventory,
+              scopedExpenses
+            );
+
+            setSettings(data.settings);
+            setReceipts(data.receipts);
+            setInventory(data.inventory);
+            setExpenses(data.expenses);
+
+            if (isNewClinic || pendingNewAccountRedirectRef.current) {
+              pendingNewAccountRedirectRef.current = false;
+              setIsNewAccountSetup(true);
+              setActiveSection('settings');
+              window.history.pushState({ section: 'settings' }, '', '#settings');
+            }
           }
 
           // Issue/refresh signed server session token for this Firebase Auth user
@@ -455,6 +521,10 @@ export default function App() {
         setCurrentRole('owner');
         setCurrentPermissions(DEFAULT_ROLE_PERMISSIONS.owner);
         setEmailVerificationNotice(false);
+        setIsNewAccountSetup(false);
+        setReceipts([]);
+        setInventory([]);
+        setExpenses([]);
         if (directSession) {
           setDirectSession(null);
         }
@@ -1264,6 +1334,12 @@ export default function App() {
         receiptsCount={receipts.length}
         inventoryCount={inventory.length}
         expensesCount={expenses.length}
+        onAccountCreated={() => {
+          pendingNewAccountRedirectRef.current = true;
+          setIsNewAccountSetup(true);
+          setActiveSection('settings');
+          window.history.pushState({ section: 'settings' }, '', '#settings');
+        }}
         notify={notify}
       />
 
@@ -1484,6 +1560,7 @@ export default function App() {
               activeClinicOwnerUid === currentUser?.uid
             }
             currentRole={currentRole}
+            isNewAccountSetup={isNewAccountSetup}
             onDeleteService={(serviceId) => {
               if (!currentPermissions.canManageSettings && currentRole !== 'owner') {
                 notify('غير مصرح لك بحذف خدمات العيادة (خاص بالمالك).', 'error');
@@ -1499,21 +1576,35 @@ export default function App() {
                 notify('غير مصرح لك بتعديل إعدادات وهوية العيادة (خاص بالمالك).', 'error');
                 return;
               }
-              setSettings(next);
+              const normalizedNext: ClinicSettings = {
+                ...next,
+                identity: {
+                  ...next.identity,
+                  systemTitleAr: next.identity.clinicAr || next.identity.systemTitleAr,
+                },
+              };
+              setSettings(normalizedNext);
+              setIsNewAccountSetup(false);
               const targetClinicUid = cloudTargetUid;
               if (targetClinicUid) {
+                setIsSyncingCloud(true);
                 Promise.all([
-                  saveClinicSettingsToCloud(targetClinicUid, next),
-                  ...next.services.map((srv) => saveServiceToCloud(targetClinicUid, srv)),
+                  saveClinicSettingsToCloud(targetClinicUid, normalizedNext),
+                  ...normalizedNext.services.map((srv) =>
+                    saveServiceToCloud(targetClinicUid, srv)
+                  ),
                 ])
                   .then(() => {
-                    notify('تم حفظ الإعدادات ومزامنتها سحابياً', 'success');
+                    notify('تم حفظ إعدادات عيادتك ومزامنتها سحابياً بنجاح', 'success');
                   })
                   .catch(() => {
                     notify('تم حفظ الإعدادات محلياً فقط — تعذر المزامنة السحابية', 'warning');
+                  })
+                  .finally(() => {
+                    setIsSyncingCloud(false);
                   });
               } else {
-                notify('تم حفظ الإعدادات', 'success');
+                notify('تم حفظ الإعدادات بنجاح', 'success');
               }
             }}
             onImportFullBackup={(payload) => {

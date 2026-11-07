@@ -120,3 +120,53 @@ export const DEFAULT_RECEIPTS: ReceiptRecord[] = [];
 
 export const DEFAULT_EXPENSES: ExpenseRecord[] = [];
 
+export function createInitialClinicSettingsForUser(
+  email?: string | null,
+  displayName?: string | null
+): ClinicSettings {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail || cleanEmail === 'alssaedy50@gmail.com') {
+    return {
+      ...DEFAULT_SETTINGS,
+      identity: { ...DEFAULT_SETTINGS.identity },
+      appearance: { ...DEFAULT_SETTINGS.appearance },
+      features: { ...DEFAULT_SETTINGS.features },
+      services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
+    };
+  }
+
+  const cleanName = String(displayName || '').trim();
+  const initialClinicName = cleanName
+    ? `عيادة ${cleanName} لطب الأسنان`
+    : 'عيادة طب وجراحة الفم والأسنان';
+
+  return {
+    identity: {
+      systemTitleAr: initialClinicName,
+      clinicAr: initialClinicName,
+      doctorAr: cleanName,
+      specialtyAr: 'طب وجراحة الفم والأسنان',
+      clinicEn: '',
+      doctorEn: '',
+      address: '',
+      phones: '',
+      defaultCurrency: 'ريال يمني',
+    },
+    appearance: {
+      primaryColor: '#0B2545',
+      accentColor: '#0284C7',
+      customLogoDataUrl: DEFAULT_CLINIC_LOGO_DATA_URI,
+      watermarkOpacity: 5,
+      permanentAccountantSig: '',
+    },
+    features: {
+      autoPrice: true,
+      showQrCode: true,
+      debtAlert: true,
+      autoInventory: true,
+    },
+    services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
+  };
+}
+
+

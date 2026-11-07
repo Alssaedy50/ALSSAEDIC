@@ -58,6 +58,7 @@ interface CloudAccountModalProps {
   receiptsCount: number;
   inventoryCount: number;
   expensesCount: number;
+  onAccountCreated?: () => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
@@ -84,6 +85,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   receiptsCount,
   inventoryCount,
   expensesCount,
+  onAccountCreated,
   notify,
 }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
@@ -172,11 +174,12 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       try {
         const { verificationSent } = await registerWithEmailAndPassword(cleanEmail, cleanPassword);
         if (verificationSent) {
-          notify('تم إنشاء الحساب بنجاح وإرسال رابط التوثيق إلى بريدك الإلكتروني', 'success');
+          notify('تم إنشاء الحساب بنجاح! أدخل بيانات عيادتك الخاصة الآن ثم اضغط حفظ.', 'success');
         } else {
-          notify('تم إنشاء الحساب بنجاح', 'success');
+          notify('تم إنشاء الحساب بنجاح! أدخل بيانات عيادتك الخاصة الآن ثم اضغط حفظ.', 'success');
         }
         setPassword('');
+        onAccountCreated?.();
         onClose();
         return;
       } catch (err: unknown) {

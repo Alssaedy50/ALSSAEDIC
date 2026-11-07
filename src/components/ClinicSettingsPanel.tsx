@@ -32,6 +32,7 @@ interface ClinicSettingsPanelProps {
   ownerUid?: string;
   isOwner?: boolean;
   currentRole?: WorkspaceRole;
+  isNewAccountSetup?: boolean;
   onDeleteService?: (serviceId: string) => void;
   onSaveSettings: (nextSettings: ClinicSettings) => void;
   onImportFullBackup: (payload: {
@@ -53,6 +54,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   ownerUid,
   isOwner,
   currentRole,
+  isNewAccountSetup,
   onDeleteService,
   onSaveSettings,
   onImportFullBackup,
@@ -76,12 +78,19 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     setFormState(settings);
   }, [settings]);
 
+  React.useEffect(() => {
+    if (isNewAccountSetup) {
+      setSubTab('identity');
+    }
+  }, [isNewAccountSetup]);
+
   const handleIdentityChange = (field: keyof ClinicSettings['identity'], value: string) => {
     setFormState((prev) => ({
       ...prev,
       identity: {
         ...prev.identity,
         [field]: value,
+        ...(field === 'clinicAr' ? { systemTitleAr: value } : {}),
       },
     }));
   };
@@ -294,11 +303,22 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       {/* TAB 1: CLINIC IDENTITY */}
       {subTab === 'identity' && (
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
+          {isNewAccountSetup && (
+            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-xs font-bold text-emerald-900 dark:text-emerald-200 space-y-1">
+              <div className="font-black text-emerald-700 dark:text-emerald-300">
+                مرحباً بك! إعداد بيانات عيادتك الخاصة
+              </div>
+              <div>
+                أدخل اسم عيادتك، اسم الطبيب، التخصص، العنوان، وأرقام الهواتف أدناه ثم اضغط على زر (حفظ) لتثبيت بيانات عيادتك ومزامنتها سحابياً بشكل خاص ومستقل.
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                الهوية
+                الهوية وبيانات العيادة
               </h2>
             </div>
             <button
@@ -318,6 +338,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               </label>
               <input
                 type="text"
+                placeholder="مثال: عيادة النور لطب وجراحة الأسنان"
                 value={formState.identity.clinicAr}
                 onChange={(e) => handleIdentityChange('clinicAr', e.target.value)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs sm:text-sm"
@@ -496,6 +517,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 />
                 <span>تنبيه ديون المريض</span>
               </label>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => onSaveSettings(formState)}
+                className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
+              >
+                <Save className="w-4 h-4" />
+                <span>حفظ ومزامنة إعدادات العيادة</span>
+              </button>
             </div>
           </div>
         </section>
