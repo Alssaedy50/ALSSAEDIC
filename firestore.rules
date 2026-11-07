@@ -1036,8 +1036,10 @@ service cloud.firestore {
     }
 
     match /clinic_memberships/{membershipId} {
-      allow get: if isSignedIn() && resource != null &&
-        (resource.data.memberUid == request.auth.uid || resource.data.ownerUid == request.auth.uid);
+      allow get: if isSignedIn() &&
+        (membershipId == request.auth.uid + '_' + request.auth.uid ||
+          (resource != null &&
+            (resource.data.memberUid == request.auth.uid || resource.data.ownerUid == request.auth.uid)));
       allow list: if isSignedIn() &&
         (resource.data.memberUid == request.auth.uid || resource.data.ownerUid == request.auth.uid);
       allow create: if isVerifiedUser() &&
