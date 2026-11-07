@@ -15,6 +15,7 @@ import {
   Package,
   Settings,
   Sun,
+  Users,
   Wallet,
   X,
 } from 'lucide-react';
@@ -24,6 +25,9 @@ import {
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
+  WorkspaceRole,
+  WorkspacePermissions,
+  DEFAULT_ROLE_PERMISSIONS,
 } from './types/clinic';
 import {
   DEFAULT_EXPENSES,
@@ -44,6 +48,8 @@ import {
   DirectAuthOptions,
   DirectClinicSession,
 } from './components/CloudAccountModal';
+import { AuthModal } from './components/AuthModal';
+import { WorkspaceTeamModal } from './components/WorkspaceTeamModal';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
 import {
   User,
@@ -56,8 +62,10 @@ import {
   ensureClinicDocumentInCloud,
   extractClinicIdFromEmail,
   issueServerSessionToken,
+  lookupUserWorkspaceByEmail,
   onAuthStateChanged,
   pushDirectWorkspaceToCloud,
+  resendVerificationEmail,
   saveClinicSettingsToCloud,
   saveExpenseToCloud,
   saveInventoryItemToCloud,
@@ -168,6 +176,17 @@ export default function App() {
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const lastDirectSyncTimestamp = useRef<string>('');
   const hasPromptedInitialAuth = useRef<boolean>(false);
+
+  // Multi-User Workspace & Role State
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState<boolean>(false);
+  const [currentRole, setCurrentRole] = useState<WorkspaceRole>('owner');
+  const [currentPermissions, setCurrentPermissions] = useState<WorkspacePermissions>(
+    DEFAULT_ROLE_PERMISSIONS.owner
+  );
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('alssaedy-clinic');
+  const [activeClinicOwnerUid, setActiveClinicOwnerUid] = useState<string | null>(null);
+  const [emailVerificationNotice, setEmailVerificationNotice] = useState<boolean>(false);
 
   const [settings, setSettings] = useState<ClinicSettings>(() =>
     loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
@@ -328,7 +347,7 @@ export default function App() {
     }
   };
 
-  // Firebase Auth & Real-Time Multi-Phone Cloud Sync
+  // Firebase Auth & Real-Time Multi-User Workspace Cloud Sync
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -337,13 +356,61 @@ export default function App() {
       if (user) {
         setIsSyncingCloud(true);
         try {
-          const derivedClinicId =
+          if (!user.emailVerified && user.providerData.some((p) => p.providerId === 'password')) {
+            setEmailVerificationNotice(true);
+            notify(
+              'تنبيه: يرجى تأكيد بريدك الإلكتروني عبر الرابط المرسل لتأمين وصولك إلى كافة الصلاحيات.',
+              'warning'
+            );
+          } else {
+            setEmailVerificationNotice(false);
+          }
+
+          // Check if this user was invited to a clinic workspace
+          const workspaceLookup = user.email ? await lookupUserWorkspaceByEmail(user.email) : null;
+          let effectiveOwnerUid = user.uid;
+          let effectiveWorkspaceId =
             extractClinicIdFromEmail(user.email) || directSession?.clinicId || 'alssaedy-clinic';
+
+          if (workspaceLookup) {
+            setCurrentRole(workspaceLookup.role);
+            setCurrentPermissions(workspaceLookup.permissions);
+            effectiveWorkspaceId = workspaceLookup.workspaceId;
+            effectiveOwnerUid = workspaceLookup.addedBy || user.uid;
+            setActiveWorkspaceId(effectiveWorkspaceId);
+            setActiveClinicOwnerUid(effectiveOwnerUid);
+            const roleLabels: Record<WorkspaceRole, string> = {
+              owner: 'مالك العيادة',
+              doctor: 'طبيب',
+              accountant: 'محاسب',
+              receptionist: 'موظف استقبال',
+              viewer: 'مشاهد',
+            };
+            notify(
+              `تم الانضمام إلى مساحة عمل العيادة بدور: ${roleLabels[workspaceLookup.role] || workspaceLookup.role}`,
+              'info'
+            );
+          } else {
+            setCurrentRole('owner');
+            setCurrentPermissions(DEFAULT_ROLE_PERMISSIONS.owner);
+            setActiveWorkspaceId(effectiveWorkspaceId);
+            setActiveClinicOwnerUid(user.uid);
+
+            // Automatic Non-Destructive Local Data Migration for first workspace connection
+            await syncLocalDataToCloud(
+              user.uid,
+              settings,
+              receipts,
+              inventory,
+              expenses,
+              false
+            );
+          }
 
           // Issue/refresh signed server session token for this Firebase Auth user
           const issued = await issueServerSessionToken({
-            clinicId: derivedClinicId,
-            ownerUid: user.uid,
+            clinicId: effectiveWorkspaceId,
+            ownerUid: effectiveOwnerUid,
           });
           const token = issued.ok && issued.sessionToken ? issued.sessionToken : `fb_${user.uid}`;
           const expIso =
@@ -354,8 +421,8 @@ export default function App() {
           sessionStorage.setItem(
             LOCAL_API_SESSION_KEY,
             JSON.stringify({
-              clinicId: derivedClinicId,
-              ownerUid: user.uid,
+              clinicId: effectiveWorkspaceId,
+              ownerUid: effectiveOwnerUid,
               sessionToken: token,
               expiresAt: expIso,
             })
@@ -363,30 +430,26 @@ export default function App() {
 
           if (!directSession && extractClinicIdFromEmail(user.email)) {
             setDirectSession({
-              clinicId: derivedClinicId,
-              ownerUid: user.uid,
+              clinicId: effectiveWorkspaceId,
+              ownerUid: effectiveOwnerUid,
               sessionToken: token,
               expiresAt: expIso,
               updatedAt: new Date().toISOString(),
             });
           }
-
-          await syncLocalDataToCloud(
-            user.uid,
-            settings,
-            receipts,
-            inventory,
-            expenses,
-            false
-          );
         } catch (err) {
           console.warn('Initial cloud sync notice:', err);
         } finally {
           setIsSyncingCloud(false);
         }
-      } else if (directSession) {
-        // Clear directSession if Firebase Auth session is no longer authenticated
-        setDirectSession(null);
+      } else {
+        setActiveClinicOwnerUid(null);
+        setCurrentRole('owner');
+        setCurrentPermissions(DEFAULT_ROLE_PERMISSIONS.owner);
+        setEmailVerificationNotice(false);
+        if (directSession) {
+          setDirectSession(null);
+        }
       }
     });
     return () => unsubAuth();
@@ -401,7 +464,7 @@ export default function App() {
     }
   }, [authReady, currentUser, directSession]);
 
-  const activeOwnerUid = currentUser?.uid || directSession?.ownerUid || null;
+  const activeOwnerUid = activeClinicOwnerUid || currentUser?.uid || directSession?.ownerUid || null;
 
   useEffect(() => {
     if (!authReady || !activeOwnerUid || !currentUser) return;
@@ -662,6 +725,20 @@ export default function App() {
     payload: Omit<ReceiptRecord, 'id'> & { id?: string }
   ): ReceiptRecord => {
     const isEdit = Boolean(payload.id);
+
+    // RBAC Permission Guard
+    if (isEdit) {
+      if (!currentPermissions.canEditReceipt && currentRole !== 'owner') {
+        notify('ليس لديك صلاحية تعديل السندات المحفوظة.', 'error');
+        return payload as ReceiptRecord;
+      }
+    } else {
+      if (!currentPermissions.canCreateReceipt && currentRole !== 'owner') {
+        notify('ليس لديك صلاحية إنشاء سندات جديدة.', 'error');
+        return payload as ReceiptRecord;
+      }
+    }
+
     const record = validateAndNormalizeReceipt({
       ...payload,
       id: payload.id || 'rec_' + Date.now(),
@@ -680,6 +757,8 @@ export default function App() {
 
     setReceipts(nextReceiptsList);
 
+    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+
     let nextInventoryList = inventory;
     if (!isEdit && settings.features.autoInventory && record.services.length > 0) {
       nextInventoryList = inventory.map((item) => {
@@ -691,8 +770,8 @@ export default function App() {
             totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
             updatedAt: new Date().toISOString().slice(0, 10),
           });
-          if (currentUser) {
-            saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
+          if (targetClinicUid) {
+            saveInventoryItemToCloud(targetClinicUid, updatedItem).catch(() => {});
           }
           return updatedItem;
         }
@@ -703,11 +782,11 @@ export default function App() {
 
     setEditingReceipt(null);
 
-    if (currentUser) {
-      ensureClinicDocumentInCloud(currentUser.uid, settings)
-        .then(() => saveReceiptToCloud(currentUser.uid, record))
+    if (targetClinicUid) {
+      ensureClinicDocumentInCloud(targetClinicUid, settings)
+        .then(() => saveReceiptToCloud(targetClinicUid, record))
         .then(() => {
-          notify(`تم حفظ السند #${record.receiptNo} ومزامنته`, 'success');
+          notify(`تم حفظ السند #${record.receiptNo} ومزامنته سحابياً`, 'success');
         })
         .catch(() => {
           notify(
@@ -723,6 +802,10 @@ export default function App() {
   };
 
   const handleSettleDebt = (receiptId: string, amountPaidNow: number) => {
+    if (!currentPermissions.canEditReceipt && currentRole !== 'owner') {
+      notify('ليس لديك صلاحية تسجيل تسديدات أو تعديل السندات.', 'error');
+      return;
+    }
     if (!Number.isFinite(amountPaidNow) || amountPaidNow <= 0) {
       notify('يرجى إدخال مبلغ سداد صحيح أكبر من الصفر.', 'error');
       return;
@@ -751,10 +834,11 @@ export default function App() {
 
     setReceipts(nextReceiptsList);
 
-    if (currentUser && settledRecord) {
-      saveReceiptToCloud(currentUser.uid, settledRecord)
+    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    if (targetClinicUid && settledRecord) {
+      saveReceiptToCloud(targetClinicUid, settledRecord)
         .then(() => {
-          notify('تم تسديد الدفعة ومزامنتها', 'success');
+          notify('تم تسديد الدفعة ومزامنتها سحابياً', 'success');
         })
         .catch(() => {
           notify('تم تسديد الدفعة محلياً فقط — تعذر المزامنة السحابية', 'warning');
@@ -765,9 +849,16 @@ export default function App() {
   };
 
   const handleDeleteReceipt = (receiptId: string) => {
+    if (!currentPermissions.canDeleteReceipt && currentRole !== 'owner') {
+      notify('غير مصرح لك بحذف السندات المالية (يتطلب صلاحية المالك أو محاسب مخول).', 'error');
+      return;
+    }
+
     const deletedReceipt = receipts.find((r) => r.id === receiptId);
     const nextReceiptsList = receipts.filter((r) => r.id !== receiptId);
     setReceipts(nextReceiptsList);
+
+    const targetClinicUid = activeOwnerUid || currentUser?.uid;
 
     let nextInventoryList = inventory;
     if (
@@ -786,8 +877,8 @@ export default function App() {
             totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
             updatedAt: today,
           });
-          if (currentUser) {
-            saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
+          if (targetClinicUid) {
+            saveInventoryItemToCloud(targetClinicUid, updatedItem).catch(() => {});
           }
           return updatedItem;
         }
@@ -796,8 +887,8 @@ export default function App() {
       setInventory(nextInventoryList);
     }
 
-    if (currentUser) {
-      deleteReceiptFromCloud(currentUser.uid, receiptId)
+    if (targetClinicUid) {
+      deleteReceiptFromCloud(targetClinicUid, receiptId)
         .then(() => {
           notify('تم حذف السند ومزامنة الحذف سحابياً', 'info');
         })
@@ -813,6 +904,11 @@ export default function App() {
     payload: Omit<InventoryItem, 'id' | 'updatedAt'> & { id?: string },
     recordAsExpense: boolean
   ) => {
+    if (!currentPermissions.canManageInventory && currentRole !== 'owner') {
+      notify('غير مصرح لك بإدارة أصناف المخزون الطبي.', 'error');
+      return;
+    }
+
     const today = new Date().toISOString().slice(0, 10);
     const newItem = validateAndNormalizeInventoryItem({
       ...payload,
@@ -845,12 +941,13 @@ export default function App() {
       setExpenses([exp, ...expenses]);
     }
 
-    if (currentUser) {
-      ensureClinicDocumentInCloud(currentUser.uid, settings)
+    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    if (targetClinicUid) {
+      ensureClinicDocumentInCloud(targetClinicUid, settings)
         .then(async () => {
-          await saveInventoryItemToCloud(currentUser.uid, newItem);
+          await saveInventoryItemToCloud(targetClinicUid, newItem);
           if (createdExpense) {
-            await saveExpenseToCloud(currentUser.uid, createdExpense);
+            await saveExpenseToCloud(targetClinicUid, createdExpense);
           }
         })
         .then(() => {
@@ -865,6 +962,11 @@ export default function App() {
   };
 
   const handleQuickConsumeInventory = (id: string, amount = 1) => {
+    if (!currentPermissions.canManageInventory && currentRole !== 'owner') {
+      notify('غير مصرح لك بتعديل كميات المخزون.', 'error');
+      return;
+    }
+
     let updatedTarget: InventoryItem | null = null;
     const nextInventoryList = inventory.map((item) => {
       if (item.id !== id) return item;
@@ -879,8 +981,10 @@ export default function App() {
       return updated;
     });
     setInventory(nextInventoryList);
-    if (currentUser && updatedTarget) {
-      saveInventoryItemToCloud(currentUser.uid, updatedTarget).catch(() => {
+
+    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    if (targetClinicUid && updatedTarget) {
+      saveInventoryItemToCloud(targetClinicUid, updatedTarget).catch(() => {
         notify('تم خصم الاستهلاك محلياً فقط — تعذر المزامنة السحابية', 'warning');
       });
     }
@@ -888,6 +992,11 @@ export default function App() {
   };
 
   const handleQuickRestockInventory = (id: string, amount: number, recordExpense: boolean) => {
+    if (!currentPermissions.canManageInventory && currentRole !== 'owner') {
+      notify('غير مصرح لك بتعديل كميات المخزون.', 'error');
+      return;
+    }
+
     const today = new Date().toISOString().slice(0, 10);
     let nextExpensesList = expenses;
     let updatedTarget: InventoryItem | null = null;
@@ -920,11 +1029,12 @@ export default function App() {
     });
     setInventory(nextInventoryList);
 
-    if (currentUser && updatedTarget) {
-      saveInventoryItemToCloud(currentUser.uid, updatedTarget)
+    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    if (targetClinicUid && updatedTarget) {
+      saveInventoryItemToCloud(targetClinicUid, updatedTarget)
         .then(async () => {
           if (restockExpense) {
-            await saveExpenseToCloud(currentUser.uid, restockExpense);
+            await saveExpenseToCloud(targetClinicUid, restockExpense);
           }
         })
         .catch(() => {
@@ -996,6 +1106,18 @@ export default function App() {
               >
                 <ArrowRight className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                 <span>رجوع</span>
+              </button>
+            )}
+
+            {(currentPermissions.canManageTeam || currentRole === 'owner') && isCloudConnected && (
+              <button
+                type="button"
+                onClick={() => setIsTeamModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border border-indigo-500/35 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-colors shrink-0"
+                title="فريق العمل والصلاحيات"
+              >
+                <Users className="w-4 h-4 shrink-0 text-indigo-500" />
+                <span className="hidden sm:inline">فريق العمل</span>
               </button>
             )}
 
@@ -1111,6 +1233,25 @@ export default function App() {
                   </span>
                 </button>
 
+                {(currentPermissions.canManageTeam || currentRole === 'owner') && isCloudConnected && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDrawerOpen(false);
+                      setIsTeamModalOpen(true);
+                    }}
+                    className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-xs sm:text-sm font-bold"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Users className="w-4 h-4 shrink-0 text-indigo-500" />
+                      <span>فريق العمل والصلاحيات</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/20 font-bold">
+                      {currentRole === 'owner' ? 'مالك' : 'عضو'}
+                    </span>
+                  </button>
+                )}
+
                 <PWAInstallButton notify={notify} />
               </div>
             </nav>
@@ -1130,6 +1271,18 @@ export default function App() {
         isFirstOpenGate={!isCloudConnected}
         user={currentUser}
         directSession={directSession}
+        currentRole={currentRole}
+        canManageTeam={currentPermissions.canManageTeam || currentRole === 'owner'}
+        onOpenTeamModal={() => setIsTeamModalOpen(true)}
+        onOpenEmailAuth={() => setIsAuthModalOpen(true)}
+        onResendVerification={async () => {
+          try {
+            await resendVerificationEmail();
+            notify('تم إرسال رابط تأكيد البريد الإلكتروني إلى بريدك بنجاح.', 'success');
+          } catch {
+            notify('تعذر إرسال رابط التأكيد حالياً.', 'error');
+          }
+        }}
         defaultClinicName={settings.identity.clinicAr}
         defaultDoctorName={settings.identity.doctorAr}
         isSyncing={isSyncingCloud}
@@ -1143,8 +1296,55 @@ export default function App() {
         notify={notify}
       />
 
+      {/* ==================== EMAIL & PASSWORD AUTH MODAL ==================== */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onSuccess={() => {
+          setIsAuthModalOpen(false);
+          notify('تم تسجيل الدخول بالبريد الإلكتروني بنجاح', 'success');
+        }}
+        notify={notify}
+      />
+
+      {/* ==================== MULTI-USER WORKSPACE TEAM & ROLES MODAL ==================== */}
+      <WorkspaceTeamModal
+        isOpen={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
+        workspaceId={activeWorkspaceId}
+        ownerUid={activeClinicOwnerUid || currentUser?.uid || 'local_owner'}
+        currentRole={currentRole}
+        notify={notify}
+      />
+
       {/* ==================== MAIN PAGE VIEWPORT ==================== */}
       <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 pb-24 md:pb-6">
+        {emailVerificationNotice && currentUser && !currentUser.emailVerified && (
+          <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 no-print shadow-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-amber-500 font-bold">⚠️</span>
+              <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                بريدك الإلكتروني غير مؤكد بعد. يرجى تأكيد البريد الإلكتروني لتأمين مساحة العمل.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await resendVerificationEmail();
+                  notify('تم إرسال رابط التأكيد إلى بريدك بنجاح', 'success');
+                } catch {
+                  notify('تعذر إرسال الرابط حالياً.', 'error');
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black transition-colors shrink-0"
+            >
+              إعادة إرسال الرابط
+            </button>
+          </div>
+        )}
+
         {!isCloudConnected && (
           <div className="mb-4 rounded-2xl border border-sky-500/35 bg-sky-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 no-print">
             <div className="flex items-center gap-2 min-w-0">
@@ -1236,63 +1436,95 @@ export default function App() {
         )}
 
         {activeSection === 'finance' && (
-          <FinanceDashboard
-            receipts={receipts}
-            expenses={expenses}
-            inventory={inventory}
-            defaultCurrency={settings.identity.defaultCurrency}
-            onAddExpense={(title, amount, category, currency) => {
-              const newExp = validateAndNormalizeExpense({
-                id: 'exp_' + Date.now(),
-                title,
-                amount,
-                category,
-                currency,
-                date: new Date().toISOString().slice(0, 10),
-              });
-              const nextExpensesList = [newExp, ...expenses];
-              setExpenses(nextExpensesList);
-              if (currentUser) {
-                ensureClinicDocumentInCloud(currentUser.uid, settings)
-                  .then(() => saveExpenseToCloud(currentUser.uid, newExp))
-                  .then(() => notify('تم إضافة المصروف ومزامنته سحابياً', 'success'))
-                  .catch(() =>
-                    notify('تم إضافة المصروف محلياً فقط — تعذر المزامنة السحابية', 'warning')
-                  );
-              } else {
-                notify('تم إضافة المصروف', 'success');
-              }
-            }}
-            onDeleteExpense={(id) => {
-              const nextExpensesList = expenses.filter((e) => e.id !== id);
-              setExpenses(nextExpensesList);
-              if (currentUser) {
-                deleteExpenseFromCloud(currentUser.uid, id)
-                  .then(() => notify('تم حذف المصروف ومزامنة الحذف سحابياً', 'info'))
-                  .catch(() =>
-                    notify('تم حذف المصروف محلياً — تعذر المزامنة السحابية', 'warning')
-                  );
-              } else {
-                notify('تم حذف المصروف', 'info');
-              }
-            }}
-            notify={notify}
-          />
+          currentPermissions.canViewFinances || currentRole === 'owner' ? (
+            <FinanceDashboard
+              receipts={receipts}
+              expenses={expenses}
+              inventory={inventory}
+              defaultCurrency={settings.identity.defaultCurrency}
+              onAddExpense={(title, amount, category, currency) => {
+                if (!currentPermissions.canManageExpenses && currentRole !== 'owner') {
+                  notify('غير مصرح لك بإضافة مصروفات مالية.', 'error');
+                  return;
+                }
+                const newExp = validateAndNormalizeExpense({
+                  id: 'exp_' + Date.now(),
+                  title,
+                  amount,
+                  category,
+                  currency,
+                  date: new Date().toISOString().slice(0, 10),
+                });
+                const nextExpensesList = [newExp, ...expenses];
+                setExpenses(nextExpensesList);
+                const targetClinicUid = activeOwnerUid || currentUser?.uid;
+                if (targetClinicUid) {
+                  ensureClinicDocumentInCloud(targetClinicUid, settings)
+                    .then(() => saveExpenseToCloud(targetClinicUid, newExp))
+                    .then(() => notify('تم إضافة المصروف ومزامنته سحابياً', 'success'))
+                    .catch(() =>
+                      notify('تم إضافة المصروف محلياً فقط — تعذر المزامنة السحابية', 'warning')
+                    );
+                } else {
+                  notify('تم إضافة المصروف', 'success');
+                }
+              }}
+              onDeleteExpense={(id) => {
+                if (!currentPermissions.canManageExpenses && currentRole !== 'owner') {
+                  notify('غير مصرح لك بحذف المصروفات المالية.', 'error');
+                  return;
+                }
+                const nextExpensesList = expenses.filter((e) => e.id !== id);
+                setExpenses(nextExpensesList);
+                const targetClinicUid = activeOwnerUid || currentUser?.uid;
+                if (targetClinicUid) {
+                  deleteExpenseFromCloud(targetClinicUid, id)
+                    .then(() => notify('تم حذف المصروف ومزامنة الحذف سحابياً', 'info'))
+                    .catch(() =>
+                      notify('تم حذف المصروف محلياً — تعذر المزامنة السحابية', 'warning')
+                    );
+                } else {
+                  notify('تم حذف المصروف', 'info');
+                }
+              }}
+              notify={notify}
+            />
+          ) : (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-center space-y-2">
+              <div className="text-sm font-black text-amber-900 dark:text-amber-200">
+                صلاحية مقيدة: لوحة التقارير المالية
+              </div>
+              <div className="text-xs text-slate-600 dark:text-slate-400">
+                حسابك الحالي لا يمتلك صلاحية الاطلاع على التقارير المالية للعيادة.
+              </div>
+            </div>
+          )
         )}
 
         {activeSection === 'assistant' && (
-          <GeminiAssistant
-            settings={settings}
-            receipts={receipts}
-            inventory={inventory}
-            expenses={expenses}
-            messages={chatMessages}
-            onAddMessage={(msg) => setChatMessages((prev) => [...prev, msg])}
-            onClearMessages={() => setChatMessages([])}
-            onExitFullScreen={() => navigateToSection('receipt')}
-            onOpenMenu={() => setIsDrawerOpen(true)}
-            notify={notify}
-          />
+          currentPermissions.canUseAiAssistant || currentRole === 'owner' ? (
+            <GeminiAssistant
+              settings={settings}
+              receipts={receipts}
+              inventory={inventory}
+              expenses={expenses}
+              messages={chatMessages}
+              onAddMessage={(msg) => setChatMessages((prev) => [...prev, msg])}
+              onClearMessages={() => setChatMessages([])}
+              onExitFullScreen={() => navigateToSection('receipt')}
+              onOpenMenu={() => setIsDrawerOpen(true)}
+              notify={notify}
+            />
+          ) : (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-center space-y-2">
+              <div className="text-sm font-black text-amber-900 dark:text-amber-200">
+                صلاحية مقيدة: المساعد الذكي
+              </div>
+              <div className="text-xs text-slate-600 dark:text-slate-400">
+                حسابك الحالي لا يمتلك صلاحية استخدام المساعد الذكي.
+              </div>
+            </div>
+          )
         )}
 
         {activeSection === 'settings' && (
@@ -1301,20 +1533,31 @@ export default function App() {
             receipts={receipts}
             inventory={inventory}
             expenses={expenses}
+            onOpenTeamModal={() => setIsTeamModalOpen(true)}
             onDeleteService={(serviceId) => {
-              if (currentUser) {
-                deleteServiceFromCloud(currentUser.uid, serviceId).catch(() => {});
+              if (!currentPermissions.canManageSettings && currentRole !== 'owner') {
+                notify('غير مصرح لك بحذف خدمات العيادة (خاص بالمالك).', 'error');
+                return;
+              }
+              const targetClinicUid = activeOwnerUid || currentUser?.uid;
+              if (targetClinicUid) {
+                deleteServiceFromCloud(targetClinicUid, serviceId).catch(() => {});
               }
             }}
             onSaveSettings={(next) => {
+              if (!currentPermissions.canManageSettings && currentRole !== 'owner') {
+                notify('غير مصرح لك بتعديل إعدادات وهوية العيادة (خاص بالمالك).', 'error');
+                return;
+              }
               setSettings(next);
-              if (currentUser) {
+              const targetClinicUid = activeOwnerUid || currentUser?.uid;
+              if (targetClinicUid) {
                 Promise.all([
-                  saveClinicSettingsToCloud(currentUser.uid, next),
-                  ...next.services.map((srv) => saveServiceToCloud(currentUser.uid, srv)),
+                  saveClinicSettingsToCloud(targetClinicUid, next),
+                  ...next.services.map((srv) => saveServiceToCloud(targetClinicUid, srv)),
                 ])
                   .then(() => {
-                    notify('تم حفظ الإعدادات ومزامنتها', 'success');
+                    notify('تم حفظ الإعدادات ومزامنتها سحابياً', 'success');
                   })
                   .catch(() => {
                     notify('تم حفظ الإعدادات محلياً فقط — تعذر المزامنة السحابية', 'warning');
@@ -1324,6 +1567,10 @@ export default function App() {
               }
             }}
             onImportFullBackup={(payload) => {
+              if (!currentPermissions.canManageSettings && currentRole !== 'owner') {
+                notify('خاصية استعادة النسخ الاحتياطية مقصورة على مالك العيادة.', 'error');
+                return;
+              }
               const nextSettings = payload.settings || settings;
               const nextReceipts = Array.isArray(payload.receipts)
                 ? payload.receipts.map(validateAndNormalizeReceipt)
@@ -1340,9 +1587,10 @@ export default function App() {
               if (Array.isArray(payload.inventory)) setInventory(nextInventory);
               if (Array.isArray(payload.expenses)) setExpenses(nextExpenses);
 
-              if (currentUser) {
+              const targetUid = activeOwnerUid || currentUser?.uid;
+              if (targetUid) {
                 syncLocalDataToCloud(
-                  currentUser.uid,
+                  targetUid,
                   nextSettings,
                   nextReceipts,
                   nextInventory,

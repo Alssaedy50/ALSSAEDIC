@@ -9,6 +9,7 @@ import {
   Save,
   Trash2,
   Upload,
+  Users,
 } from 'lucide-react';
 import {
   ClinicSettings,
@@ -33,6 +34,7 @@ interface ClinicSettingsPanelProps {
     inventory?: InventoryItem[];
     expenses?: ExpenseRecord[];
   }) => void;
+  onOpenTeamModal?: () => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
@@ -44,6 +46,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   onDeleteService,
   onSaveSettings,
   onImportFullBackup,
+  onOpenTeamModal,
   notify,
 }) => {
   const [subTab, setSubTab] = useState<'identity' | 'services' | 'backup'>('identity');
@@ -230,6 +233,32 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
+      {onOpenTeamModal && (
+        <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 to-sky-500/10 p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600/15 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-slate-900 dark:text-slate-100">
+                فريق العمل والصلاحيات (Workspaces & Team)
+              </div>
+              <div className="text-xs text-slate-600 dark:text-slate-400">
+                إضافة أطباء ومحاسبين واستقبال، وتحديد الصلاحيات التفصيلية لكل عضو.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenTeamModal}
+            className="py-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black flex items-center gap-1.5 transition-colors shrink-0 shadow-xs"
+          >
+            <Users className="w-4 h-4" />
+            <span>إدارة فريق العمل</span>
+          </button>
+        </div>
+      )}
+
       {/* Top 3-Tab Segmented Switcher (هوية العيادة | قائمة الخدمات | النسخ الاحتياطي) */}
       <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
         <button

@@ -484,6 +484,36 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "WorkspaceMember": {
+      "title": "WorkspaceMember",
+      "description": "Team member record within a clinic workspace with role and granular permissions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["owner", "doctor", "accountant", "receptionist", "viewer"] },
+        "permissions": { "type": "object" },
+        "addedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "invited"] },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "permissions", "addedBy", "status", "joinedAt", "updatedAt"]
+    },
+    "UserWorkspaceIndex": {
+      "title": "UserWorkspaceIndex",
+      "description": "Fast lookup index mapping member email to assigned clinic workspace and role.",
+      "type": "object",
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["owner", "doctor", "accountant", "receptionist", "viewer"] },
+        "permissions": { "type": "object" },
+        "addedBy": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["workspaceId", "email", "role", "permissions", "addedBy", "updatedAt"]
     }
   },
   "firestore": {
@@ -510,6 +540,14 @@
     "/clinic_workspaces/{clinicId}": {
       "schema": { "$ref": "#/entities/ClinicWorkspace" },
       "description": "Authenticated clinic workspace metadata bound to ownerId."
+    },
+    "/clinic_workspaces/{clinicId}/members/{memberKey}": {
+      "schema": { "$ref": "#/entities/WorkspaceMember" },
+      "description": "Team members belonging to a clinic workspace."
+    },
+    "/user_workspaces/{memberKey}": {
+      "schema": { "$ref": "#/entities/UserWorkspaceIndex" },
+      "description": "User email mapping to workspace."
     }
   }
 }

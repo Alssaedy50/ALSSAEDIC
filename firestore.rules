@@ -12,11 +12,34 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Strict email verification enforcement: email must be verified, or sign-in provider is anonymous
+    function isStrictlyVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'anonymous'
+      );
+    }
+
     function isVerifiedUser() {
       return isSignedIn() && (
         request.auth.token.email_verified == true ||
         request.auth.token.firebase.sign_in_provider == 'password' ||
         request.auth.token.firebase.sign_in_provider == 'anonymous'
+      );
+    }
+
+    function isClinicOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    function isClinicMember(ownerId) {
+      return isSignedIn() && (
+        request.auth.uid == ownerId ||
+        (
+          request.auth.token.email != null &&
+          exists(/databases/$(database)/documents/user_workspaces/$(request.auth.token.email)) &&
+          get(/databases/$(database)/documents/user_workspaces/$(request.auth.token.email)).data.addedBy == ownerId
+        )
       );
     }
 
@@ -100,7 +123,6 @@ service cloud.firestore {
       return data.keys().hasAll(['ownerId', 'name', 'price', 'category', 'keywords', 'createdAt', 'updatedAt']) &&
       data.keys().hasOnly(['ownerId', 'name', 'price', 'category', 'keywords', 'createdAt', 'updatedAt']) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.ownerId == request.auth.uid &&
       data.name is string && data.name.size() >= 1 && data.name.size() <= 140 &&
       data.price is number && data.price >= 0 && data.price <= 100000000 &&
       data.category is string && data.category.size() >= 1 && data.category.size() <= 100 &&
@@ -154,7 +176,6 @@ service cloud.firestore {
         'updatedAt'
       ]) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.ownerId == request.auth.uid &&
       data.receiptNo is number && data.receiptNo >= 1 && data.receiptNo <= 99999999 &&
       data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
       data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 160 &&
@@ -207,7 +228,6 @@ service cloud.firestore {
         'updatedAt'
       ]) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.ownerId == request.auth.uid &&
       data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
       data.category is string && data.category.size() <= 160 &&
       data.qty is number && data.qty >= 0 && data.qty <= 1000000 &&
@@ -242,7 +262,6 @@ service cloud.firestore {
         'updatedAt'
       ]) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.ownerId == request.auth.uid &&
       data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
       data.amount is number && data.amount >= 0 && data.amount <= 1000000000 &&
       data.category is string && data.category.size() >= 1 && data.category.size() <= 100 &&
@@ -288,15 +307,15 @@ service cloud.firestore {
 
     // 1. Clinics Collection (/clinics/{clinicId})
     match /clinics/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && clinicId == request.auth.uid && (resource == null || existing().ownerId == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow get: if isSignedIn() && isValidId(clinicId) && (clinicId == request.auth.uid || isClinicMember(clinicId));
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
+      allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         clinicId == request.auth.uid &&
         isValidClinic(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() &&
+      allow update: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         clinicId == request.auth.uid &&
         isValidClinic(incoming()) &&
@@ -323,47 +342,48 @@ service cloud.firestore {
             'updatedAt'
           ])
         );
-      allow delete: if isVerifiedUser() && isValidId(clinicId) && clinicId == request.auth.uid && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(clinicId) && clinicId == request.auth.uid && existing().ownerId == request.auth.uid;
     }
 
     // 2. Dental Services Collection (/services/{serviceId})
     match /services/{serviceId} {
-      allow get: if isSignedIn() && isValidId(serviceId) && (resource == null || existing().ownerId == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow get: if isSignedIn() && isValidId(serviceId) && (resource == null || isClinicMember(existing().ownerId));
+      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow create: if isStrictlyVerified() &&
         isValidId(serviceId) &&
         isValidDentalService(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        isClinicOwner(incoming().ownerId) &&
         hasClinicParent(incoming().ownerId);
-      allow update: if isVerifiedUser() &&
+      allow update: if isStrictlyVerified() &&
         isValidId(serviceId) &&
         isValidDentalService(incoming()) &&
-        existing().ownerId == request.auth.uid &&
+        isClinicOwner(existing().ownerId) &&
         incoming().ownerId == existing().ownerId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         hasClinicParent(existing().ownerId) && (
-          // Action: Update Service Name, Price, Category, or Keywords
           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'category', 'keywords', 'updatedAt'])
         );
-      allow delete: if isVerifiedUser() && isValidId(serviceId) && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(serviceId) && isClinicOwner(existing().ownerId);
     }
 
     // 3. Receipts Collection (/receipts/{receiptId})
     match /receipts/{receiptId} {
-      allow get: if isSignedIn() && isValidId(receiptId) && (resource == null || existing().ownerId == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow get: if isSignedIn() && isValidId(receiptId) && (resource == null || isClinicMember(existing().ownerId));
+      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow create: if isStrictlyVerified() &&
         isValidId(receiptId) &&
         isValidReceipt(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        isClinicMember(incoming().ownerId) &&
         hasClinicParent(incoming().ownerId);
-      allow update: if isVerifiedUser() &&
+      allow update: if isStrictlyVerified() &&
         isValidId(receiptId) &&
         isValidReceipt(incoming()) &&
-        existing().ownerId == request.auth.uid &&
+        isClinicMember(existing().ownerId) &&
         incoming().ownerId == existing().ownerId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
@@ -391,30 +411,29 @@ service cloud.firestore {
             'updatedAt'
           ])
         );
-      allow delete: if isVerifiedUser() && isValidId(receiptId) && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(receiptId) && isClinicOwner(existing().ownerId);
     }
 
     // 4. Inventory Collection (/inventory/{itemId})
     match /inventory/{itemId} {
-      allow get: if isSignedIn() && isValidId(itemId) && (resource == null || existing().ownerId == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow get: if isSignedIn() && isValidId(itemId) && (resource == null || isClinicMember(existing().ownerId));
+      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow create: if isStrictlyVerified() &&
         isValidId(itemId) &&
         isValidInventoryItem(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        isClinicMember(incoming().ownerId) &&
         hasClinicParent(incoming().ownerId);
-      allow update: if isVerifiedUser() &&
+      allow update: if isStrictlyVerified() &&
         isValidId(itemId) &&
         isValidInventoryItem(incoming()) &&
-        existing().ownerId == request.auth.uid &&
+        isClinicMember(existing().ownerId) &&
         incoming().ownerId == existing().ownerId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         hasClinicParent(existing().ownerId) && (
-          // Action 1: Stock Quantity Adjustment
           incoming().diff(existing()).affectedKeys().hasOnly(['qty', 'totalCost', 'updatedAt']) ||
-          // Action 2: Full Item Edit
           incoming().diff(existing()).affectedKeys().hasOnly([
             'name',
             'category',
@@ -427,45 +446,45 @@ service cloud.firestore {
             'updatedAt'
           ])
         );
-      allow delete: if isVerifiedUser() && isValidId(itemId) && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(itemId) && isClinicOwner(existing().ownerId);
     }
 
     // 5. Expenses Collection (/expenses/{expenseId})
     match /expenses/{expenseId} {
-      allow get: if isSignedIn() && isValidId(expenseId) && (resource == null || existing().ownerId == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow get: if isSignedIn() && isValidId(expenseId) && (resource == null || isClinicMember(existing().ownerId));
+      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow create: if isStrictlyVerified() &&
         isValidId(expenseId) &&
         isValidExpense(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        isClinicMember(incoming().ownerId) &&
         hasClinicParent(incoming().ownerId);
-      allow update: if isVerifiedUser() &&
+      allow update: if isStrictlyVerified() &&
         isValidId(expenseId) &&
         isValidExpense(incoming()) &&
-        existing().ownerId == request.auth.uid &&
+        isClinicMember(existing().ownerId) &&
         incoming().ownerId == existing().ownerId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         hasClinicParent(existing().ownerId) && (
-          // Action: Edit Expense Details
           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'amount', 'category', 'currency', 'date', 'updatedAt'])
         );
-      allow delete: if isVerifiedUser() && isValidId(expenseId) && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(expenseId) && isClinicOwner(existing().ownerId);
     }
 
     // 6. Authenticated Clinic Workspaces (/clinic_workspaces/{clinicId})
     match /clinic_workspaces/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || existing().ownerId == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || existing().ownerId == request.auth.uid || isClinicMember(existing().ownerId));
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
+      allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         incoming().clinicId == clinicId &&
         isValidClinicWorkspace(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         hasClinicParent(incoming().ownerId);
-      allow update: if isVerifiedUser() &&
+      allow update: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         incoming().clinicId == clinicId &&
         isValidClinicWorkspace(incoming()) &&
@@ -475,7 +494,6 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         hasClinicParent(existing().ownerId) && (
-          // Action: Update Workspace Metadata & Settings
           incoming().diff(existing()).affectedKeys().hasOnly([
             'settings',
             'receiptCount',
@@ -484,7 +502,29 @@ service cloud.firestore {
             'updatedAt'
           ])
         );
-      allow delete: if isVerifiedUser() && isValidId(clinicId) && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(clinicId) && existing().ownerId == request.auth.uid;
+
+      // 6.1 Workspace Members Subcollection
+      match /members/{memberKey} {
+        allow get, list: if isSignedIn();
+        allow create, update, delete: if isStrictlyVerified() && (
+          get(/databases/$(database)/documents/clinic_workspaces/$(clinicId)).data.ownerId == request.auth.uid ||
+          request.auth.uid == clinicId
+        );
+      }
+    }
+
+    // 7. Fast User-to-Workspace Lookup Index (/user_workspaces/{memberKey})
+    match /user_workspaces/{memberKey} {
+      allow get: if isSignedIn() && (
+        request.auth.token.email == memberKey ||
+        (resource != null && resource.data.addedBy == request.auth.uid)
+      );
+      allow list: if isSignedIn() && resource.data.addedBy == request.auth.uid;
+      allow create, update, delete: if isStrictlyVerified() && (
+        incoming().addedBy == request.auth.uid ||
+        (resource != null && existing().addedBy == request.auth.uid)
+      );
     }
   }
 }

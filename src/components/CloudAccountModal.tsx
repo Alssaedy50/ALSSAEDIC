@@ -11,8 +11,11 @@ import {
   RefreshCw,
   ShieldCheck,
   UserPlus,
+  Users,
+  Mail,
 } from 'lucide-react';
 import { User } from '../firebase';
+import { WorkspaceRole } from '../types/clinic';
 import { PWAInstallButton } from './PWAInstallButton';
 
 export interface DirectClinicSession {
@@ -35,6 +38,11 @@ interface CloudAccountModalProps {
   isFirstOpenGate?: boolean;
   user: User | null;
   directSession: DirectClinicSession | null;
+  currentRole?: WorkspaceRole;
+  canManageTeam?: boolean;
+  onOpenTeamModal?: () => void;
+  onOpenEmailAuth?: () => void;
+  onResendVerification?: () => Promise<void>;
   defaultClinicName?: string;
   defaultDoctorName?: string;
   isSyncing: boolean;
@@ -58,6 +66,11 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   isFirstOpenGate = false,
   user,
   directSession,
+  currentRole = 'owner',
+  canManageTeam = true,
+  onOpenTeamModal,
+  onOpenEmailAuth,
+  onResendVerification,
   defaultClinicName = 'عيادة السعيدي لطب وجراحة الفم والأسنان',
   defaultDoctorName = 'د. صلاح الدين السعيدي',
   isSyncing,
@@ -188,7 +201,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {isConnected ? (
             <div className="space-y-3">
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 space-y-1.5">
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0" />
@@ -196,8 +209,16 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                       الحساب السحابي نشط
                     </span>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold shrink-0">
-                    متصل
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-black shrink-0">
+                    {currentRole === 'owner'
+                      ? 'مالك العيادة'
+                      : currentRole === 'doctor'
+                        ? 'طبيب'
+                        : currentRole === 'accountant'
+                          ? 'محاسب'
+                          : currentRole === 'receptionist'
+                            ? 'استقبال'
+                            : 'مشاهد'}
                   </span>
                 </div>
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 flex-wrap">
@@ -214,6 +235,24 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     </span>
                   )}
                 </div>
+
+                {user && !user.emailVerified && (
+                  <div className="mt-2 pt-2 border-t border-amber-500/30 text-amber-800 dark:text-amber-300 text-[11px] font-bold space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                      <span>البريد الإلكتروني غير مؤكد بعد.</span>
+                    </div>
+                    {onResendVerification && (
+                      <button
+                        type="button"
+                        onClick={onResendVerification}
+                        className="text-[10px] underline text-sky-600 dark:text-sky-400 hover:text-sky-500"
+                      >
+                        إعادة إرسال رابط التحقق إلى البريد
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -236,6 +275,20 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {canManageTeam && onOpenTeamModal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenTeamModal();
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-black flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Users className="w-4 h-4 shrink-0 text-indigo-500" />
+                  <span>فريق العمل والصلاحيات (مساحة العمل)</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -405,6 +458,20 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
                   <span>الدخول عبر Google</span>
                 </button>
+
+                {onOpenEmailAuth && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenEmailAuth();
+                    }}
+                    className="w-full py-2.5 px-3 rounded-xl border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 text-xs font-black flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <Mail className="w-4 h-4 text-sky-500 shrink-0" />
+                    <span>التسجيل / الدخول بالبريد واستعادة كلمة المرور</span>
+                  </button>
+                )}
 
                 {isFirstOpenGate && (
                   <button

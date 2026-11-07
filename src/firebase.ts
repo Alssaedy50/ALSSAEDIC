@@ -5,6 +5,8 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -31,6 +33,10 @@ import {
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
+  WorkspaceRole,
+  WorkspacePermissions,
+  WorkspaceMember,
+  DEFAULT_ROLE_PERMISSIONS,
 } from './types/clinic';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 
@@ -323,11 +329,46 @@ export async function signInWithGoogleAccount(): Promise<User> {
   return result.user;
 }
 
+export async function registerWithEmailAndPassword(
+  email: string,
+  pass: string
+): Promise<{ user: User; verificationSent: boolean }> {
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+  let verificationSent = false;
+  try {
+    await sendEmailVerification(cred.user);
+    verificationSent = true;
+  } catch (e) {
+    console.warn('Could not send email verification immediately:', e);
+  }
+  return { user: cred.user, verificationSent };
+}
+
+export async function loginWithEmailAndPassword(
+  email: string,
+  pass: string
+): Promise<User> {
+  const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+  return cred.user;
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
+}
+
+export async function resendVerificationEmail(): Promise<void> {
+  if (auth.currentUser) {
+    await sendEmailVerification(auth.currentUser);
+  } else {
+    throw new Error('لا يوجد مستخدم مسجل لإرسال رابط التحقق إليه.');
+  }
+}
+
 export async function signOutAccount(): Promise<void> {
   await signOut(auth);
 }
 
-export { onAuthStateChanged };
+export { onAuthStateChanged, sendEmailVerification, sendPasswordResetEmail };
 export type { User };
 
 // Helper to check document existence using ownerId query (allow list)
@@ -342,6 +383,13 @@ async function checkDocExistsByOwner(
   return snap.docs.some((d) => d.id === targetDocId);
 }
 
+// Helper to determine if the active session is authorized to read/write for target clinic
+export function isCurrentSessionAuthorizedForClinic(targetOwnerUid: string): boolean {
+  if (!auth.currentUser) return false;
+  if (auth.currentUser.uid === targetOwnerUid) return true;
+  return Boolean(auth.currentUser.email);
+}
+
 // ==================== AUTHORITATIVE CLOUD FIRESTORE OPERATIONS ====================
 
 export async function ensureClinicDocumentInCloud(
@@ -349,7 +397,7 @@ export async function ensureClinicDocumentInCloud(
   settings: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('يجب تسجيل الدخول بحساب العيادة الموثق قبل الكتابة في السحابة.');
   }
   const clinicPath = `clinics/${safeUid}`;
@@ -461,7 +509,7 @@ export async function saveServiceToCloud(
   service: DentalServiceItem
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحفظ خدمات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${service.id}`);
@@ -507,7 +555,7 @@ export async function saveServiceToCloud(
 
 export async function deleteServiceFromCloud(uid: string, serviceId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحذف خدمات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${serviceId}`);
@@ -524,7 +572,7 @@ export async function saveReceiptToCloud(
   receipt: ReceiptRecord
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحفظ سندات لعيادة أخرى.');
   }
   const validated = validateAndNormalizeReceipt(receipt);
@@ -572,7 +620,7 @@ export async function saveReceiptToCloud(
 
 export async function deleteReceiptFromCloud(uid: string, receiptId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحذف سندات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${receiptId}`);
@@ -589,7 +637,7 @@ export async function saveInventoryItemToCloud(
   item: InventoryItem
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بتعديل مخزون عيادة أخرى.');
   }
   const validated = validateAndNormalizeInventoryItem(item);
@@ -629,7 +677,7 @@ export async function saveInventoryItemToCloud(
 
 export async function deleteInventoryItemFromCloud(uid: string, itemId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحذف أصناف مخزون لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${itemId}`);
@@ -646,7 +694,7 @@ export async function saveExpenseToCloud(
   expense: ExpenseRecord
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحفظ مصروفات لعيادة أخرى.');
   }
   const validated = validateAndNormalizeExpense(expense);
@@ -683,7 +731,7 @@ export async function saveExpenseToCloud(
 
 export async function deleteExpenseFromCloud(uid: string, expenseId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
-  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+  if (!isCurrentSessionAuthorizedForClinic(safeUid)) {
     throw new Error('غير مصرح بحذف مصروفات لعيادة أخرى.');
   }
   const docId = sanitizeId(`${safeUid}_${expenseId}`);
@@ -1394,4 +1442,179 @@ export async function pushDirectWorkspaceToCloud(
 
   return new Date().toISOString();
 }
+
+// ==================== WORKSPACE TEAM & MEMBERSHIP (MULTI-USER RBAC) ====================
+
+export function normalizeEmailKey(email: string): string {
+  return String(email || '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 128);
+}
+
+export async function addWorkspaceMemberInCloud(
+  workspaceId: string,
+  ownerUid: string,
+  memberEmail: string,
+  role: WorkspaceRole,
+  permissions?: WorkspacePermissions
+): Promise<WorkspaceMember> {
+  const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+  const cleanEmail = String(memberEmail || '').trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('يرجى إدخال بريد إلكتروني صالح للعضو الجديد.');
+  }
+
+  const effectivePermissions = permissions || DEFAULT_ROLE_PERMISSIONS[role];
+  const memberKey = normalizeEmailKey(cleanEmail);
+  const nowIso = new Date().toISOString();
+
+  const memberData: WorkspaceMember = {
+    uid: memberKey,
+    email: cleanEmail,
+    role,
+    permissions: effectivePermissions,
+    addedBy: ownerUid,
+    joinedAt: nowIso,
+    status: 'active',
+  };
+
+  const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
+  const indexRef = doc(db, 'user_workspaces', memberKey);
+
+  await withCloudRetry(async () => {
+    // 1. Add to workspace subcollection
+    await setDoc(memberRef, {
+      uid: memberKey,
+      email: cleanEmail,
+      role,
+      permissions: effectivePermissions,
+      addedBy: ownerUid,
+      joinedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      status: 'active',
+    });
+
+    // 2. Add to user's fast workspace lookup index
+    await setDoc(indexRef, {
+      workspaceId: safeWsId,
+      email: cleanEmail,
+      role,
+      permissions: effectivePermissions,
+      addedBy: ownerUid,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  return memberData;
+}
+
+export async function updateWorkspaceMemberRoleInCloud(
+  workspaceId: string,
+  memberEmail: string,
+  newRole: WorkspaceRole,
+  permissions?: WorkspacePermissions
+): Promise<void> {
+  const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+  const cleanEmail = String(memberEmail || '').trim().toLowerCase();
+  const memberKey = normalizeEmailKey(cleanEmail);
+  const effectivePermissions = permissions || DEFAULT_ROLE_PERMISSIONS[newRole];
+
+  const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
+  const indexRef = doc(db, 'user_workspaces', memberKey);
+
+  await withCloudRetry(async () => {
+    await updateDoc(memberRef, {
+      role: newRole,
+      permissions: effectivePermissions,
+      updatedAt: serverTimestamp(),
+    });
+    await updateDoc(indexRef, {
+      role: newRole,
+      permissions: effectivePermissions,
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function removeWorkspaceMemberFromCloud(
+  workspaceId: string,
+  memberEmail: string
+): Promise<void> {
+  const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+  const cleanEmail = String(memberEmail || '').trim().toLowerCase();
+  const memberKey = normalizeEmailKey(cleanEmail);
+
+  const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
+  const indexRef = doc(db, 'user_workspaces', memberKey);
+
+  await withCloudRetry(async () => {
+    await deleteDoc(memberRef);
+    await deleteDoc(indexRef);
+  });
+}
+
+export function subscribeToWorkspaceMembers(
+  workspaceId: string,
+  onMembersUpdate: (members: WorkspaceMember[]) => void
+): () => void {
+  const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+  const membersCol = collection(db, 'clinic_workspaces', safeWsId, 'members');
+
+  return onSnapshot(
+    membersCol,
+    (snap) => {
+      const items: WorkspaceMember[] = snap.docs.map((docSnap) => {
+        const d = docSnap.data();
+        const role = (d.role || 'viewer') as WorkspaceRole;
+        const perms = d.permissions || DEFAULT_ROLE_PERMISSIONS[role];
+        return {
+          uid: docSnap.id,
+          email: String(d.email || ''),
+          displayName: d.displayName ? String(d.displayName) : undefined,
+          role,
+          permissions: perms,
+          addedBy: String(d.addedBy || ''),
+          joinedAt: d.joinedAt?.toDate ? d.joinedAt.toDate().toISOString() : new Date().toISOString(),
+          status: (d.status === 'invited' ? 'invited' : 'active') as 'active' | 'invited',
+        };
+      });
+      onMembersUpdate(items);
+    },
+    (err) => {
+      console.warn('Workspace members listener notice:', err);
+    }
+  );
+}
+
+export async function lookupUserWorkspaceByEmail(
+  email: string
+): Promise<{
+  workspaceId: string;
+  role: WorkspaceRole;
+  permissions: WorkspacePermissions;
+  addedBy: string;
+} | null> {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail) return null;
+  const memberKey = normalizeEmailKey(cleanEmail);
+  const ref = doc(db, 'user_workspaces', memberKey);
+
+  try {
+    const snap = await getDocFromServer(ref);
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    const role = (d.role || 'viewer') as WorkspaceRole;
+    return {
+      workspaceId: String(d.workspaceId || ''),
+      role,
+      permissions: d.permissions || DEFAULT_ROLE_PERMISSIONS[role],
+      addedBy: String(d.addedBy || ''),
+    };
+  } catch (err) {
+    console.warn('User workspace lookup error:', err);
+    return null;
+  }
+}
+
 

@@ -110,5 +110,112 @@ export interface CurrencyFinancialSummary {
   debtorsCount: number;
 }
 
+// ==================== MULTI-USER WORKSPACE & RBAC TYPES ====================
+export type WorkspaceRole = 'owner' | 'doctor' | 'accountant' | 'receptionist' | 'viewer';
+
+export interface WorkspacePermissions {
+  canCreateReceipt: boolean;
+  canEditReceipt: boolean;
+  canDeleteReceipt: boolean;
+  canSettleDebt: boolean;
+  canManageInventory: boolean;
+  canConsumeInventory: boolean;
+  canManageExpenses: boolean;
+  canViewFinances: boolean;
+  canManageSettings: boolean;
+  canManageTeam: boolean;
+  canUseAiAssistant: boolean;
+}
+
+export const DEFAULT_ROLE_PERMISSIONS: Record<WorkspaceRole, WorkspacePermissions> = {
+  owner: {
+    canCreateReceipt: true,
+    canEditReceipt: true,
+    canDeleteReceipt: true,
+    canSettleDebt: true,
+    canManageInventory: true,
+    canConsumeInventory: true,
+    canManageExpenses: true,
+    canViewFinances: true,
+    canManageSettings: true,
+    canManageTeam: true,
+    canUseAiAssistant: true,
+  },
+  doctor: {
+    canCreateReceipt: true,
+    canEditReceipt: true,
+    canDeleteReceipt: false,
+    canSettleDebt: true,
+    canManageInventory: false,
+    canConsumeInventory: true,
+    canManageExpenses: false,
+    canViewFinances: false,
+    canManageSettings: false,
+    canManageTeam: false,
+    canUseAiAssistant: true,
+  },
+  accountant: {
+    canCreateReceipt: true,
+    canEditReceipt: true,
+    canDeleteReceipt: false,
+    canSettleDebt: true,
+    canManageInventory: true,
+    canConsumeInventory: false,
+    canManageExpenses: true,
+    canViewFinances: true,
+    canManageSettings: false,
+    canManageTeam: false,
+    canUseAiAssistant: true,
+  },
+  receptionist: {
+    canCreateReceipt: true,
+    canEditReceipt: false,
+    canDeleteReceipt: false,
+    canSettleDebt: true,
+    canManageInventory: false,
+    canConsumeInventory: false,
+    canManageExpenses: false,
+    canViewFinances: false,
+    canManageSettings: false,
+    canManageTeam: false,
+    canUseAiAssistant: false,
+  },
+  viewer: {
+    canCreateReceipt: false,
+    canEditReceipt: false,
+    canDeleteReceipt: false,
+    canSettleDebt: false,
+    canManageInventory: false,
+    canConsumeInventory: false,
+    canManageExpenses: false,
+    canViewFinances: false,
+    canManageSettings: false,
+    canManageTeam: false,
+    canUseAiAssistant: false,
+  },
+};
+
+export interface WorkspaceMember {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role: WorkspaceRole;
+  permissions: WorkspacePermissions;
+  addedBy: string;
+  joinedAt: string;
+  status: 'active' | 'invited';
+}
+
+export interface WorkspaceProfile {
+  id: string;
+  ownerId: string;
+  ownerEmail: string;
+  clinicNameAr: string;
+  doctorNameAr: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export default null;
+
 
