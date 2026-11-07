@@ -335,17 +335,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         currencySummaries,
         financialSummary: {
           totalReceipts: receipts.length,
+          totalDebtors: debtors.length,
           byCurrency: currencySummaries,
         },
-        pendingDebtsPatients: debtors.map((r) => ({
-          receiptNo: r.receiptNo,
-          patientName: r.patientName,
-          phone: r.patientPhone,
-          remainingAmount: r.remainingAmount,
-          currency: r.currency,
-          date: r.date,
-        })),
-        recentReceipts: receipts.slice(0, 12).map((r) => ({
+        // Complete datasets (never sliced) so reports are 100% accurate across all history
+        allReceipts: receipts.map((r) => ({
           receiptNo: r.receiptNo,
           date: r.date,
           patientName: r.patientName,
@@ -359,9 +353,35 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           paymentMethod: r.paymentMethod,
           notes: r.notes,
         })),
-        inventoryStatus: inventory,
+        pendingDebtsPatients: debtors.map((r) => ({
+          receiptNo: r.receiptNo,
+          patientName: r.patientName,
+          phone: r.patientPhone,
+          remainingAmount: r.remainingAmount,
+          currency: r.currency,
+          date: r.date,
+        })),
+        allInventory: inventory.map((i) => ({
+          name: i.name,
+          qty: i.qty,
+          minQty: i.minQty,
+          unit: i.unit,
+          unitPrice: i.unitPrice,
+          totalCost: i.totalCost,
+          linkedService: i.linkedService,
+        })),
         lowStockAlerts: lowStock,
-        recentExpenses: expenses.slice(0, 12),
+        allExpenses: expenses.map((e) => ({
+          title: e.title,
+          amount: e.amount,
+          currency: e.currency,
+          category: e.category,
+          date: e.date,
+        })),
+        // Aliases for compatibility
+        recentReceipts: receipts,
+        inventoryStatus: inventory,
+        recentExpenses: expenses,
       };
 
       const assistantResult = await queryClinicAssistantDetailed({

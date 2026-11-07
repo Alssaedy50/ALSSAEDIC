@@ -1961,19 +1961,21 @@ export async function fetchRegisteredSystemDirectory(
 
   const clinics: RegisteredClinicSummary[] = [];
 
-  if (!auth.currentUser) {
+  // STRICT ACCESS CONTROL: Only the developer (alssaedy50@gmail.com) can view the registered clinics registry
+  const isSuperAdmin = Boolean(
+    auth.currentUser?.email &&
+    auth.currentUser.email.toLowerCase() === 'alssaedy50@gmail.com'
+  );
+
+  if (!auth.currentUser || !isSuperAdmin) {
     return {
-      clinics,
+      clinics: [],
       accounts: Array.from(accountMap.values()),
     };
   }
 
-  const isSuperAdmin = auth.currentUser.email?.toLowerCase() === 'alssaedy50@gmail.com';
-
   try {
-    const clinicsQuery = isSuperAdmin
-      ? query(collection(db, 'clinics'))
-      : query(collection(db, 'clinics'), where('ownerId', '==', auth.currentUser.uid));
+    const clinicsQuery = query(collection(db, 'clinics'));
     const clinicsSnap = await getDocs(clinicsQuery);
     clinicsSnap.docs.forEach((docSnap) => {
       const d = docSnap.data();

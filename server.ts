@@ -339,10 +339,17 @@ function getGenAIClientsPool(): GoogleGenAI[] {
   );
 }
 
-function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
+function buildTargetedClinicContext(
+  prompt: string,
+  ctx: Record<string, unknown> | null | undefined,
+  hasAttachment = false,
+  taskType = 'chat'
+): Record<string, unknown> {
   if (!ctx || typeof ctx !== 'object') return {};
+  const p = String(prompt || '').toLowerCase();
   const clone: Record<string, unknown> = {};
 
+  // 1. Basic Clinic Identity (Always Included)
   if (ctx.identity && typeof ctx.identity === 'object') {
     const id = ctx.identity as Record<string, unknown>;
     clone.identity = {
@@ -352,62 +359,153 @@ function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | un
     };
   }
 
-  if (Array.isArray(ctx.currencySummaries)) {
-    clone.currencySummaries = ctx.currencySummaries.slice(0, 4);
+  // 2. Intelligent Intent Classification
+  const asksPatientsOrReceipts =
+    /مرضى|مريض|مريضة|سند|سندات|دين|ديون|مديون|ذمم|متبقي|تحصيل|فاتورة|فواتير|كشف حساب|دفع|سداد|تسديد/i.test(
+      p
+    );
+
+  const asksInventory =
+    taskType === 'inventory_analysis' ||
+    /مخزون|نواقص|جرد|أصناف|اصناف|صنف|مواد|مستلزمات|توريد|تزويد|استهلاك|مستودع|شراء مخزون/i.test(
+      p
+    );
+
+  const asksFinance =
+    taskType === 'financial_report' ||
+    /مالي|مالية|إيراد|ايراد|إيرادات|ايرادات|مصروف|مصاريف|مصروفات|ربح|أرباح|ارباح|صافي|دخل|ميزان|خزينة|صندوق/i.test(
+      p
+    );
+
+  const asksComprehensive =
+    /شامل|تقرير عام|وضع العيادة|ملخص العيادة|كل البيانات|كل التقارير|إحصائيات|احصائيات/i.test(p) ||
+    (!asksPatientsOrReceipts &&
+      !asksInventory &&
+      !asksFinance &&
+      !hasAttachment &&
+      /تقرير|ملخص|العيادة/i.test(p));
+
+  const isPureClinical =
+    hasAttachment ||
+    (!asksPatientsOrReceipts && !asksInventory && !asksFinance && !asksComprehensive);
+
+  // If asking pure clinical/medical/dental protocol or uploading an X-ray image:
+  // Do NOT send receipts, debts, inventory, or expenses! Total privacy and minimal token consumption.
+  if (isPureClinical) {
+    if (Array.isArray(ctx.servicesCatalog)) {
+      clone.servicesCatalog = ctx.servicesCatalog.map((s: Record<string, unknown>) => ({
+        name: s.name,
+        price: s.price,
+      }));
+    }
+    return clone;
   }
 
-  if (Array.isArray(ctx.pendingDebtsPatients)) {
-    clone.pendingDebtsPatients = ctx.pendingDebtsPatients.slice(0, 10);
+  // Domain A: Patients & Receipts & Debts (Full unsliced data fidelity)
+  if (asksPatientsOrReceipts || asksComprehensive) {
+    const rawReceipts = Array.isArray(ctx.allReceipts)
+      ? ctx.allReceipts
+      : Array.isArray(ctx.recentReceipts)
+        ? ctx.recentReceipts
+        : [];
+
+    clone.allReceipts = rawReceipts.map((r: Record<string, unknown>) => ({
+      receiptNo: r.receiptNo,
+      date: r.date,
+      patientName: r.patientName,
+      patientPhone: r.patientPhone || undefined,
+      services: r.services,
+      toothFDI: r.toothFDI || undefined,
+      totalAmount: r.totalAmount,
+      paidAmount: r.paidAmount,
+      remainingAmount: r.remainingAmount,
+      currency: r.currency,
+      paymentMethod: r.paymentMethod,
+      notes: r.notes || undefined,
+    }));
+
+    const rawDebts = Array.isArray(ctx.pendingDebtsPatients)
+      ? ctx.pendingDebtsPatients
+      : rawReceipts
+          .filter((r: Record<string, unknown>) => (Number(r.remainingAmount) || 0) > 0)
+          .map((r: Record<string, unknown>) => ({
+            receiptNo: r.receiptNo,
+            patientName: r.patientName,
+            phone: r.patientPhone,
+            remainingAmount: r.remainingAmount,
+            currency: r.currency,
+            date: r.date,
+          }));
+
+    clone.pendingDebtsPatients = rawDebts;
+    clone.totalReceiptsCount = rawReceipts.length;
+    clone.totalDebtorsCount = rawDebts.length;
   }
 
-  if (Array.isArray(ctx.lowStockAlerts)) {
-    clone.lowStockAlerts = ctx.lowStockAlerts.slice(0, 10).map((i: Record<string, unknown>) => ({
+  // Domain B: Inventory & Medical Supplies (Full unsliced data fidelity)
+  if (asksInventory || asksComprehensive) {
+    const rawInventory = Array.isArray(ctx.allInventory)
+      ? ctx.allInventory
+      : Array.isArray(ctx.inventoryStatus)
+        ? ctx.inventoryStatus
+        : Array.isArray(ctx.inventory)
+          ? ctx.inventory
+          : [];
+
+    clone.inventory = rawInventory.map((i: Record<string, unknown>) => ({
       name: i.name,
       qty: i.qty,
       minQty: i.minQty,
       unit: i.unit,
       unitPrice: i.unitPrice,
+      totalCost: i.totalCost,
+      linkedService: i.linkedService || undefined,
     }));
+
+    const rawLowStock = Array.isArray(ctx.lowStockAlerts)
+      ? ctx.lowStockAlerts
+      : rawInventory.filter((i: Record<string, unknown>) => Number(i.qty) <= Number(i.minQty));
+
+    clone.lowStockAlerts = rawLowStock;
+    clone.totalInventoryItemsCount = rawInventory.length;
+    clone.lowStockCount = rawLowStock.length;
   }
 
-  if (Array.isArray(ctx.inventoryStatus)) {
-    clone.inventoryStatus = ctx.inventoryStatus.slice(0, 12).map((i: Record<string, unknown>) => ({
-      name: i.name,
-      qty: i.qty,
-      minQty: i.minQty,
-      unit: i.unit,
-    }));
-  }
+  // Domain C: Finance, Expenses, Revenue, Net Profit (Full unsliced data fidelity)
+  if (asksFinance || asksComprehensive) {
+    if (Array.isArray(ctx.currencySummaries)) {
+      clone.currencySummaries = ctx.currencySummaries;
+    }
 
-  if (Array.isArray(ctx.servicesCatalog)) {
-    clone.servicesCatalog = ctx.servicesCatalog.slice(0, 15).map((s: Record<string, unknown>) => ({
-      name: s.name,
-      price: s.price,
-    }));
-  }
+    const rawExpenses = Array.isArray(ctx.allExpenses)
+      ? ctx.allExpenses
+      : Array.isArray(ctx.recentExpenses)
+        ? ctx.recentExpenses
+        : Array.isArray(ctx.expenses)
+          ? ctx.expenses
+          : [];
 
-  if (Array.isArray(ctx.recentReceipts)) {
-    clone.recentReceipts = ctx.recentReceipts.slice(0, 8).map((r: Record<string, unknown>) => ({
-      receiptNo: r.receiptNo,
-      date: r.date,
-      patientName: r.patientName,
-      patientPhone: r.patientPhone,
-      services: r.services,
-      toothFDI: r.toothFDI,
-      totalAmount: r.totalAmount,
-      paidAmount: r.paidAmount,
-      remainingAmount: r.remainingAmount,
-      currency: r.currency,
-    }));
-  }
-
-  if (Array.isArray(ctx.recentExpenses)) {
-    clone.recentExpenses = ctx.recentExpenses.slice(0, 6).map((e: Record<string, unknown>) => ({
+    clone.allExpenses = rawExpenses.map((e: Record<string, unknown>) => ({
       title: e.title,
       amount: e.amount,
       currency: e.currency,
       category: e.category,
       date: e.date,
+    }));
+
+    if (ctx.financialSummary && typeof ctx.financialSummary === 'object') {
+      clone.financialSummary = ctx.financialSummary;
+    }
+  }
+
+  // Services Catalog if inquiring about dental fees or prices
+  if (
+    Array.isArray(ctx.servicesCatalog) &&
+    (/سعر|أسعار|اسعار|خدمة|خدمات|قائمة/i.test(p) || asksComprehensive)
+  ) {
+    clone.servicesCatalog = ctx.servicesCatalog.map((s: Record<string, unknown>) => ({
+      name: s.name,
+      price: s.price,
     }));
   }
 
@@ -491,7 +589,7 @@ async function generateWithMultiModelLoadBalancer(
           contents: payload.contents as string,
           config: modelConfig,
         }),
-        8_000
+        20_000
       );
       modelCooldownUntil.delete(slotKey);
       return {
@@ -782,7 +880,13 @@ app.post(
         return;
       }
 
-      const cleanContext = sanitizeClinicContextForPrompt(clinicContext);
+      const systemBaselineResult = generateLocalClinicalResponse(cleanPrompt, clinicContext);
+      const cleanContext = buildTargetedClinicContext(
+        cleanPrompt,
+        clinicContext,
+        Boolean(attachment),
+        taskType
+      );
       const identity = (cleanContext.identity || {}) as {
         clinicAr?: string;
         doctorAr?: string;
@@ -790,13 +894,25 @@ app.post(
       const clinicName = identity.clinicAr || 'عيادة طب وجراحة الفم والأسنان';
       const doctorName = identity.doctorAr || 'الطبيب المعالج';
 
-      const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة "${clinicName}" (${doctorName}).
-أجب بلغة عربية احترافية، مختصرة، ومباشرة جداً في نقاط مركزة (من 4 إلى 8 أسطر كحد أقصى دون مقدمات إنشائية طويلة لتوفير وقت الطبيب):
-1. لبيانات العيادة (المرضى، السندات، الديون، المخزون، الإيرادات، والمصروفات): اعتمد حصرياً على الأرقام الحقيقية المرفقة في سياق العيادة أدناه.
-2. للاستشارات الطبية والدوائية السنية: قدم الخلاصة الإكلينيكية والجرعات الدقيقة مباشرة في نقاط واضحة.
-3. لتحليل صور الأشعة أو المرفقات: قدم قراءة تشخيصية أولية مركزة مع تذكير بأن القرار النهائي للفحص السريري.
+      const systemInstruction = `أنت "DOCAI Gemini" — المستشار والمدير التنفيذي الطبي والمالي الذكي المدمج في نظام إدارة "${clinicName}" (${doctorName}).
 
-سياق العيادة (JSON):
+=======================================================
+المبدأ المعماري المعتمد (Hybrid Intelligence Architecture):
+1. دور النظام المدمج (Built-in Deterministic Engine):
+   - النظام المدمج هو المرجع المحاسبي والرياضي القطعي الذي يتولى حساب الأرقام والحقائق بدقة 100% (السندات، مبالغ الديون وأسماء المدينين، كميات النواقص وتكاليفها، الإيرادات والمصروفات وصافي الربح).
+   - "نتيجة النظام المدمج المحسوبة بدقة" المرفقة أدناه هي الأساس والواقع المعتمد قطعياً.
+
+2. دور نموذج الذكاء الاصطناعي السحابي (Your Role as Gemini):
+   - اقرأ نتيجة النظام المدمج واعتمد أرقامها وحقائقها بدقة كأساس للتقرير دون تحريف.
+   - قم بمقارنة النتائج والتحليل الذكي (مثل: نسبة التحصيل، تركز ومخاطر الديون، تأثير نواقص المخزون على الجلسات السريرية، كفاءة الأرباح مقارنة بالمصروفات).
+   - قدّم تقريراً تنفيذياً احترافياً ومباشراً في نقاط مركزة، واختم بـ 3 إلى 4 اقتراحات وتوصيات عملية قابلة للتطبيق فوراً لمساعدة الطبيب/المدير.
+   - للاستشارات الطبية والدوائية: قدم البروتوكول والجرعات السريرية بدقة في نقاط واضحة.
+=======================================================
+
+نتيجة النظام المدمج المحسوبة بدقة (System Computed Baseline):
+${systemBaselineResult}
+
+سياق بيانات العيادة المرتبطة بالطلب (JSON):
 ${JSON.stringify(cleanContext)}`;
 
       const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];

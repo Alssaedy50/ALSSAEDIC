@@ -167,8 +167,10 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
           'أعد تقريراً مالياً تنفيذياً مختصراً لأداء العيادة: حلل الإيرادات، نسبة التحصيل، الديون، المصروفات، وصافي الربح النقدي مع 3 توصيات عملية.',
         clinicContext: {
           currencySummaries,
-          expenses: expenses.slice(0, 20),
+          allExpenses: expenses,
+          expenses,
           totalReceipts: receipts.length,
+          allReceipts: receipts,
           inventoryCount: inventory.length,
         },
       });

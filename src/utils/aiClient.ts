@@ -137,10 +137,13 @@ export function generateLocalClinicalResponse(
       currency?: string;
       date?: string;
     }>;
+    allReceipts?: ReceiptRecord[];
     recentReceipts?: ReceiptRecord[];
+    allInventory?: InventoryItem[];
     inventoryStatus?: InventoryItem[];
     lowStockAlerts?: InventoryItem[];
     inventory?: InventoryItem[];
+    allExpenses?: ExpenseRecord[];
     recentExpenses?: ExpenseRecord[];
     expenses?: ExpenseRecord[];
     currencySummaries?: CurrencyFinancialSummary[];
@@ -152,7 +155,11 @@ export function generateLocalClinicalResponse(
   const doctorName = ctx.identity?.doctorAr || 'الطبيب المعالج';
 
   // 1. البحث عن مريض معين أو سند معين بالاسم أو الهاتف أو رقم السند
-  const recList = Array.isArray(ctx.recentReceipts) ? ctx.recentReceipts : [];
+  const recList = Array.isArray(ctx.allReceipts)
+    ? ctx.allReceipts
+    : Array.isArray(ctx.recentReceipts)
+      ? ctx.recentReceipts
+      : [];
   const matchedReceipts = recList.filter(
     (r) =>
       (r.patientName && r.patientName.trim().length >= 3 && p.includes(r.patientName.trim())) ||
@@ -208,11 +215,13 @@ export function generateLocalClinicalResponse(
     p.includes('اصناف') ||
     p.includes('مستودع')
   ) {
-    const allItems = Array.isArray(ctx.inventoryStatus)
-      ? ctx.inventoryStatus
-      : Array.isArray(ctx.inventory)
-        ? ctx.inventory
-        : [];
+    const allItems = Array.isArray(ctx.allInventory)
+      ? ctx.allInventory
+      : Array.isArray(ctx.inventoryStatus)
+        ? ctx.inventoryStatus
+        : Array.isArray(ctx.inventory)
+          ? ctx.inventory
+          : [];
     const lowList = Array.isArray(ctx.lowStockAlerts)
       ? ctx.lowStockAlerts
       : allItems.filter((i) => Number(i.qty || 0) <= Number(i.minQty || 0));
