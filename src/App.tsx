@@ -345,6 +345,7 @@ export default function App() {
         const isLegacyClinicUser = Boolean(user.email?.endsWith('@clinic.alssaedic.local'));
         if (!user.emailVerified && !isGoogleUser && !isLegacyClinicUser) {
           setActiveWorkspaceOwnerUid(null);
+          setDirectSession(null);
           return;
         }
 
@@ -410,7 +411,7 @@ export default function App() {
     }
   }, [authReady, currentUser, directSession]);
 
-  const activeOwnerUid = activeWorkspaceOwnerUid || (currentUser && (currentUser.emailVerified || currentUser.providerData.some((p) => p.providerId === 'google.com') || currentUser.email?.endsWith('@clinic.alssaedic.local')) ? (activeOwnerUid || currentUser.uid) : null) || directSession?.ownerUid || null;
+  const activeOwnerUid = activeWorkspaceOwnerUid || (currentUser && (currentUser.emailVerified || currentUser.providerData.some((p) => p.providerId === 'google.com') || currentUser.email?.endsWith('@clinic.alssaedic.local')) ? currentUser.uid : null) || directSession?.ownerUid || null;
 
   useEffect(() => {
     if (!authReady || !activeOwnerUid || !currentUser) return;
