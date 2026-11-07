@@ -559,14 +559,42 @@ export interface ActiveCloudDiagnostics {
 }
 
 export function getActiveCloudDiagnostics(
-  overrideOwnerUid?: string | null
+  overrideOwnerUid?: string | null,
+  fallbackOwnerEmail?: string | null
 ): ActiveCloudDiagnostics {
-  const effectiveOwnerUid = overrideOwnerUid || auth.currentUser?.uid || null;
+  const rawUser = auth.currentUser;
+  const effectiveOwnerUid = overrideOwnerUid || rawUser?.uid || null;
+  const providerEmail = rawUser?.providerData?.find((p) => p?.email)?.email || null;
+  const rawAuthEmail = rawUser?.email || providerEmail || null;
+
+  let resolvedEmail: string | null = null;
+  if (rawAuthEmail && !rawAuthEmail.endsWith('@clinic.alssaedic.local')) {
+    resolvedEmail = rawAuthEmail;
+  } else if (fallbackOwnerEmail && fallbackOwnerEmail.includes('@')) {
+    resolvedEmail = fallbackOwnerEmail;
+  } else {
+    try {
+      const cachedEmail =
+        typeof window !== 'undefined' && window.localStorage
+          ? window.localStorage.getItem('docai_owner_email_alssaedy-clinic')
+          : null;
+      if (cachedEmail && cachedEmail.includes('@')) {
+        resolvedEmail = cachedEmail;
+      }
+    } catch {
+      // Ignore storage access error
+    }
+  }
+
+  if (!resolvedEmail && rawUser) {
+    resolvedEmail = DEFAULT_SETTINGS.identity.ownerEmail || 'alssaedy50@gmail.com';
+  }
+
   return {
     projectId: resolvedFirebase.config.projectId || firebaseConfig.projectId,
     databaseId: shouldUseCustomDatabaseId ? resolvedFirebase.databaseId : '(default)',
     isCustomProject: resolvedFirebase.isCustomProject,
-    connectedEmail: auth.currentUser?.email || null,
+    connectedEmail: resolvedEmail,
     ownerUid: effectiveOwnerUid,
     pendingSyncCount: getPendingSyncOperationsCount(effectiveOwnerUid),
   };
@@ -782,11 +810,6 @@ export async function ensureClinicDocumentInCloud(
           wasCreated = true;
           await setDoc(ref, {
             ownerId: safeUid,
-            ownerEmail: sanitizeStr(
-              auth.currentUser?.email || effectiveSettings.identity.ownerEmail || '',
-              160,
-              ''
-            ),
             clinicAr: sanitizeStr(
               effectiveSettings.identity.clinicAr,
               160,
@@ -861,7 +884,6 @@ export async function saveClinicSettingsToCloud(
     await withCloudRetry(async () => {
       const exists = await checkDocExistsFast('clinics', safeUid, safeUid);
       const payload = {
-        ownerEmail: sanitizeStr(auth.currentUser?.email || settings.identity.ownerEmail || '', 160, ''),
         clinicAr: sanitizeStr(
           settings.identity.clinicAr,
           160,
@@ -1197,42 +1219,74 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
   const safeUid = sanitizeId(uid);
   if (!isCurrentSessionAuthorizedForClinic(safeUid)) return;
 
+  const isBrowserOnline =
+    typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+  const isPermanentRuleOrDataError = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+    return (
+      isBrowserOnline &&
+      (msg.includes('permission-denied') ||
+        msg.includes('missing or insufficient permissions') ||
+        msg.includes('invalid-argument'))
+    );
+  };
+
   const state = loadPendingSyncState(safeUid);
   const isOwner = auth.currentUser?.uid === safeUid;
 
   if (isOwner && state.settings) {
     try {
       await saveClinicSettingsToCloud(safeUid, state.settings);
-    } catch {
-      // Keep in queue for next retry
+    } catch (err) {
+      if (isPermanentRuleOrDataError(err)) {
+        const afterState = loadPendingSyncState(safeUid);
+        delete afterState.settings;
+        savePendingSyncState(safeUid, afterState);
+      }
     }
   } else {
     try {
       await ensureClinicDocumentInCloud(safeUid);
     } catch {
-      return;
+      if (!isBrowserOnline) return;
     }
   }
 
   if (isOwner) {
     for (const srv of Object.values(state.upserts.services)) {
-      await saveServiceToCloud(safeUid, srv).catch(() => {});
+      await saveServiceToCloud(safeUid, srv).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingUpsert(safeUid, 'services', srv.id);
+        }
+      });
     }
     for (const srvId of [...state.deletes.services]) {
-      await deleteServiceFromCloud(safeUid, srvId).catch(() => {});
+      await deleteServiceFromCloud(safeUid, srvId).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingDelete(safeUid, 'services', srvId);
+        }
+      });
     }
   }
 
   for (const rec of Object.values(state.upserts.receipts)) {
     if (!SEED_DEMO_IDS.receipts.has(rec.id)) {
-      await saveReceiptToCloud(safeUid, rec).catch(() => {});
+      await saveReceiptToCloud(safeUid, rec).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingUpsert(safeUid, 'receipts', rec.id);
+        }
+      });
     } else {
       clearPendingUpsert(safeUid, 'receipts', rec.id);
     }
   }
   for (const recId of [...state.deletes.receipts]) {
-    if ( isOwner ) {
-      await deleteReceiptFromCloud(safeUid, recId).catch(() => {});
+    if (isOwner) {
+      await deleteReceiptFromCloud(safeUid, recId).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingDelete(safeUid, 'receipts', recId);
+        }
+      });
     } else {
       clearPendingDelete(safeUid, 'receipts', recId);
     }
@@ -1240,14 +1294,22 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
 
   for (const inv of Object.values(state.upserts.inventory)) {
     if (!SEED_DEMO_IDS.inventory.has(inv.id)) {
-      await saveInventoryItemToCloud(safeUid, inv).catch(() => {});
+      await saveInventoryItemToCloud(safeUid, inv).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingUpsert(safeUid, 'inventory', inv.id);
+        }
+      });
     } else {
       clearPendingUpsert(safeUid, 'inventory', inv.id);
     }
   }
   for (const invId of [...state.deletes.inventory]) {
     if (isOwner) {
-      await deleteInventoryItemFromCloud(safeUid, invId).catch(() => {});
+      await deleteInventoryItemFromCloud(safeUid, invId).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingDelete(safeUid, 'inventory', invId);
+        }
+      });
     } else {
       clearPendingDelete(safeUid, 'inventory', invId);
     }
@@ -1255,14 +1317,22 @@ export async function flushPendingSyncQueue(uid: string): Promise<void> {
 
   for (const exp of Object.values(state.upserts.expenses)) {
     if (!SEED_DEMO_IDS.expenses.has(exp.id)) {
-      await saveExpenseToCloud(safeUid, exp).catch(() => {});
+      await saveExpenseToCloud(safeUid, exp).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingUpsert(safeUid, 'expenses', exp.id);
+        }
+      });
     } else {
       clearPendingUpsert(safeUid, 'expenses', exp.id);
     }
   }
   for (const expId of [...state.deletes.expenses]) {
     if (isOwner) {
-      await deleteExpenseFromCloud(safeUid, expId).catch(() => {});
+      await deleteExpenseFromCloud(safeUid, expId).catch((err) => {
+        if (isPermanentRuleOrDataError(err)) {
+          clearPendingDelete(safeUid, 'expenses', expId);
+        }
+      });
     } else {
       clearPendingDelete(safeUid, 'expenses', expId);
     }

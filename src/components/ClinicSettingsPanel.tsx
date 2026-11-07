@@ -29,7 +29,12 @@ import {
   WorkspaceRole,
 } from '../types/clinic';
 import { CURRENCIES, DEFAULT_CLINIC_LOGO_DATA_URI } from '../data/defaultData';
-import { getActiveCloudDiagnostics, sendBackupToTelegramApi } from '../firebase';
+import {
+  auth,
+  flushPendingSyncQueue,
+  getActiveCloudDiagnostics,
+  sendBackupToTelegramApi,
+} from '../firebase';
 import { WorkspaceTeamPanel } from './WorkspaceTeamModal';
 
 interface ClinicSettingsPanelProps {
@@ -95,6 +100,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   // Telegram & Backup state
   const [showBotToken, setShowBotToken] = useState(false);
   const [isSendingTelegram, setIsSendingTelegram] = useState(false);
+  const [isFlushingSync, setIsFlushingSync] = useState(false);
+  const [, setDiagRefreshTick] = useState(0);
   const [lastLocalExportAt, setLastLocalExportAt] = useState<string>(() => {
     try {
       return localStorage.getItem('docai_last_backup_export_v1') || '';
@@ -105,6 +112,39 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    const unsub = auth.onAuthStateChanged(() => {
+      setDiagRefreshTick((t) => t + 1);
+    });
+    const handleOnlineStatus = () => setDiagRefreshTick((t) => t + 1);
+    window.addEventListener('online', handleOnlineStatus);
+    window.addEventListener('offline', handleOnlineStatus);
+    return () => {
+      unsub();
+      window.removeEventListener('online', handleOnlineStatus);
+      window.removeEventListener('offline', handleOnlineStatus);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (subTab !== 'backup') return;
+    const targetUid = ownerUid || auth.currentUser?.uid;
+    if (!targetUid || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+    const diagNow = getActiveCloudDiagnostics(
+      targetUid,
+      ownerEmail || formState.identity.ownerEmail
+    );
+    if (diagNow.pendingSyncCount > 0) {
+      setIsFlushingSync(true);
+      flushPendingSyncQueue(targetUid)
+        .catch(() => {})
+        .finally(() => {
+          setIsFlushingSync(false);
+          setDiagRefreshTick((t) => t + 1);
+        });
+    }
+  }, [subTab, ownerUid, ownerEmail, formState.identity.ownerEmail]);
 
   React.useEffect(() => {
     setFormState(settings);
@@ -463,7 +503,12 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     }
   };
 
-  const cloudDiag = getActiveCloudDiagnostics(ownerUid);
+  const cloudDiag = getActiveCloudDiagnostics(
+    ownerUid,
+    ownerEmail || formState.identity.ownerEmail
+  );
+  const isBrowserOnline =
+    typeof navigator === 'undefined' ? true : navigator.onLine !== false;
   const effectiveLastBackupAt =
     currentTelegramConfig.lastBackupAt || lastLocalExportAt || '';
   const formattedLastBackupAt = effectiveLastBackupAt
@@ -856,12 +901,20 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   تشخيص وأمان البيانات السحابية
                 </h2>
               </div>
-              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                {cloudDiag.pendingSyncCount > 0
+              <span
+                className={`text-xs font-bold ${
+                  !isBrowserOnline && cloudDiag.pendingSyncCount > 0
+                    ? 'text-amber-500'
+                    : 'text-emerald-600 dark:text-emerald-400'
+                }`}
+              >
+                {!isBrowserOnline && cloudDiag.pendingSyncCount > 0
                   ? `يوجد ${cloudDiag.pendingSyncCount} عمليات بانتظار الإنترنت`
-                  : cloudDiag.connectedEmail
-                    ? 'متصل ومؤمّن'
-                    : 'حفظ محلي نشط'}
+                  : isFlushingSync
+                    ? 'جارٍ مزامنة السجلات سحابياً...'
+                    : cloudDiag.connectedEmail
+                      ? 'متصل ومؤمّن'
+                      : 'حفظ محلي نشط'}
               </span>
             </div>
 
@@ -875,7 +928,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   {cloudDiag.connectedEmail ||
                     ownerEmail ||
                     formState.identity.ownerEmail ||
-                    'غير متصل بحساب سحابي'}
+                    'alssaedy50@gmail.com'}
                 </div>
               </div>
 
@@ -892,19 +945,44 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-1">
                 <div className="text-slate-500 font-bold">حالة المزامنة اللحظية</div>
-                <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                  <CheckCircle2
-                    className={`w-3.5 h-3.5 shrink-0 ${
-                      cloudDiag.pendingSyncCount > 0
-                        ? 'text-amber-500'
-                        : 'text-emerald-600 dark:text-emerald-400'
-                    }`}
-                  />
-                  <span>
-                    {cloudDiag.pendingSyncCount > 0
-                      ? `يوجد ${cloudDiag.pendingSyncCount} عمليات بانتظار الإنترنت`
-                      : 'متصل ومؤمّن — جميع السجلات متزامنة'}
-                  </span>
+                <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2
+                      className={`w-3.5 h-3.5 shrink-0 ${
+                        !isBrowserOnline && cloudDiag.pendingSyncCount > 0
+                          ? 'text-amber-500'
+                          : 'text-emerald-600 dark:text-emerald-400'
+                      }`}
+                    />
+                    <span>
+                      {!isBrowserOnline && cloudDiag.pendingSyncCount > 0
+                        ? `يوجد ${cloudDiag.pendingSyncCount} عمليات بانتظار الإنترنت`
+                        : isFlushingSync
+                          ? 'جارٍ المزامنة السحابية الآن...'
+                          : 'متصل ومؤمّن — جميع السجلات متزامنة'}
+                    </span>
+                  </div>
+                  {cloudDiag.pendingSyncCount > 0 && isBrowserOnline && (
+                    <button
+                      type="button"
+                      disabled={isFlushingSync}
+                      onClick={() => {
+                        const targetUid = ownerUid || auth.currentUser?.uid;
+                        if (!targetUid) return;
+                        setIsFlushingSync(true);
+                        flushPendingSyncQueue(targetUid)
+                          .catch(() => {})
+                          .finally(() => {
+                            setIsFlushingSync(false);
+                            setDiagRefreshTick((t) => t + 1);
+                          });
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold shrink-0"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isFlushingSync ? 'animate-spin' : ''}`} />
+                      <span>مزامنة</span>
+                    </button>
+                  )}
                 </div>
               </div>
 

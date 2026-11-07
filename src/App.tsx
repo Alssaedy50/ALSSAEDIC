@@ -222,9 +222,19 @@ export default function App() {
   const [isNewAccountSetup, setIsNewAccountSetup] = useState<boolean>(false);
   const pendingNewAccountRedirectRef = useRef<boolean>(false);
 
-  const [settings, setSettings] = useState<ClinicSettings>(() =>
-    loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
-  );
+  const [settings, setSettings] = useState<ClinicSettings>(() => {
+    const loaded = loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    if (loaded?.identity && !loaded.identity.ownerEmail) {
+      return {
+        ...loaded,
+        identity: {
+          ...loaded.identity,
+          ownerEmail: DEFAULT_SETTINGS.identity.ownerEmail || 'alssaedy50@gmail.com',
+        },
+      };
+    }
+    return loaded;
+  });
   const [receipts, setReceipts] = useState<ReceiptRecord[]>(() => {
     const loaded = loadFromStorage<ReceiptRecord[]>(STORAGE_KEYS.RECEIPTS, DEFAULT_RECEIPTS);
     const cleaned = Array.isArray(loaded)
