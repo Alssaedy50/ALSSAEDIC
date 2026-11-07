@@ -30,6 +30,7 @@ import {
   addWorkspaceMemberInCloud,
   auth,
   fetchRegisteredSystemDirectory,
+  isSuperAdminEmail,
   isValidRealEmail,
   loadLocalWorkspaceMembers,
   removeWorkspaceMemberFromCloud,
@@ -123,7 +124,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   const [registeredClinics, setRegisteredClinics] = useState<RegisteredClinicSummary[]>([]);
   const [totalRegisteredAccountsCount, setTotalRegisteredAccountsCount] = useState<number>(1);
   const [directoryLoading, setDirectoryLoading] = useState<boolean>(false);
-  const [showClinicsList, setShowClinicsList] = useState<boolean>(false);
+  const [showClinicsList, setShowClinicsList] = useState<boolean>(true);
   const [copiedEmail, setCopiedEmail] = useState(false);
 
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => auth.currentUser?.email || null);
@@ -137,10 +138,17 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
   const effectiveIsOwner = isOwner !== undefined ? isOwner : !currentRole || currentRole === 'owner';
 
-  // Authoritative clinic owner email resolution
+  const isRealCurrentUserEmail = Boolean(
+    currentUserEmail &&
+      currentUserEmail.includes('@') &&
+      !currentUserEmail.endsWith('@clinic.alssaedic.local')
+  );
+
+  // Authoritative clinic owner email resolution:
+  // If the signed-in user is the clinic owner with a real Google/email account, show their actual email first
   const effectiveOwnerEmail =
+    (effectiveIsOwner && isRealCurrentUserEmail ? currentUserEmail : null) ||
     (ownerEmail && ownerEmail.includes('@') ? ownerEmail : null) ||
-    (effectiveIsOwner && currentUserEmail && currentUserEmail.includes('@') ? currentUserEmail : null) ||
     localStorage.getItem(`docai_owner_email_${effectiveWsId}`) ||
     (currentUserEmail && currentUserEmail.includes('@') ? currentUserEmail : null) ||
     (effectiveWsId === 'alssaedy-clinic' ? 'alssaedy50@gmail.com' : 'owner@clinic.local');
@@ -157,9 +165,10 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   }, [effectiveOwnerEmail, effectiveWsId]);
 
   const isCurrentUserTheOwner = Boolean(
-    currentUserEmail &&
-    effectiveOwnerEmail &&
-    currentUserEmail.toLowerCase() === effectiveOwnerEmail.toLowerCase()
+    (currentUserEmail &&
+      effectiveOwnerEmail &&
+      currentUserEmail.toLowerCase() === effectiveOwnerEmail.toLowerCase()) ||
+      (effectiveIsOwner && currentUserEmail?.endsWith('@clinic.alssaedic.local'))
   );
 
   const effectiveOwnerDoctorName =
@@ -186,8 +195,8 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   };
 
   const isDeveloperSuperAdmin = Boolean(
-    currentUserEmail &&
-    currentUserEmail.toLowerCase() === 'alssaedy50@gmail.com'
+    isSuperAdminEmail(currentUserEmail) ||
+      (effectiveIsOwner && isSuperAdminEmail(effectiveOwnerEmail))
   );
 
   const refreshSystemDirectory = async () => {
@@ -195,8 +204,22 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     setDirectoryLoading(true);
     try {
       const dir = await fetchRegisteredSystemDirectory(effectiveWsId);
-      setRegisteredClinics(dir.clinics);
-      setTotalRegisteredAccountsCount(Math.max(1, dir.accounts.length));
+      const list =
+        dir.clinics.length > 0
+          ? dir.clinics
+          : [
+              {
+                id: ownerUid || effectiveWsId,
+                clinicAr: effectiveClinicTitle,
+                doctorAr: effectiveOwnerDoctorName,
+                ownerEmail: effectiveOwnerEmail || undefined,
+                phones: '',
+                address: '',
+                updatedAt: new Date().toISOString().slice(0, 10),
+              },
+            ];
+      setRegisteredClinics(list);
+      setTotalRegisteredAccountsCount(Math.max(list.length, dir.accounts.length, 1));
     } catch {
       // ignore
     } finally {
@@ -214,7 +237,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     return () => {
       unsub();
     };
-  }, [effectiveWsId, isDeveloperSuperAdmin]);
+  }, [effectiveWsId, isDeveloperSuperAdmin, currentUserEmail]);
 
   const displayMembers = members && members.length > 0 ? members : cloudMembers;
 
@@ -320,14 +343,14 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Live System Clinics & Accounts Counter Card - DEVELOPER ONLY (alssaedy50@gmail.com) */}
+      {/* Live System Clinics & Accounts Counter Card - DEVELOPER ONLY */}
       {isDeveloperSuperAdmin && (
         <section className="rounded-xl border border-amber-500/30 dark:border-amber-500/20 bg-amber-500/5 dark:bg-amber-950/20 p-3.5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
               <div>
-                <h4 className="text-xs font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <h4 className="text-xs font-black text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
                   <span>إحصائيات العيادات والحسابات المسجلة في النظام</span>
                   <span className="text-[10px] bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-mono font-normal">
                     لوحة المطور فقط
@@ -391,6 +414,11 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                       <div className="text-[11px] font-bold text-slate-500">
                         {c.doctorAr} {c.address ? `— ${c.address}` : ''}
                       </div>
+                      {c.ownerEmail && (
+                        <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400" dir="ltr">
+                          {c.ownerEmail}
+                        </div>
+                      )}
                     </div>
                     <div className="text-[11px] font-mono text-slate-500" dir="ltr">
                       {c.phones || c.updatedAt}

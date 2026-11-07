@@ -31,8 +31,11 @@ service cloud.firestore {
 
     function isSuperAdmin() {
       return isSignedIn() &&
-        request.auth.token.email == 'alssaedy50@gmail.com' &&
-        request.auth.token.email_verified == true;
+        request.auth.token.email_verified == true &&
+        (
+          request.auth.token.email == 'alssaedy50@gmail.com' ||
+          request.auth.token.email == 'alssaedy500@gmail.com'
+        );
     }
 
     function isClinicOwner(ownerId) {

@@ -2376,6 +2376,7 @@ export interface RegisteredClinicSummary {
   id: string;
   clinicAr: string;
   doctorAr: string;
+  ownerEmail?: string;
   phones: string;
   address: string;
   updatedAt: string;
@@ -2386,6 +2387,16 @@ export interface RegisteredAccountSummary {
   displayName?: string;
   role: WorkspaceRole;
   workspaceId: string;
+}
+
+export function isSuperAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  return (
+    clean === 'alssaedy50@gmail.com' ||
+    clean === 'alssaedy500@gmail.com' ||
+    clean === 'alssaedy-clinic@clinic.alssaedic.local'
+  );
 }
 
 export async function fetchRegisteredSystemDirectory(
@@ -2418,13 +2429,8 @@ export async function fetchRegisteredSystemDirectory(
     }
   }
 
-  const clinics: RegisteredClinicSummary[] = [];
-
-  const isSuperAdmin = Boolean(
-    auth.currentUser?.email &&
-      (auth.currentUser.email.toLowerCase() === 'alssaedy50@gmail.com' ||
-        auth.currentUser.email.toLowerCase() === 'alssaedy500@gmail.com')
-  );
+  const clinicsMap = new Map<string, RegisteredClinicSummary>();
+  const isSuperAdmin = isSuperAdminEmail(auth.currentUser?.email);
 
   if (!auth.currentUser || !isSuperAdmin) {
     return {
@@ -2438,10 +2444,20 @@ export async function fetchRegisteredSystemDirectory(
     const clinicsSnap = await getDocs(clinicsQuery);
     clinicsSnap.docs.forEach((docSnap) => {
       const d = docSnap.data();
-      clinics.push({
+      const ownerEmail = String(d.ownerEmail || '').trim().toLowerCase();
+      if (ownerEmail && ownerEmail.includes('@')) {
+        accountMap.set(ownerEmail, {
+          email: ownerEmail,
+          displayName: String(d.doctorAr || d.clinicAr || 'مالك عيادة'),
+          role: 'owner',
+          workspaceId: docSnap.id,
+        });
+      }
+      clinicsMap.set(docSnap.id, {
         id: docSnap.id,
         clinicAr: String(d.clinicAr || 'عيادة مسجلة'),
         doctorAr: String(d.doctorAr || ''),
+        ownerEmail: ownerEmail || undefined,
         phones: String(d.phones || ''),
         address: String(d.address || ''),
         updatedAt: d.updatedAt?.toDate
@@ -2451,6 +2467,39 @@ export async function fetchRegisteredSystemDirectory(
     });
   } catch (err) {
     console.warn('Directory clinics fetch notice:', err);
+  }
+
+  try {
+    const wsSnap = await getDocs(query(collection(db, 'clinic_workspaces')));
+    wsSnap.docs.forEach((docSnap) => {
+      const d = docSnap.data();
+      const ownerId = String(d.ownerId || docSnap.id);
+      const identity = (d.settings?.identity || {}) as Partial<ClinicSettings['identity']>;
+      const ownerEmail = String(identity.ownerEmail || '').trim().toLowerCase();
+      if (ownerEmail && ownerEmail.includes('@') && !accountMap.has(ownerEmail)) {
+        accountMap.set(ownerEmail, {
+          email: ownerEmail,
+          displayName: String(identity.doctorAr || identity.clinicAr || 'مالك عيادة'),
+          role: 'owner',
+          workspaceId: String(d.clinicId || docSnap.id),
+        });
+      }
+      if (!clinicsMap.has(ownerId) && !clinicsMap.has(docSnap.id)) {
+        clinicsMap.set(ownerId, {
+          id: ownerId,
+          clinicAr: String(identity.clinicAr || d.clinicId || 'عيادة مسجلة'),
+          doctorAr: String(identity.doctorAr || ''),
+          ownerEmail: ownerEmail || undefined,
+          phones: String(identity.phones || ''),
+          address: String(identity.address || ''),
+          updatedAt: d.updatedAt?.toDate
+            ? d.updatedAt.toDate().toISOString().slice(0, 10)
+            : '',
+        });
+      }
+    });
+  } catch {
+    // Ignore if clinic_workspaces is empty or restricted
   }
 
   try {
@@ -2473,7 +2522,7 @@ export async function fetchRegisteredSystemDirectory(
   }
 
   return {
-    clinics,
+    clinics: Array.from(clinicsMap.values()),
     accounts: Array.from(accountMap.values()),
   };
 }

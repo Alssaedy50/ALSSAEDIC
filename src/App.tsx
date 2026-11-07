@@ -1696,7 +1696,16 @@ export default function App() {
             expenses={expenses}
             workspaceId={activeWorkspaceId}
             ownerUid={activeClinicOwnerUid || currentUser?.uid || 'local_owner'}
-            ownerEmail={settings.identity.ownerEmail || currentUser?.email || auth.currentUser?.email}
+            ownerEmail={
+              (currentRole === 'owner' &&
+              currentUser?.email &&
+              !currentUser.email.endsWith('@clinic.alssaedic.local')
+                ? currentUser.email
+                : null) ||
+              settings.identity.ownerEmail ||
+              currentUser?.email ||
+              auth.currentUser?.email
+            }
             isOwner={
               currentRole === 'owner' ||
               currentPermissions.canManageTeam ||
