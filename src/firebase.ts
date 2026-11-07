@@ -5,6 +5,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  reload,
   signInWithEmailAndPassword,
   signInWithPopup,
   sendEmailVerification,
@@ -347,6 +348,13 @@ export async function signInWithEmailAccount(email: string, password: string): P
 export async function resendEmailVerification(): Promise<void> {
   if (!auth.currentUser) throw new Error('لا يوجد حساب مسجل الدخول.');
   await sendEmailVerification(auth.currentUser);
+}
+
+export async function refreshEmailVerificationStatus(): Promise<User> {
+  if (!auth.currentUser) throw new Error('لا يوجد حساب مسجل الدخول.');
+  await reload(auth.currentUser);
+  await auth.currentUser.getIdToken(true);
+  return auth.currentUser;
 }
 
 export async function sendAccountPasswordReset(email: string): Promise<void> {
