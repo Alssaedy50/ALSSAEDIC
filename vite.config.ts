@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { transformSync } from 'esbuild';
 import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -11,6 +12,20 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'minify-rolldown-chunks',
+        renderChunk(code, chunk) {
+          if (chunk.fileName.endsWith('.js')) {
+            const result = transformSync(code, {
+              minify: true,
+              target: 'es2020',
+              legalComments: 'none',
+            });
+            return { code: result.code, map: null };
+          }
+          return null;
+        },
+      },
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],

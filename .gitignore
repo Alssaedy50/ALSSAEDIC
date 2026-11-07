@@ -8,4 +8,5 @@ coverage/
 !.env.example
 .cloud_workspaces.json
 public/assets/aistudio/
+bun.lock
 
