@@ -424,7 +424,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
-      {/* Top 2-Tab Segmented Switcher (بيانات السند vs معاينة السند) */}
+      {/* Top 2-Tab Segmented Switcher (البيانات vs المعاينة) */}
       <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 no-print">
         <button
           type="button"
@@ -436,7 +436,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>بيانات السند</span>
+          <span>البيانات</span>
         </button>
 
         <button
@@ -449,47 +449,12 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
           }`}
         >
           <Eye className="w-4 h-4" />
-          <span>معاينة السند</span>
+          <span>المعاينة</span>
         </button>
       </div>
 
       {subTab === 'preview' ? (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 no-print">
-            <button
-              type="button"
-              onClick={() => setSubTab('form')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200"
-            >
-              <ArrowRight className="w-3.5 h-3.5" />
-              <span>رجوع للبيانات</span>
-            </button>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  resetForm();
-                  setSubTab('form');
-                  notify('تم تجهيز نموذج سند جديد', 'info');
-                }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-sky-600 hover:bg-sky-500 text-white"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>سند جديد</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSave}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>حفظ السند</span>
-              </button>
-            </div>
-          </div>
-
           <OfficialReceiptCard
             data={receiptDisplayData}
             settings={settings}
@@ -522,7 +487,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                     handleSmartParse();
                   }
                 }}
-                placeholder="مثال: سند للمريض خالد محمد حشو عصب سن 16 بمبلغ 15000 دفع 10000"
+                placeholder="اكتب تفاصيل السند أو تحدث..."
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
               />
 
@@ -673,11 +638,11 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               </div>
             )}
 
-            {/* القوائم المنبثقة للخدمات العلاجية ومخطط الأسنان FDI */}
+            {/* القوائم المنبثقة للخدمات ومخطط الأسنان FDI */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  الخدمات العلاجية
+                  الخدمات
                 </label>
                 <button
                   type="button"
@@ -687,7 +652,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   <span className="truncate">
                     {selectedServices.length > 0
                       ? selectedServices.join(' + ')
-                      : 'اختر الخدمات العلاجية'}
+                      : 'اختيار الخدمات'}
                   </span>
                   <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
                 </button>
@@ -695,7 +660,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  أرقام الأسنان (FDI)
+                  الأسنان (FDI)
                 </label>
                 <div className="flex items-center gap-1.5">
                   <input
@@ -897,16 +862,16 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               <div className="flex items-center gap-2">
                 <Stethoscope className="w-4 h-4 text-sky-500" />
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  الخدمات العلاجية
+                  الخدمات
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsServicesModalOpen(false)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="إغلاق"
               >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>رجوع</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -940,19 +905,11 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               })}
             </div>
 
-            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+            <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
               <button
                 type="button"
                 onClick={() => setIsServicesModalOpen(false)}
-                className="inline-flex items-center gap-1 px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl"
-              >
-                <X className="w-4 h-4" />
-                <span>إغلاق</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsServicesModalOpen(false)}
-                className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold"
+                className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors shadow-sm"
               >
                 اعتماد ({selectedServices.length})
               </button>

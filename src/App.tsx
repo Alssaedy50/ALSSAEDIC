@@ -48,8 +48,6 @@ import {
   DirectAuthOptions,
   DirectClinicSession,
 } from './components/CloudAccountModal';
-import { AuthModal } from './components/AuthModal';
-import { WorkspaceTeamModal } from './components/WorkspaceTeamModal';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
 import {
   User,
@@ -178,8 +176,6 @@ export default function App() {
   const hasPromptedInitialAuth = useRef<boolean>(false);
 
   // Multi-User Workspace & Role State
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [isTeamModalOpen, setIsTeamModalOpen] = useState<boolean>(false);
   const [currentRole, setCurrentRole] = useState<WorkspaceRole>('owner');
   const [currentPermissions, setCurrentPermissions] = useState<WorkspacePermissions>(
     DEFAULT_ROLE_PERMISSIONS.owner
@@ -1109,18 +1105,6 @@ export default function App() {
               </button>
             )}
 
-            {(currentPermissions.canManageTeam || currentRole === 'owner') && isCloudConnected && (
-              <button
-                type="button"
-                onClick={() => setIsTeamModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border border-indigo-500/35 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-colors shrink-0"
-                title="فريق العمل والصلاحيات"
-              >
-                <Users className="w-4 h-4 shrink-0 text-indigo-500" />
-                <span className="hidden sm:inline">فريق العمل</span>
-              </button>
-            )}
-
             <button
               type="button"
               onClick={() => setIsCloudModalOpen(true)}
@@ -1129,10 +1113,10 @@ export default function App() {
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
               }`}
-              title="الحساب السحابي"
+              title="الحساب"
             >
               <Cloud className="w-4 h-4 shrink-0" />
-              <span>{isCloudConnected ? 'متصل' : 'الحساب السحابي'}</span>
+              <span>{isCloudConnected ? 'متصل' : 'الحساب'}</span>
             </button>
 
             <button
@@ -1214,44 +1198,8 @@ export default function App() {
                 );
               })}
 
-              {/* Cloud & PWA Section in Drawer */}
-              <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsDrawerOpen(false);
-                    setIsCloudModalOpen(true);
-                  }}
-                  className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300 text-xs sm:text-sm font-bold"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Cloud className="w-4 h-4 shrink-0" />
-                    <span>الحساب السحابي</span>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-sky-500/20 font-bold">
-                    {isCloudConnected ? 'متصل' : 'دخول'}
-                  </span>
-                </button>
-
-                {(currentPermissions.canManageTeam || currentRole === 'owner') && isCloudConnected && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsDrawerOpen(false);
-                      setIsTeamModalOpen(true);
-                    }}
-                    className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-xs sm:text-sm font-bold"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <Users className="w-4 h-4 shrink-0 text-indigo-500" />
-                      <span>فريق العمل والصلاحيات</span>
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/20 font-bold">
-                      {currentRole === 'owner' ? 'مالك' : 'عضو'}
-                    </span>
-                  </button>
-                )}
-
+              {/* PWA Section in Drawer */}
+              <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800">
                 <PWAInstallButton notify={notify} />
               </div>
             </nav>
@@ -1268,13 +1216,9 @@ export default function App() {
       <CloudAccountModal
         isOpen={isCloudModalOpen}
         onClose={() => setIsCloudModalOpen(false)}
-        isFirstOpenGate={!isCloudConnected}
         user={currentUser}
         directSession={directSession}
         currentRole={currentRole}
-        canManageTeam={currentPermissions.canManageTeam || currentRole === 'owner'}
-        onOpenTeamModal={() => setIsTeamModalOpen(true)}
-        onOpenEmailAuth={() => setIsAuthModalOpen(true)}
         onResendVerification={async () => {
           try {
             await resendVerificationEmail();
@@ -1283,8 +1227,6 @@ export default function App() {
             notify('تعذر إرسال رابط التأكيد حالياً.', 'error');
           }
         }}
-        defaultClinicName={settings.identity.clinicAr}
-        defaultDoctorName={settings.identity.doctorAr}
         isSyncing={isSyncingCloud}
         onSignInGoogle={handleSignInWithGoogle}
         onDirectLogin={handleDirectClinicLogin}
@@ -1293,28 +1235,6 @@ export default function App() {
         receiptsCount={receipts.length}
         inventoryCount={inventory.length}
         expensesCount={expenses.length}
-        notify={notify}
-      />
-
-      {/* ==================== EMAIL & PASSWORD AUTH MODAL ==================== */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        currentUser={currentUser}
-        onSuccess={() => {
-          setIsAuthModalOpen(false);
-          notify('تم تسجيل الدخول بالبريد الإلكتروني بنجاح', 'success');
-        }}
-        notify={notify}
-      />
-
-      {/* ==================== MULTI-USER WORKSPACE TEAM & ROLES MODAL ==================== */}
-      <WorkspaceTeamModal
-        isOpen={isTeamModalOpen}
-        onClose={() => setIsTeamModalOpen(false)}
-        workspaceId={activeWorkspaceId}
-        ownerUid={activeClinicOwnerUid || currentUser?.uid || 'local_owner'}
-        currentRole={currentRole}
         notify={notify}
       />
 
@@ -1338,27 +1258,9 @@ export default function App() {
                   notify('تعذر إرسال الرابط حالياً.', 'error');
                 }
               }}
-              className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black transition-colors shrink-0"
+              className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-colors shrink-0"
             >
               إعادة إرسال الرابط
-            </button>
-          </div>
-        )}
-
-        {!isCloudConnected && (
-          <div className="mb-4 rounded-2xl border border-sky-500/35 bg-sky-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 no-print">
-            <div className="flex items-center gap-2 min-w-0">
-              <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                الحساب السحابي غير متصل — سجّل الدخول لحفظ ومزامنة البيانات.
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsCloudModalOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black transition-colors shrink-0"
-            >
-              تسجيل الدخول
             </button>
           </div>
         )}
@@ -1533,7 +1435,9 @@ export default function App() {
             receipts={receipts}
             inventory={inventory}
             expenses={expenses}
-            onOpenTeamModal={() => setIsTeamModalOpen(true)}
+            workspaceId={activeWorkspaceId}
+            ownerUid={activeClinicOwnerUid || currentUser?.uid || 'local_owner'}
+            currentRole={currentRole}
             onDeleteService={(serviceId) => {
               if (!currentPermissions.canManageSettings && currentRole !== 'owner') {
                 notify('غير مصرح لك بحذف خدمات العيادة (خاص بالمالك).', 'error');

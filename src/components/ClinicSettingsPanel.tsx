@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import {
-  ArrowRight,
   Building2,
   Download,
   Image as ImageIcon,
@@ -10,6 +9,7 @@ import {
   Trash2,
   Upload,
   Users,
+  X,
 } from 'lucide-react';
 import {
   ClinicSettings,
@@ -18,14 +18,19 @@ import {
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
+  WorkspaceRole,
 } from '../types/clinic';
 import { CURRENCIES, DEFAULT_CLINIC_LOGO_DATA_URI } from '../data/defaultData';
+import { WorkspaceTeamPanel } from './WorkspaceTeamModal';
 
 interface ClinicSettingsPanelProps {
   settings: ClinicSettings;
   receipts: ReceiptRecord[];
   inventory: InventoryItem[];
   expenses: ExpenseRecord[];
+  workspaceId?: string;
+  ownerUid?: string;
+  currentRole?: WorkspaceRole;
   onDeleteService?: (serviceId: string) => void;
   onSaveSettings: (nextSettings: ClinicSettings) => void;
   onImportFullBackup: (payload: {
@@ -43,13 +48,16 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   receipts,
   inventory,
   expenses,
+  workspaceId,
+  ownerUid,
+  currentRole,
   onDeleteService,
   onSaveSettings,
   onImportFullBackup,
   onOpenTeamModal,
   notify,
 }) => {
-  const [subTab, setSubTab] = useState<'identity' | 'services' | 'backup'>('identity');
+  const [subTab, setSubTab] = useState<'identity' | 'services' | 'team' | 'backup'>('identity');
   const [formState, setFormState] = useState<ClinicSettings>(settings);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -233,34 +241,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
-      {onOpenTeamModal && (
-        <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 to-sky-500/10 p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600/15 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-sm font-black text-slate-900 dark:text-slate-100">
-                فريق العمل والصلاحيات (Workspaces & Team)
-              </div>
-              <div className="text-xs text-slate-600 dark:text-slate-400">
-                إضافة أطباء ومحاسبين واستقبال، وتحديد الصلاحيات التفصيلية لكل عضو.
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onOpenTeamModal}
-            className="py-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black flex items-center gap-1.5 transition-colors shrink-0 shadow-xs"
-          >
-            <Users className="w-4 h-4" />
-            <span>إدارة فريق العمل</span>
-          </button>
-        </div>
-      )}
-
-      {/* Top 3-Tab Segmented Switcher (هوية العيادة | قائمة الخدمات | النسخ الاحتياطي) */}
-      <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      {/* Top 4-Tab Segmented Switcher (الهوية | الخدمات | الفريق | النسخ) */}
+      <div className="grid grid-cols-4 gap-1.5 p-1.5 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
         <button
           type="button"
           onClick={() => setSubTab('identity')}
@@ -270,7 +252,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               : 'text-slate-600 dark:text-slate-400'
           }`}
         >
-          هوية العيادة
+          الهوية
         </button>
         <button
           type="button"
@@ -281,7 +263,18 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               : 'text-slate-600 dark:text-slate-400'
           }`}
         >
-          قائمة الخدمات
+          الخدمات
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('team')}
+          className={`py-2 px-2 rounded-lg text-xs font-bold transition-colors ${
+            subTab === 'team'
+              ? 'bg-sky-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400'
+          }`}
+        >
+          الفريق
         </button>
         <button
           type="button"
@@ -292,7 +285,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               : 'text-slate-600 dark:text-slate-400'
           }`}
         >
-          النسخ الاحتياطي
+          النسخ
         </button>
       </div>
 
@@ -303,7 +296,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                هوية العيادة
+                الهوية
               </h2>
             </div>
             <button
@@ -312,7 +305,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg"
             >
               <Save className="w-4 h-4" />
-              <span>حفظ الهوية</span>
+              <span>حفظ</span>
             </button>
           </div>
 
@@ -511,7 +504,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-              قائمة الخدمات ({formState.services.length})
+              الخدمات ({formState.services.length})
             </h2>
             <div className="flex items-center gap-2">
               <button
@@ -528,7 +521,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg"
               >
                 <Save className="w-4 h-4" />
-                <span>حفظ الأسعار</span>
+                <span>حفظ</span>
               </button>
             </div>
           </div>
@@ -581,16 +574,25 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         </section>
       )}
 
-      {/* TAB 3: BACKUP & RESTORE */}
+      {/* TAB 3: WORKSPACE TEAM */}
+      {subTab === 'team' && (
+        <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5">
+          <WorkspaceTeamPanel
+            workspaceId={workspaceId || ''}
+            ownerUid={ownerUid || ''}
+            currentRole={currentRole}
+            notify={notify}
+          />
+        </section>
+      )}
+
+      {/* TAB 4: BACKUP & RESTORE */}
       {subTab === 'backup' && (
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
           <div className="pb-3 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-              النسخ الاحتياطي (JSON)
+              النسخ الاحتياطي
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              حفظ أو استعادة جميع السندات ({receipts.length})، المخزون ({inventory.length})، والمصروفات ({expenses.length}).
-            </p>
           </div>
 
           <input
@@ -608,7 +610,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors"
             >
               <Download className="w-4 h-4 shrink-0" />
-              <span>تصدير نسخة احتياطية</span>
+              <span>تصدير</span>
             </button>
 
             <button
@@ -617,7 +619,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
             >
               <Upload className="w-4 h-4 shrink-0" />
-              <span>استيراد نسخة احتياطية</span>
+              <span>استيراد</span>
             </button>
           </div>
         </section>
@@ -641,10 +643,10 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setIsAddServiceModalOpen(false)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
               >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>رجوع</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -656,14 +658,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 type="text"
                 value={newSrvName}
                 onChange={(e) => setNewSrvName(e.target.value)}
-                placeholder="مثال: زراعة أسنان"
+                placeholder="زراعة أسنان"
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm"
               />
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                السعر الافتراضي ({formState.identity.defaultCurrency})
+                السعر ({formState.identity.defaultCurrency})
               </label>
               <input
                 type="number"
@@ -682,24 +684,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 type="text"
                 value={newSrvKeywords}
                 onChange={(e) => setNewSrvKeywords(e.target.value)}
-                placeholder="زراعة، غرسة، زرعة"
+                placeholder="زراعة، زرعة"
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
               />
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setIsAddServiceModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500"
-              >
-                إلغاء
-              </button>
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="submit"
-                className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg"
+                className="w-full py-2.5 rounded-xl font-bold text-xs bg-sky-600 hover:bg-sky-500 text-white transition-colors"
               >
-                إضافة وحفظ
+                حفظ
               </button>
             </div>
           </form>

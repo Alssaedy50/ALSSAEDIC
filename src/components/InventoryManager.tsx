@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Edit3,
   Loader2,
@@ -10,6 +9,7 @@ import {
   Plus,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import { DentalServiceItem, InventoryItem } from '../types/clinic';
 import { INVENTORY_UNITS } from '../data/defaultData';
@@ -466,10 +466,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsFormModalOpen(false)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
               >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>رجوع</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -591,26 +591,19 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsFormModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500"
-              >
-                إلغاء
-              </button>
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
               <button
                 type="submit"
-                className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg"
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 transition-colors"
               >
-                حفظ الصنف
+                حفظ
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Pop-up Modal: AI Audit Report with Sticky Back Header */}
+      {/* Pop-up Modal: AI Audit Report */}
       {auditReport && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
@@ -627,10 +620,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               <button
                 type="button"
                 onClick={() => setAuditReport('')}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
               >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>رجوع</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line">

@@ -939,90 +939,62 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
   return (
     <div className="w-full max-w-full space-y-3">
       {/* High-Resolution Download & Client Share Toolbar */}
+      {/* Consolidated Toolbar: Paper size + 3 Actions (طباعة, حفظ PDF, مشاركة) */}
       {showToolbar && (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2.5 no-print">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 no-print">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                صيغة الورق:
+                الورق:
               </span>
               <select
                 value={data.paperFormat}
                 onChange={(e) => onPaperFormatChange?.(e.target.value as PaperFormat)}
                 className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
               >
-                <option value="a5">قياس A5 قياسي</option>
+                <option value="a5">A5</option>
                 <option value="thermal80">حراري 80mm</option>
               </select>
             </div>
 
-            <button
-              type="button"
-              onClick={handlePrintDirect}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold transition-colors"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>طباعة مباشرة</span>
-            </button>
-          </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handlePrintDirect}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>طباعة</span>
+              </button>
 
-          {/* 4 Action Buttons: Download PNG, Download PDF, Share PNG, Share PDF */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <button
-              type="button"
-              disabled={busyAction !== null}
-              onClick={handleDownloadHDImage}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black transition-colors"
-            >
-              {busyAction === 'png' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Download className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>تحميل صورة HD</span>
-            </button>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={handleDownloadPDFFile}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold transition-colors"
+              >
+                {busyAction === 'pdf' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>حفظ PDF</span>
+              </button>
 
-            <button
-              type="button"
-              disabled={busyAction !== null}
-              onClick={handleDownloadPDFFile}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black transition-colors"
-            >
-              {busyAction === 'pdf' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <FileDown className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>تحميل ملف PDF</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={busyAction !== null}
-              onClick={() => handleShareFileWithClient('png')}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-black transition-colors"
-            >
-              {busyAction === 'share_png' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Share2 className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>مشاركة كصورة</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={busyAction !== null}
-              onClick={() => handleShareFileWithClient('pdf')}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs font-black transition-colors"
-            >
-              {busyAction === 'share_pdf' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Share2 className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>مشاركة كملف PDF</span>
-            </button>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => handleShareFileWithClient('pdf')}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition-colors"
+              >
+                {busyAction === 'share_pdf' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Share2 className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>مشاركة</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

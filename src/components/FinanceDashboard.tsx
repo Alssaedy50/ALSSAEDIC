@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ArrowRight,
   Loader2,
   PlusCircle,
   Sparkles,
@@ -8,6 +7,7 @@ import {
   TrendingDown,
   TrendingUp,
   Wallet,
+  X,
 } from 'lucide-react';
 import {
   CurrencyCode,
@@ -411,10 +411,10 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setIsExpenseModalOpen(false)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
               >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>رجوع</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -426,7 +426,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
                 type="text"
                 value={expTitle}
                 onChange={(e) => setExpTitle(e.target.value)}
-                placeholder="مثال: شراء مستلزمات تعقيم..."
+                placeholder="مستلزمات تعقيم..."
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm"
               />
             </div>
@@ -481,19 +481,12 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               </select>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setIsExpenseModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-500"
-              >
-                إلغاء
-              </button>
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="submit"
-                className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg"
+                className="w-full py-2.5 rounded-xl font-bold text-xs bg-sky-600 hover:bg-sky-500 text-white transition-colors"
               >
-                حفظ المصروف
+                حفظ
               </button>
             </div>
           </form>
@@ -517,10 +510,10 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setAiReport('')}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
               >
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>رجوع</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 text-xs sm:text-sm leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-line">

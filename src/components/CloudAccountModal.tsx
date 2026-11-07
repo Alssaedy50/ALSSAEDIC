@@ -1,22 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
-  ArrowRight,
   CheckCircle2,
   Cloud,
   Eye,
   EyeOff,
+  Lock,
   LogIn,
   LogOut,
+  Mail,
   RefreshCw,
+  Send,
   ShieldCheck,
   UserPlus,
-  Users,
-  Mail,
+  X,
 } from 'lucide-react';
-import { User } from '../firebase';
+import {
+  User,
+  loginWithEmailAndPassword,
+  registerWithEmailAndPassword,
+  requestPasswordReset,
+} from '../firebase';
 import { WorkspaceRole } from '../types/clinic';
-import { PWAInstallButton } from './PWAInstallButton';
 
 export interface DirectClinicSession {
   clinicId: string;
@@ -35,16 +40,10 @@ export interface DirectAuthOptions {
 interface CloudAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
-  isFirstOpenGate?: boolean;
   user: User | null;
   directSession: DirectClinicSession | null;
   currentRole?: WorkspaceRole;
-  canManageTeam?: boolean;
-  onOpenTeamModal?: () => void;
-  onOpenEmailAuth?: () => void;
   onResendVerification?: () => Promise<void>;
-  defaultClinicName?: string;
-  defaultDoctorName?: string;
   isSyncing: boolean;
   onSignInGoogle: () => Promise<boolean>;
   onDirectLogin: (
@@ -60,19 +59,21 @@ interface CloudAccountModalProps {
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
+const ROLE_LABELS: Record<WorkspaceRole, string> = {
+  owner: 'مالك العيادة',
+  doctor: 'طبيب أسنان',
+  accountant: 'محاسب',
+  receptionist: 'موظف استقبال',
+  viewer: 'مشاهد',
+};
+
 export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   isOpen,
   onClose,
-  isFirstOpenGate = false,
   user,
   directSession,
   currentRole = 'owner',
-  canManageTeam = true,
-  onOpenTeamModal,
-  onOpenEmailAuth,
   onResendVerification,
-  defaultClinicName = 'عيادة السعيدي لطب وجراحة الفم والأسنان',
-  defaultDoctorName = 'د. صلاح الدين السعيدي',
   isSyncing,
   onSignInGoogle,
   onDirectLogin,
@@ -83,26 +84,26 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   expensesCount,
   notify,
 }) => {
-  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
-  const [clinicIdInput, setClinicIdInput] = useState(
-    directSession?.clinicId || 'alssaedy-clinic'
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [identifier, setIdentifier] = useState(
+    directSession?.clinicId || (user?.email ? user.email : '')
   );
-  const [passwordInput, setPasswordInput] = useState('');
-  const [clinicNameInput, setClinicNameInput] = useState(defaultClinicName);
-  const [doctorNameInput, setDoctorNameInput] = useState(defaultDoctorName);
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-
-  useEffect(() => {
-    setClinicNameInput(defaultClinicName);
-    setDoctorNameInput(defaultDoctorName);
-  }, [defaultClinicName, defaultDoctorName]);
 
   useEffect(() => {
     if (!isOpen) return;
     setAuthError(null);
-  }, [isOpen]);
+    setAuthInfo(null);
+    if (directSession?.clinicId) {
+      setIdentifier(directSession.clinicId);
+    } else if (user?.email) {
+      setIdentifier(user.email);
+    }
+  }, [isOpen, directSession, user]);
 
   if (!isOpen) return null;
 
@@ -113,39 +114,102 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       ? user.email.replace('@clinic.alssaedic.local', '')
       : null);
 
-  const handleDirectSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    setAuthInfo(null);
 
-    const trimmedId = clinicIdInput.trim();
-    const trimmedPass = passwordInput.trim();
+    const cleanIdentifier = identifier.trim();
+    const cleanPassword = password.trim();
 
-    if (trimmedId.length < 3) {
-      setAuthError('يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف على الأقل).');
+    if (!cleanIdentifier) {
+      setAuthError('يرجى إدخال البريد أو المعرّف.');
       return;
     }
-    if (trimmedPass.length < 4) {
-      setAuthError('يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.');
+
+    // 1. Password Reset Mode
+    if (authMode === 'forgot') {
+      if (!cleanIdentifier.includes('@')) {
+        setAuthError('استعادة كلمة المرور تتطلب إدخال بريد إلكتروني صالح.');
+        return;
+      }
+      setAuthLoading(true);
+      try {
+        await requestPasswordReset(cleanIdentifier);
+        setAuthInfo('تم إرسال رابط استعادة كلمة المرور إلى بريدك.');
+        notify('تم إرسال رابط استعادة كلمة المرور', 'success');
+      } catch (err: unknown) {
+        setAuthError(err instanceof Error ? err.message : 'تعذر إرسال رابط الاستعادة.');
+      } finally {
+        setAuthLoading(false);
+      }
+      return;
+    }
+
+    // 2. Standard Login / Register Modes
+    if (cleanPassword.length < 4) {
+      setAuthError('كلمة المرور يجب أن لا تقل عن 4 خانات.');
       return;
     }
 
     setAuthLoading(true);
     try {
-      const ok = await onDirectLogin(trimmedId, trimmedPass, {
-        mode: authTab,
-        clinicNameAr: authTab === 'register' ? clinicNameInput.trim() : undefined,
-        doctorNameAr: authTab === 'register' ? doctorNameInput.trim() : undefined,
-      });
-      if (ok) {
-        setPasswordInput('');
-        onClose();
+      if (cleanIdentifier.includes('@')) {
+        // Firebase Email / Password flow
+        if (authMode === 'register') {
+          const { verificationSent } = await registerWithEmailAndPassword(cleanIdentifier, cleanPassword);
+          setAuthInfo(
+            verificationSent
+              ? 'تم إنشاء الحساب بنجاح وإرسال رابط تأكيد البريد.'
+              : 'تم إنشاء الحساب بنجاح.'
+          );
+          notify('تم إنشاء الحساب، تفقد بريدك للتأكيد', 'info');
+          setAuthMode('login');
+        } else {
+          const loggedInUser = await loginWithEmailAndPassword(cleanIdentifier, cleanPassword);
+          if (!loggedInUser.emailVerified) {
+            notify('يرجى تأكيد البريد الإلكتروني عبر الرابط المرسل', 'warning');
+          } else {
+            notify('تم تسجيل الدخول بنجاح', 'success');
+          }
+          setPassword('');
+          onClose();
+        }
       } else {
-        setAuthError(
-          authTab === 'register'
-            ? 'تعذر إنشاء الحساب بهذا المعرّف. إذا كان مسجلاً مسبقاً بكلمة مرور أخرى، اختر "تسجيل الدخول".'
-            : 'معرّف العيادة أو كلمة المرور غير صحيحة.'
-        );
+        // Direct Clinic Identifier flow
+        const ok = await onDirectLogin(cleanIdentifier, cleanPassword, {
+          mode: authMode,
+        });
+        if (ok) {
+          setPassword('');
+          onClose();
+        } else {
+          setAuthError(
+            authMode === 'register'
+              ? 'تعذر إنشاء الحساب بهذا المعرّف. قد يكون مسجلاً بالفعل.'
+              : 'البريد أو المعرّف أو كلمة المرور غير صحيحة.'
+          );
+        }
       }
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      let msg = 'حدث خطأ أثناء المصادقة.';
+      if (code === 'auth/email-already-in-use') {
+        msg = 'هذا البريد مسجل بالفعل. اختر "دخول".';
+      } else if (
+        code === 'auth/wrong-password' ||
+        code === 'auth/invalid-credential' ||
+        code === 'auth/user-not-found'
+      ) {
+        msg = 'البريد أو المعرّف أو كلمة المرور غير صحيحة.';
+      } else if (code === 'auth/too-many-requests') {
+        msg = 'تم حظر المحاولات مؤقتاً بسبب التكرار. يرجى الانتظار قليلاً.';
+      } else if (code === 'auth/invalid-email') {
+        msg = 'صيغة البريد الإلكتروني غير صالحة.';
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      setAuthError(msg);
     } finally {
       setAuthLoading(false);
     }
@@ -153,15 +217,14 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
 
   const handleGoogleLogin = async () => {
     setAuthError(null);
+    setAuthInfo(null);
     setAuthLoading(true);
     try {
       const ok = await onSignInGoogle();
       if (ok) {
         onClose();
       } else {
-        setAuthError(
-          'تعذر الدخول عبر Google على هذا النطاق. يمكنك الدخول مباشرة بمعرّف العيادة وكلمة المرور أعلاه.'
-        );
+        setAuthError('تعذر الدخول عبر Google. يمكنك الدخول بالبريد أو المعرّف.');
       }
     } finally {
       setAuthLoading(false);
@@ -171,9 +234,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 no-print"
-      onClick={() => {
-        if (!isFirstOpenGate || isConnected) onClose();
-      }}
+      onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -184,21 +245,21 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
           <div className="flex items-center gap-2 min-w-0">
             <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
             <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 truncate">
-              الحساب السحابي
+              الحساب
             </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold shrink-0"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+            aria-label="إغلاق"
           >
-            <ArrowRight className="w-3.5 h-3.5" />
-            <span>{isConnected ? 'رجوع' : 'تخطي'}</span>
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
           {isConnected ? (
             <div className="space-y-3">
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 space-y-2">
@@ -206,25 +267,17 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   <div className="flex items-center gap-2 min-w-0">
                     <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0" />
                     <span className="text-xs sm:text-sm font-black text-emerald-900 dark:text-emerald-200 truncate">
-                      الحساب السحابي نشط
+                      الحساب نشط
                     </span>
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-black shrink-0">
-                    {currentRole === 'owner'
-                      ? 'مالك العيادة'
-                      : currentRole === 'doctor'
-                        ? 'طبيب'
-                        : currentRole === 'accountant'
-                          ? 'محاسب'
-                          : currentRole === 'receptionist'
-                            ? 'استقبال'
-                            : 'مشاهد'}
+                    {ROLE_LABELS[currentRole] || currentRole}
                   </span>
                 </div>
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 flex-wrap">
                   {derivedClinicId ? (
                     <>
-                      <span>معرّف العيادة:</span>
+                      <span>المعرّف:</span>
                       <span dir="ltr" className="font-mono text-emerald-700 dark:text-emerald-300">
                         {derivedClinicId}
                       </span>
@@ -248,7 +301,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                         onClick={onResendVerification}
                         className="text-[10px] underline text-sky-600 dark:text-sky-400 hover:text-sky-500"
                       >
-                        إعادة إرسال رابط التحقق إلى البريد
+                        إعادة إرسال التحقق
                       </button>
                     )}
                   </div>
@@ -276,20 +329,6 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                 </div>
               </div>
 
-              {canManageTeam && onOpenTeamModal && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenTeamModal();
-                  }}
-                  className="w-full py-2.5 px-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-black flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Users className="w-4 h-4 shrink-0 text-indigo-500" />
-                  <span>فريق العمل والصلاحيات (مساحة العمل)</span>
-                </button>
-              )}
-
               <button
                 type="button"
                 disabled={isSyncing}
@@ -311,88 +350,72 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
             </div>
           ) : (
             <div className="space-y-3.5">
-              {/* Mode Switcher: Login vs Register */}
-              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthTab('login');
-                    setAuthError(null);
-                  }}
-                  className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
-                    authTab === 'login'
-                      ? 'bg-sky-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <LogIn className="w-3.5 h-3.5 shrink-0" />
-                  <span>تسجيل الدخول</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthTab('register');
-                    setAuthError(null);
-                  }}
-                  className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
-                    authTab === 'register'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                  <span>حساب جديد</span>
-                </button>
-              </div>
+              {/* Segmented Switcher: دخول vs حساب جديد */}
+              {authMode !== 'forgot' && (
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('login');
+                      setAuthError(null);
+                      setAuthInfo(null);
+                    }}
+                    className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                      authMode === 'login'
+                        ? 'bg-sky-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <LogIn className="w-3.5 h-3.5 shrink-0" />
+                    <span>دخول</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('register');
+                      setAuthError(null);
+                      setAuthInfo(null);
+                    }}
+                    className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                      authMode === 'register'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                    <span>حساب جديد</span>
+                  </button>
+                </div>
+              )}
 
-              <form onSubmit={handleDirectSubmit} className="space-y-3">
-                {authTab === 'register' && (
-                  <div className="space-y-2.5">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        اسم العيادة
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={clinicNameInput}
-                        onChange={(e) => setClinicNameInput(e.target.value)}
-                        placeholder="عيادة السعيدي لطب وجراحة الفم والأسنان"
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        اسم الطبيب
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={doctorNameInput}
-                        onChange={(e) => setDoctorNameInput(e.target.value)}
-                        placeholder="د. صلاح الدين السعيدي"
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
-                      />
-                    </div>
-                  </div>
-                )}
+              {authMode === 'forgot' && (
+                <div className="text-center pb-1">
+                  <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
+                    استعادة كلمة المرور
+                  </h4>
+                </div>
+              )}
 
-                <div className="space-y-2.5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      معرّف العيادة أو رقم الهاتف
-                    </label>
+              <form onSubmit={handleSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    البريد أو المعرّف
+                  </label>
+                  <div className="relative">
                     <input
-                      type="text"
+                      type={authMode === 'forgot' ? 'email' : 'text'}
                       required
                       dir="ltr"
-                      value={clinicIdInput}
-                      onChange={(e) => setClinicIdInput(e.target.value)}
-                      placeholder="alssaedy-clinic"
-                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 text-left font-mono"
+                      value={identifier}
+                      onChange={(e) => setIdentifier(e.target.value)}
+                      placeholder="doctor@domain.com أو المعرّف"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-3 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
                     />
+                    <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
                   </div>
+                </div>
 
+                {authMode !== 'forgot' && (
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                       كلمة المرور
@@ -402,27 +425,51 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                         type={showPassword ? 'text' : 'password'}
                         required
                         dir="ltr"
-                        value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
-                        placeholder="4 أحرف أو أرقام على الأقل"
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-3 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 text-left font-mono"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
                       />
+                      <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
                       <button
                         type="button"
-                        onClick={() => setShowPassword((prev) => !prev)}
-                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                        aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                        onClick={() => setShowPassword((p) => !p)}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        aria-label={showPassword ? 'إخفاء' : 'إظهار'}
                       >
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
+
+                    {authMode === 'login' && (
+                      <div className="pt-1 text-left">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthMode('forgot');
+                            setAuthError(null);
+                            setAuthInfo(null);
+                          }}
+                          className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline"
+                        >
+                          نسيت كلمة المرور؟
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
 
                 {authError && (
-                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] font-bold text-rose-600 dark:text-rose-300 flex items-start gap-2">
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-300 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>{authError}</span>
+                  </div>
+                )}
+
+                {authInfo && (
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{authInfo}</span>
                   </div>
                 )}
 
@@ -430,66 +477,61 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   type="submit"
                   disabled={authLoading}
                   className={`w-full py-2.5 px-4 rounded-xl disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors ${
-                    authTab === 'register'
+                    authMode === 'register'
                       ? 'bg-emerald-600 hover:bg-emerald-500'
                       : 'bg-sky-600 hover:bg-sky-500'
                   }`}
                 >
-                  {authTab === 'register' ? (
+                  {authLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : authMode === 'register' ? (
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  ) : authMode === 'forgot' ? (
+                    <Send className="w-4 h-4 shrink-0" />
                   ) : (
                     <LogIn className="w-4 h-4 shrink-0" />
                   )}
                   <span>
                     {authLoading
-                      ? 'جاري الاتصال...'
-                      : authTab === 'register'
+                      ? 'جاري التنفيذ...'
+                      : authMode === 'register'
                         ? 'إنشاء حساب'
-                        : 'تسجيل الدخول'}
+                        : authMode === 'forgot'
+                          ? 'إرسال رابط الاستعادة'
+                          : 'دخول'}
                   </span>
                 </button>
 
-                <button
-                  type="button"
-                  disabled={authLoading}
-                  onClick={handleGoogleLogin}
-                  className="w-full py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
-                  <span>الدخول عبر Google</span>
-                </button>
-
-                {onOpenEmailAuth && (
+                {authMode !== 'forgot' && (
                   <button
                     type="button"
-                    onClick={() => {
-                      onClose();
-                      onOpenEmailAuth();
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 text-xs font-black flex items-center justify-center gap-2 transition-colors"
+                    disabled={authLoading}
+                    onClick={handleGoogleLogin}
+                    className="w-full py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
                   >
-                    <Mail className="w-4 h-4 text-sky-500 shrink-0" />
-                    <span>التسجيل / الدخول بالبريد واستعادة كلمة المرور</span>
+                    <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
+                    <span>Google</span>
                   </button>
                 )}
 
-                {isFirstOpenGate && (
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="w-full py-1.5 px-3 rounded-xl text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
-                  >
-                    المتابعة بدون مزامنة
-                  </button>
+                {authMode === 'forgot' && (
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode('login');
+                        setAuthError(null);
+                        setAuthInfo(null);
+                      }}
+                      className="text-xs font-bold text-sky-600 dark:text-sky-400 hover:underline"
+                    >
+                      العودة لتسجيل الدخول
+                    </button>
+                  </div>
                 )}
               </form>
             </div>
           )}
-
-          {/* Compact PWA Install & Help Action */}
-          <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
-            <PWAInstallButton notify={notify} />
-          </div>
         </div>
       </div>
     </div>
