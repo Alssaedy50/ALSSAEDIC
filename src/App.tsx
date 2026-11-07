@@ -1239,7 +1239,7 @@ export default function App() {
       />
 
       {/* ==================== MAIN PAGE VIEWPORT ==================== */}
-      <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 pb-24 md:pb-6">
+      <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 pb-6">
         {emailVerificationNotice && currentUser && !currentUser.emailVerified && (
           <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 no-print shadow-xs">
             <div className="flex items-center gap-2 min-w-0">
@@ -1509,65 +1509,6 @@ export default function App() {
           />
         )}
       </main>
-
-      {/* ==================== MOBILE BOTTOM NAVIGATION BAR (5 TABS + BADGES) ==================== */}
-      <nav
-        aria-label="التنقل السفلي السريع"
-        className="fixed bottom-0 inset-x-0 z-30 md:hidden border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md no-print"
-      >
-        <div className="grid grid-cols-5 h-16 max-w-md mx-auto px-1">
-          {[
-            { id: 'receipt' as MainSectionId, label: 'سند جديد', icon: FileText },
-            {
-              id: 'records' as MainSectionId,
-              label: 'السندات',
-              icon: FileSpreadsheet,
-              badge: pendingDebtsCount > 0 ? pendingDebtsCount : undefined,
-              badgeColor: 'bg-rose-500 text-white',
-            },
-            {
-              id: 'inventory' as MainSectionId,
-              label: 'المخزون',
-              icon: Package,
-              badge: lowStockCount > 0 ? lowStockCount : undefined,
-              badgeColor: 'bg-amber-500 text-slate-950',
-            },
-            { id: 'finance' as MainSectionId, label: 'المالية', icon: Wallet },
-            { id: 'assistant' as MainSectionId, label: 'المساعد', icon: Bot },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeSection === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => navigateToSection(tab.id)}
-                className={`relative flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl transition-colors ${
-                  isActive
-                    ? 'text-sky-600 dark:text-sky-400 font-black'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-bold'
-                }`}
-              >
-                <div className="relative flex items-center justify-center px-2">
-                  <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-2'}`} />
-                  {tab.badge !== undefined && (
-                    <span
-                      dir="ltr"
-                      className={`absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-mono font-black flex items-center justify-center ring-2 ring-white dark:ring-slate-900 shadow-xs ${tab.badgeColor}`}
-                    >
-                      {tab.badge}
-                    </span>
-                  )}
-                </div>
-                <span className="text-[11px] leading-tight whitespace-nowrap">{tab.label}</span>
-                {isActive && (
-                  <span className="absolute top-0 inset-x-4 h-0.5 rounded-b-full bg-sky-600 dark:bg-sky-400" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
 
       {/* Offline Mode Indicator */}
       <OfflineIndicator />

@@ -1,122 +1,31 @@
-# خطة تنفيذ نظام الحسابات متعددة المستخدمين ومساحات العمل (Multi-User Workspaces)
+# Implementation Plan - Refactoring Vouchers ("السندات") Mobile RTL UI/UX
 
-خطة تنفيذ شاملة لإكمال وتأمين بنية الحسابات المشتركة ومساحات العمل في نظام عيادة السعيدي (ALSSAEDIC) مع الأدوار والصلاحيات المخصصة والمزامنة اللحظية عبر Firestore وحماية كاملة للبيانات.
+## User Requirements
+1. **Remove Redundant Bottom Navigation Bar:**
+   - Delete the fixed mobile bottom navigation bar in `App.tsx` ("سند جديد", "السندات", "المخزون", "المالية", "المساعد").
+   - Remove bottom padding/margin (`pb-24` / `pb-20`) from the main container in `App.tsx` that was reserved for the bottom bar.
+2. **Redesign Voucher Cards into Compact Patient Rows:**
+   - In `RecordsLedger.tsx`, replace the multi-section card layout with a clean, compact single-row card layout (RTL flex container with `justify-between` and `items-center`).
+   - Right Side: Patient Name in bold, and below it in `text-xs` status badge ("عليه دين: {remaining} ريال يمني" in red or "مسدد بالكامل" in green), plus voucher `#ID` or summary.
+   - Left Side: Single clean action button ("بيانات العميل" / "التفاصيل" with an eye icon). Remove 5 inline action buttons from the card face.
+3. **Create Dedicated Client Details & Actions Modal:**
+   - Clicking the left button opens a responsive modal showing:
+     - Header: Patient Name, Voucher Number (`#1003`), Date, Phone (with `dir="ltr"`), Currency badge.
+     - Medical/Dental Details: Services and Teeth numbers (`dir="ltr"`).
+     - Financial Summary: Total, Paid, Remaining.
+     - Action Buttons Grid: "معاينة", "واتساب", conditional "تسديد", "تعديل", "حذف" in a responsive grid.
 
----
+## Proposed Changes
 
-### مراجعة القرارات المؤكدة من المستخدم (Confirmed Decisions)
+### 1. `src/App.tsx`
+- Remove the mobile bottom navigation `<nav>` element (lines ~1610-1666).
+- Adjust main container bottom padding from `pb-24 md:pb-6` to `pb-6`.
 
-> [!IMPORTANT]
-> - **انضمام الأعضاء**: الانضمام الفوري للعيادة بمجرد إضافة المالك للبريد الإلكتروني للعضو (عند تسجيل دخوله بالبريد المضاف يتم ربطه مباشرة بمساحة العمل وبالدور والصلاحيات المحددة له).
-> - **ترحيل البيانات الحالية**: دمج البيانات المحلية مع بيانات أول مساحة عمل ينشئها المستخدم أو يرتبط بها دون حذف أو استبدال أي بيانات قديمة.
-> - **التحقق من البريد الإلكتروني**: تشديد صارم وإلزامي للتحقق من البريد الإلكتروني (`emailVerified`) قبل تمكين الاستخدام الفعلي للعمليات الحساسة في النظام.
+### 2. `src/components/RecordsLedger.tsx`
+- Redesign mobile card view (currently lines ~513-560) into compact single-row patient rows with patient name, debt/paid status badge, and single "التفاصيل" button.
+- Add `selectedClientReceipt` state to manage the dedicated client details and actions modal.
+- Implement the comprehensive Client Details & Actions Modal with all required details, `dir="ltr"` phone and tooth formatting, and the action buttons grid ("معاينة", "واتساب", "تسديد", "تعديل", "حذف").
 
----
-
-## 1. نظرة عامة والهدف العام
-
-تمكين العيادة من العمل كفريق متكامل داخل مساحة عمل مشتركة واحدة (Workspace) تشمل:
-- **المالك (Owner)**: إدارة كاملة للعيادة، إضافة وتعديل الأعضاء وتخصيص صلاحياتهم، والتحكم بالبيانات المالية والإعدادات.
-- **الطبيب (Doctor)**: الكشف، إصدار السندات، مخطط الأسنان FDI، إدارة الإجراءات الطبية ومتابعة العلاج، واستعراض المخزون.
-- **المحاسب (Accountant)**: إصدار وتعديل سندات القبض، متابعة الذمم والديون، تسجيل المصروفات، والتقارير المالية التنفيذية.
-- **موظف الاستقبال (Receptionist)**: تسجيل المرضى، إصدار سندات الكشف والقبض، الاطلاع على الحجوزات والمواعيد.
-- **المشاهد (Viewer)**: استعراض السجلات والإحصائيات دون إمكانية التعديل أو الحذف.
-
----
-
-## 2. الهيكل البرمجي ومخطط البيانات (System Architecture & Data Model)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       Firebase Authentication & Security                    │
-│   • Email/Password Register (with sendEmailVerification)                    │
-│   • Password Reset Flow (sendPasswordResetEmail)                            │
-│   • Google Sign-In (signInWithPopup with verified email)                   │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Firestore Multi-Tenant Model                      │
-│                                                                             │
-│   /workspaces/{workspaceId}                                                 │
-│       ├── ownerId, name, doctorName, settings, createdAt, updatedAt         │
-│       │                                                                     │
-│       ├── /members/{userId} (أعضاء العيادة وأدوارهم وصلاحياتهم)            │
-│       │       └── email, role, permissions, joinedAt, addedBy               │
-│       │                                                                     │
-│       ├── /receipts/{receiptId} (سندات القبض المشتركة للعيادة)              │
-│       ├── /inventory/{itemId} (المخزون الطبي المشترك)                       │
-│       ├── /expenses/{expenseId} (مصروفات العيادة)                           │
-│       └── /services/{serviceId} (دليل الخدمات العلاجية وأسعارها)             │
-│                                                                             │
-│   /user_workspaces/{userEmail}                                              │
-│       └── workspaceId, role, permissions (فهرس الانضمام الفوري بالبريد)    │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Client State & RBAC Middleware                         │
-│   • Active Workspace Context + Live Firestore onSnapshot Listener           │
-│   • Role-Based Access Control (RBAC) Guard for Views & Action Buttons       │
-│   • Local Data Auto-Migration & Non-Destructive Merge Module                │
-│   • Server Proxy Token Verification (Express / Serverless API)              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 3. مصفوفة الصلاحيات الافتراضية والتفصيلية (Permissions Matrix)
-
-| الصلاحية (Permission) | Owner | Doctor | Accountant | Receptionist | Viewer |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **إصدار سند جديد** (`receipts.create`) | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **تعديل السندات** (`receipts.edit`) | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **حذف السندات** (`receipts.delete`) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **تسوية الديون** (`receipts.settle`) | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **إدارة المخزون (إضافة/تعديل)** (`inventory.manage`) | ✅ | ❌ | ✅ | ❌ | ❌ |
-| **استهلاك المخزون** (`inventory.consume`) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **تسجيل المصروفات** (`expenses.manage`) | ✅ | ❌ | ✅ | ❌ | ❌ |
-| **التقارير المالية وصافي الأرباح** (`finance.view`) | ✅ | ❌ | ✅ | ❌ | ❌ |
-| **إدارة إعدادات العيادة والأسعار** (`settings.manage`) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **إدارة الفريق والأعضاء** (`team.manage`) | ✅ | ❌ | ❌ | ❌ | ❌ |
-
-> [!NOTE]
-> يمكن للمالك تعديل هذه الصلاحيات لأي عضو في الفريق بشكل مخصص من شاشة إدارة الفريق، وتُحفظ الصلاحيات المعدلة وتُطبق فورياً على العضو.
-
----
-
-## 4. خطوات التنفيذ المرحلية
-
-### المرحلة 1: ترقية المصادقة وإدارة الحسابات (Auth & Verification)
-1. تحديث `src/firebase.ts` لدعم:
-   - التسجيل بالبريد وكلمة المرور (`createUserWithEmailAndPassword`) وإرسال رابط التحقق فوراً (`sendEmailVerification`).
-   - تسجيل الدخول بالبريد وكلمة المرور (`signInWithEmailAndPassword`) مع فحص `user.emailVerified`.
-   - استعادة كلمة المرور (`sendPasswordResetEmail`) مع واجهة مريحة للمستخدم.
-   - الدخول عبر Google وتعيين البريد الإلكتروني مؤكداً تلقائياً.
-2. إضافة شاشة وشريط "التحقق من البريد الإلكتروني" لمنع الدخول بدون تأكيد، مع زر إعادة إرسال رابط التأكيد.
-
-### المرحلة 2: مساحات العمل المشتركة والانضمام الفوري (Workspaces & Team Members)
-1. إنشاء نموذج إدارة الفريق `WorkspaceTeamModal` و `WorkspaceContext`:
-   - عرض قائمة الأعضاء الحاليين وأدوارهم وحالة نشاطهم.
-   - إضافة عضو جديد بإدخال بريده الإلكتروني وتحديد دوره (Owner, Doctor, Accountant, Receptionist, Viewer) وتخصيص صلاحياته.
-   - تسجيل البريد في سجل مساحة العمل وفهرس المستخدمين، ليتم ربط العضو بمساحة العمل فور تسجيل دخوله.
-2. تمكين المالك من تغيير دور أي عضو أو تعديل صلاحياته المحددة أو إزالته.
-
-### المرحلة 3: ترحيل البيانات والدمج بدون فقدان (Zero-Data-Loss Migration)
-1. بناء وحدة فحص وترحيل ذكية (`migrateLocalDataToWorkspace`):
-   - التحقق من وجود بيانات محلية في `LocalStorage` لم تُرفع بعد إلى مساحة عمل.
-   - دمج السندات، المخزون، المصروفات، وقائمة الخدمات إلى مساحة عمل المالك الأولى أو المساحة المرتبطة، مع تجنب تكرار السندات التي تحمل نفس الرقم أو المعرف.
-   - الاحتفاظ بنسخة احتياطية محلية أرشيفية تحت مفتاح `docai_backup_migrated_v1`.
-
-### المرحلة 4: تأمين قواعد Firestore والقواعد السحابية (Security Rules & Server Token Verification)
-1. تحديث `firebase-blueprint.json` لتوثيق كيانات `workspaces` و `members`.
-2. كتابة ونشر `firestore.rules` محسنة بالتحقق من العضوية والصلاحيات:
-   - التحقق من صحة `request.auth` وتأكيد البريد.
-   - التحقق من وجود العضو في مساحة العمل ومطابقة الصلاحية للعملية المطلوبة (Create, Update, Delete).
-   - منع المستخدمين من تعديل أدوارهم أو صلاحياتهم ذاتياً.
-3. تحديث واجهات الخادم (`server.ts` و `api/index.ts`) للتحقق من Firebase ID Token لمنع أي تزوير للهوية أو الصلاحيات عند استدعاء الذكاء الاصطناعي أو المزامنة.
-
-### المرحلة 5: الاختبارات والتحقق الشامل (Verification & Build)
-1. إجراء فحص ESLint لقواعد الأمان وقواعد الكود.
-2. تشغيل `compile_applet` و `lint_applet` و `npm run build` للتأكد من خلو المشروع تماماً من الأخطاء والتعارضات.
-3. تقديم تقرير كامل بالتغييرات المنجزة وملفات العمل.
+## Verification Plan
+- Compile and lint using `compile_applet` and `lint_applet`.
+- Run production build with `npm run build`.
