@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Link2, RefreshCw, Shield, UserPlus, Users, X } from 'lucide-react';
 import { User } from 'firebase/auth';
 import {
@@ -76,6 +76,8 @@ export const WorkspaceTeamManager: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
 
   const isOwner = activeOwnerUid === user.uid;
+  const notifyRef = useRef(notify);
+  useEffect(() => { notifyRef.current = notify; }, [notify]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -94,11 +96,11 @@ export const WorkspaceTeamManager: React.FC<Props> = ({
         setInvitations([]);
       }
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'تعذر تحميل بيانات الفريق.', 'error');
+      notifyRef.current(error instanceof Error ? error.message : 'تعذر تحميل بيانات الفريق.', 'error');
     } finally {
       setLoading(false);
     }
-  }, [activeOwnerUid, isOwner, notify, user.uid]);
+  }, [activeOwnerUid, isOwner, user.uid]);
 
   useEffect(() => {
     void refresh();
