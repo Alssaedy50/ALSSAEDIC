@@ -202,26 +202,25 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   const refreshSystemDirectory = async () => {
     if (!isDeveloperSuperAdmin) return;
     setDirectoryLoading(true);
+    const defaultClinicEntry: RegisteredClinicSummary = {
+      id: ownerUid || effectiveWsId,
+      clinicAr: effectiveClinicTitle,
+      doctorAr: effectiveOwnerDoctorName,
+      ownerEmail: effectiveOwnerEmail || undefined,
+      phones: '',
+      address: '',
+      updatedAt: new Date().toISOString().slice(0, 10),
+    };
     try {
-      const dir = await fetchRegisteredSystemDirectory(effectiveWsId);
-      const list =
-        dir.clinics.length > 0
-          ? dir.clinics
-          : [
-              {
-                id: ownerUid || effectiveWsId,
-                clinicAr: effectiveClinicTitle,
-                doctorAr: effectiveOwnerDoctorName,
-                ownerEmail: effectiveOwnerEmail || undefined,
-                phones: '',
-                address: '',
-                updatedAt: new Date().toISOString().slice(0, 10),
-              },
-            ];
+      const dir = await fetchRegisteredSystemDirectory(effectiveWsId, effectiveOwnerEmail);
+      const list = dir.clinics.length > 0 ? dir.clinics : [defaultClinicEntry];
       setRegisteredClinics(list);
-      setTotalRegisteredAccountsCount(Math.max(list.length, dir.accounts.length, 1));
+      setTotalRegisteredAccountsCount(
+        Math.max(list.length, dir.accounts.length, cloudMembers.length + 1, 1)
+      );
     } catch {
-      // ignore
+      setRegisteredClinics([defaultClinicEntry]);
+      setTotalRegisteredAccountsCount(Math.max(cloudMembers.length + 1, 1));
     } finally {
       setDirectoryLoading(false);
     }
@@ -237,7 +236,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     return () => {
       unsub();
     };
-  }, [effectiveWsId, isDeveloperSuperAdmin, currentUserEmail]);
+  }, [effectiveWsId, isDeveloperSuperAdmin, currentUserEmail, effectiveOwnerEmail]);
 
   const displayMembers = members && members.length > 0 ? members : cloudMembers;
 
@@ -345,7 +344,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     <div className="space-y-4">
       {/* Live System Clinics & Accounts Counter Card - DEVELOPER ONLY */}
       {isDeveloperSuperAdmin && (
-        <section className="rounded-xl border border-amber-500/30 dark:border-amber-500/20 bg-amber-500/5 dark:bg-amber-950/20 p-3.5 space-y-3">
+        <section className="rounded-xl border border-amber-500/40 bg-slate-50 dark:bg-slate-950 p-3.5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -373,14 +372,14 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
               <div className="text-[11px] font-bold text-slate-500">العيادات المسجلة</div>
               <div className="text-base font-black text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
-                {registeredClinics.length}
+                {Math.max(registeredClinics.length, 1)}
               </div>
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
               <div className="text-[11px] font-bold text-slate-500">إجمالي الحسابات</div>
               <div className="text-base font-black text-sky-600 dark:text-sky-400 font-mono mt-0.5">
-                {totalRegisteredAccountsCount}
+                {Math.max(totalRegisteredAccountsCount, displayMembers.length + 1)}
               </div>
             </div>
 
@@ -398,8 +397,20 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
           {showClinicsList && (
             <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
               {registeredClinics.length === 0 ? (
-                <div className="text-[11px] font-bold text-slate-500 text-center py-2">
-                  لا توجد عيادات مسجلة أخرى بعد أو جاري المزامنة.
+                <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="space-y-0.5">
+                    <div className="font-black text-slate-900 dark:text-slate-100">
+                      1. {effectiveClinicTitle}
+                    </div>
+                    <div className="text-[11px] font-bold text-slate-500">
+                      {effectiveOwnerDoctorName}
+                    </div>
+                    {effectiveOwnerEmail && (
+                      <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400" dir="ltr">
+                        {effectiveOwnerEmail}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 registeredClinics.map((c, idx) => (
@@ -432,10 +443,10 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
       )}
 
       {/* Primary Clinic Owner Card (صاحب العيادة الأساسي المنشئ) */}
-      <section className="rounded-2xl border-2 border-amber-500/40 dark:border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-amber-50/40 to-white dark:via-slate-900/90 dark:to-slate-950 p-4 sm:p-4.5 space-y-3 relative overflow-hidden shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+      <section className="rounded-2xl border-2 border-amber-500/40 bg-slate-50 dark:bg-slate-950 p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start sm:items-center gap-3 min-w-0">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center shrink-0 shadow-md">
+            <div className="w-11 h-11 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0">
               <Crown className="w-6 h-6 stroke-[2.5]" />
             </div>
             <div className="min-w-0 space-y-1">
@@ -462,7 +473,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
               {/* Owner Email with Copy button and certified badge */}
               <div className="flex items-center gap-2 pt-0.5 flex-wrap">
                 <div
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono font-black text-slate-900 dark:text-slate-100 shadow-2xs"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono font-black text-slate-900 dark:text-slate-100"
                   dir="ltr"
                 >
                   <Mail className="w-3.5 h-3.5 text-amber-500 shrink-0" />
@@ -488,7 +499,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
           <div className="flex sm:flex-col items-end justify-between sm:justify-center gap-1 text-[11px] font-bold text-slate-500 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200 dark:border-slate-800">
             <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-black">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
               <span>مفعل ونشط سحابياً</span>
             </span>
             <span className="text-[10px] text-slate-400 flex items-center gap-1">
@@ -498,7 +509,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
           </div>
         </div>
 
-        <div className="pt-2 border-t border-amber-500/20 text-[11px] text-slate-600 dark:text-slate-400 flex flex-wrap items-center justify-between gap-2">
+        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 flex flex-wrap items-center justify-between gap-2">
           <span className="font-bold">مستوى التحكم:</span>
           <span className="font-bold text-slate-800 dark:text-slate-200">
             كامل الصلاحيات (إدارة الفريق، إصدار وتعديل وحذف السندات، المخزون، والتقارير المالية)
@@ -508,7 +519,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
       {/* Add Member Form */}
       {effectiveIsOwner ? (
-        <section className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 space-y-3">
+        <section className="rounded-xl border border-sky-500/40 bg-slate-50 dark:bg-slate-950 p-3.5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <UserPlus className="w-4 h-4 text-sky-600 dark:text-sky-400" />
@@ -604,7 +615,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
         </div>
 
         {displayMembers.length === 0 ? (
-          <div className="p-5 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 space-y-1">
+          <div className="p-5 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-1">
             <div className="font-bold text-slate-700 dark:text-slate-300">
               لا توجد حسابات إضافية مضافة بعد.
             </div>
@@ -618,101 +629,100 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             return (
               <div
                 key={m.uid || m.email}
-                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-3"
               >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
-                    <RoleIcon className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    {m.displayName && (
-                      <div className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
-                        {m.displayName}
+                <div className="flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-lg bg-sky-600 text-white flex items-center justify-center shrink-0">
+                      <RoleIcon className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      {m.displayName && (
+                        <div className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
+                          {m.displayName}
+                        </div>
+                      )}
+                      <div
+                        className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono truncate"
+                        dir="ltr"
+                      >
+                        {formatVisibleEmail(m.email)}
                       </div>
-                    )}
-                    <div
-                      className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono truncate"
-                      dir="ltr"
-                    >
-                      {formatVisibleEmail(m.email)}
-                    </div>
-                    <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1.5 mt-0.5">
-                      <span>الرتبة الحالية: {ROLES_INFO[m.role]?.label || m.role}</span>
-                      <span className="text-slate-400">·</span>
-                      <span className="text-emerald-600 dark:text-emerald-400">مفعّل</span>
+                      <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1.5 mt-0.5">
+                        <span>الرتبة الحالية: {ROLES_INFO[m.role]?.label || m.role}</span>
+                        <span className="text-slate-400">·</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">مفعّل</span>
+                      </div>
                     </div>
                   </div>
+
+                  {effectiveIsOwner && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingMember(m);
+                          setCustomPermissions({
+                            ...(DEFAULT_ROLE_PERMISSIONS[m.role] || DEFAULT_ROLE_PERMISSIONS.viewer),
+                            ...m.permissions,
+                          });
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-sky-500/40 bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 hover:bg-sky-600 hover:text-white transition-colors"
+                      >
+                        <ArrowUpCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>ترقية وصلاحيات</span>
+                      </button>
+
+                      {confirmRemoveEmail === m.email ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => handleRemoveMember(m.email)}
+                            className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
+                          >
+                            تأكيد
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmRemoveEmail(null)}
+                            className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold"
+                          >
+                            إلغاء
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRemoveEmail(m.email)}
+                          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-rose-500 hover:bg-rose-600 hover:text-white transition-colors"
+                          title="إزالة"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {effectiveIsOwner && (
-                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                    {/* Direct 1-Click Role Promotion / Upgrade Selector */}
-                    <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-sky-500/40 rounded-lg px-2 py-1">
-                      <ArrowUpCircle className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                      <span className="text-[10px] font-bold text-slate-500">ترقية:</span>
-                      <select
-                        value={m.role}
-                        disabled={loading}
-                        onChange={(e) =>
-                          handleQuickRoleUpgrade(m, e.target.value as WorkspaceRole)
-                        }
-                        className="bg-transparent text-[11px] font-black text-sky-600 dark:text-sky-400 focus:outline-none cursor-pointer"
-                        aria-label="ترقية أو تغيير الدور"
-                      >
-                        {ALL_ROLES.map((r) => (
-                          <option
-                            key={r}
-                            value={r}
-                            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
-                          >
-                            {ROLES_INFO[r].label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingMember(m);
-                        setCustomPermissions({
-                          ...(DEFAULT_ROLE_PERMISSIONS[m.role] || DEFAULT_ROLE_PERMISSIONS.viewer),
-                          ...m.permissions,
-                        });
-                      }}
-                      className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-500 text-slate-700 dark:text-slate-300"
-                    >
-                      الصلاحيات
-                    </button>
-
-                    {confirmRemoveEmail === m.email ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={() => handleRemoveMember(m.email)}
-                          className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
-                        >
-                          تأكيد
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmRemoveEmail(null)}
-                          className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold"
-                        >
-                          إلغاء
-                        </button>
-                      </div>
-                    ) : (
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-1">
+                    <span className="text-[10px] font-bold text-slate-500 ml-1">تغيير سريع للدور:</span>
+                    {ALL_ROLES.map((r) => (
                       <button
+                        key={r}
                         type="button"
-                        onClick={() => setConfirmRemoveEmail(m.email)}
-                        className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10"
-                        title="إزالة"
+                        disabled={loading}
+                        onClick={() => handleQuickRoleUpgrade(m, r)}
+                        className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-colors ${
+                          m.role === r
+                            ? 'bg-sky-600 border-sky-500 text-white'
+                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-sky-500/40'
+                        }`}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        {ROLES_INFO[r].label}
                       </button>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>

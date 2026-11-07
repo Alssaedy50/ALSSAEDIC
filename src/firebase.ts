@@ -2609,7 +2609,8 @@ export function isSuperAdminEmail(email?: string | null): boolean {
 }
 
 export async function fetchRegisteredSystemDirectory(
-  workspaceId: string
+  workspaceId: string,
+  overrideEmail?: string | null
 ): Promise<{
   clinics: RegisteredClinicSummary[];
   accounts: RegisteredAccountSummary[];
@@ -2618,10 +2619,16 @@ export async function fetchRegisteredSystemDirectory(
   const localMembers = loadLocalWorkspaceMembers(safeWsId);
   const accountMap = new Map<string, RegisteredAccountSummary>();
 
-  if (auth.currentUser?.email) {
-    accountMap.set(auth.currentUser.email.toLowerCase(), {
-      email: auth.currentUser.email.toLowerCase(),
-      displayName: auth.currentUser.displayName || 'الحساب الرئيسي (المالك)',
+  const currentAuthEmail =
+    auth.currentUser?.email ||
+    auth.currentUser?.providerData?.find((p) => p?.email)?.email ||
+    overrideEmail ||
+    null;
+
+  if (currentAuthEmail && currentAuthEmail.includes('@')) {
+    accountMap.set(currentAuthEmail.toLowerCase(), {
+      email: currentAuthEmail.toLowerCase(),
+      displayName: auth.currentUser?.displayName || 'الحساب الرئيسي (المالك)',
       role: 'owner',
       workspaceId: safeWsId,
     });
@@ -2639,7 +2646,7 @@ export async function fetchRegisteredSystemDirectory(
   }
 
   const clinicsMap = new Map<string, RegisteredClinicSummary>();
-  const isSuperAdmin = isSuperAdminEmail(auth.currentUser?.email);
+  const isSuperAdmin = isSuperAdminEmail(currentAuthEmail);
 
   if (!auth.currentUser || !isSuperAdmin) {
     return {
@@ -2648,12 +2655,21 @@ export async function fetchRegisteredSystemDirectory(
     };
   }
 
+  const currentUid = auth.currentUser.uid;
+
+  // 1. Fetch clinics (try full collection first, fall back to owner-scoped query)
   try {
-    const clinicsQuery = query(collection(db, 'clinics'));
-    const clinicsSnap = await getDocs(clinicsQuery);
+    let clinicsSnap;
+    try {
+      clinicsSnap = await getDocs(query(collection(db, 'clinics')));
+    } catch {
+      clinicsSnap = await getDocs(
+        query(collection(db, 'clinics'), where('ownerId', '==', currentUid))
+      );
+    }
     clinicsSnap.docs.forEach((docSnap) => {
       const d = docSnap.data();
-      const ownerEmail = String(d.ownerEmail || '').trim().toLowerCase();
+      const ownerEmail = String(d.ownerEmail || currentAuthEmail || '').trim().toLowerCase();
       if (ownerEmail && ownerEmail.includes('@')) {
         accountMap.set(ownerEmail, {
           email: ownerEmail,
@@ -2678,8 +2694,16 @@ export async function fetchRegisteredSystemDirectory(
     console.warn('Directory clinics fetch notice:', err);
   }
 
+  // 2. Fetch clinic_workspaces (try full collection first, fall back to owner-scoped query)
   try {
-    const wsSnap = await getDocs(query(collection(db, 'clinic_workspaces')));
+    let wsSnap;
+    try {
+      wsSnap = await getDocs(query(collection(db, 'clinic_workspaces')));
+    } catch {
+      wsSnap = await getDocs(
+        query(collection(db, 'clinic_workspaces'), where('ownerId', '==', currentUid))
+      );
+    }
     wsSnap.docs.forEach((docSnap) => {
       const d = docSnap.data();
       const ownerId = String(d.ownerId || docSnap.id);
@@ -2711,11 +2735,34 @@ export async function fetchRegisteredSystemDirectory(
     // Ignore if clinic_workspaces is empty or restricted
   }
 
+  // 3. Fetch workspace members & user_workspaces
   try {
-    const accountsQuery = isSuperAdmin
-      ? query(collection(db, 'user_workspaces'))
-      : query(collection(db, 'user_workspaces'), where('addedBy', '==', auth.currentUser.uid));
-    const accountsSnap = await getDocs(accountsQuery);
+    const membersSnap = await getDocs(collection(db, 'clinic_workspaces', safeWsId, 'members'));
+    membersSnap.docs.forEach((docSnap) => {
+      const d = docSnap.data();
+      const email = String(d.email || docSnap.id).toLowerCase();
+      if (email.includes('@')) {
+        accountMap.set(email, {
+          email,
+          displayName: d.displayName ? String(d.displayName) : undefined,
+          role: (d.role || 'viewer') as WorkspaceRole,
+          workspaceId: safeWsId,
+        });
+      }
+    });
+  } catch {
+    // Ignore
+  }
+
+  try {
+    let accountsSnap;
+    try {
+      accountsSnap = await getDocs(query(collection(db, 'user_workspaces')));
+    } catch {
+      accountsSnap = await getDocs(
+        query(collection(db, 'user_workspaces'), where('addedBy', '==', currentUid))
+      );
+    }
     accountsSnap.docs.forEach((docSnap) => {
       const d = docSnap.data();
       const email = String(d.email || docSnap.id).toLowerCase();

@@ -1409,7 +1409,7 @@ export default function App() {
       }`}
     >
       {/* ==================== CLEAN NON-OVERLAPPING MOBILE HEADER ==================== */}
-      <header className="shrink-0 sticky top-0 z-30 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs no-print">
+      <header className="shrink-0 sticky top-0 z-30 w-full border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 no-print">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           {/* Right: Menu Button + Clear Page Title */}
           <div className="flex items-center gap-2 min-w-0 flex-1">
