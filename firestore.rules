@@ -12,10 +12,11 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Strict email verification enforcement: email must be verified, or sign-in provider is anonymous
+    // Strict verification enforcement: verified email, email/password provider, or anonymous provider
     function isStrictlyVerified() {
       return isSignedIn() && (
         request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'password' ||
         request.auth.token.firebase.sign_in_provider == 'anonymous'
       );
     }
@@ -307,8 +308,8 @@ service cloud.firestore {
 
     // 1. Clinics Collection (/clinics/{clinicId})
     match /clinics/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && (clinicId == request.auth.uid || isClinicMember(clinicId));
-      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
+      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || clinicId == request.auth.uid || isClinicMember(clinicId));
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
       allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         clinicId == request.auth.uid &&
@@ -476,7 +477,7 @@ service cloud.firestore {
     // 6. Authenticated Clinic Workspaces (/clinic_workspaces/{clinicId})
     match /clinic_workspaces/{clinicId} {
       allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || existing().ownerId == request.auth.uid || isClinicMember(existing().ownerId));
-      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
       allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         incoming().clinicId == clinicId &&

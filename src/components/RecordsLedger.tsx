@@ -242,10 +242,10 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     <button
                       type="button"
                       onClick={() => setSelectedClientReceipt(rec)}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 text-xs font-bold shrink-0 transition-colors shadow-xs"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 text-xs font-black shrink-0 transition-colors shadow-xs hover:bg-sky-100 dark:hover:bg-sky-900/60"
                     >
-                      <Eye className="w-3.5 h-3.5 shrink-0" />
-                      <span>التفاصيل</span>
+                      <Users className="w-3.5 h-3.5 shrink-0" />
+                      <span>بيانات العميل</span>
                     </button>
                   </div>
                 );
@@ -644,7 +644,9 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     setSelectedClientReceipt(null);
                     onEditReceipt(rec);
                   }}
-                  className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold transition-colors"
+                  className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold transition-colors ${
+                    (Number(selectedClientReceipt.remainingAmount) || 0) > 0 ? '' : 'col-span-2'
+                  }`}
                 >
                   <Edit3 className="w-4 h-4 shrink-0" />
                   <span>تعديل السند</span>

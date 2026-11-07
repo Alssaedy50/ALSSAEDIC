@@ -160,37 +160,58 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       return;
     }
 
-    // 2. Registration is EXCLUSIVELY via Email
+    // 2. Register Mode: Supports Email OR Clinic Phone/Identifier
     if (authMode === 'register') {
-      if (!cleanIdentifier.includes('@') || !cleanIdentifier.includes('.')) {
-        setAuthError('إنشاء الحساب حصري عبر البريد الإلكتروني. يرجى كتابة بريد إلكتروني صالح (مثال: doctor@example.com).');
-        return;
-      }
-      if (cleanPassword.length < 6) {
-        setAuthError('كلمة المرور يجب أن لا تقل عن 6 خانات لتأمين الحساب.');
+      if (cleanPassword.length < 4) {
+        setAuthError('كلمة المرور يجب أن لا تقل عن 4 خانات.');
         return;
       }
 
       setAuthLoading(true);
       try {
-        const { user: newUser, verificationSent, assignedIdentifier } = await registerWithEmailAndPassword(
-          cleanIdentifier,
-          cleanPassword,
-          customRegisterIdentifier.trim() || undefined
-        );
-        setRegisteredIdentifier(assignedIdentifier);
-        setAuthInfo(`تم إنشاء الحساب بنجاح! تم تعيين المعرّف الخاص بك: [ ${assignedIdentifier} ]. ${
-          verificationSent ? 'تم إرسال رابط تأكيد البريد الإلكتروني لتأمين مساحة العمل.' : ''
-        }`);
-        notify(`تم إنشاء الحساب بنجاح، معرّفك هو: ${assignedIdentifier}`, 'success');
-        setAuthMode('login');
+        if (cleanIdentifier.includes('@')) {
+          if (!cleanIdentifier.includes('.')) {
+            setAuthError('صيغة البريد الإلكتروني غير صالحة.');
+            setAuthLoading(false);
+            return;
+          }
+          if (cleanPassword.length < 6) {
+            setAuthError('كلمة المرور للبريد يجب أن لا تقل عن 6 خانات لتأمين الحساب.');
+            setAuthLoading(false);
+            return;
+          }
+          const { assignedIdentifier } = await registerWithEmailAndPassword(
+            cleanIdentifier,
+            cleanPassword,
+            customRegisterIdentifier.trim() || undefined
+          );
+          setRegisteredIdentifier(assignedIdentifier);
+          setAuthInfo(`تم إنشاء الحساب بنجاح! معرّف عيادتك: [ ${assignedIdentifier} ]`);
+          notify(`تم إنشاء الحساب بنجاح، معرّفك هو: ${assignedIdentifier}`, 'success');
+          setPassword('');
+          onClose();
+          return;
+        } else {
+          // Clinic Identifier or Phone
+          const directOk = await onDirectLogin(cleanIdentifier, cleanPassword, {
+            mode: 'register',
+          });
+          if (directOk) {
+            notify('تم إنشاء حساب العيادة ومزامنة البيانات بنجاح', 'success');
+            setPassword('');
+            onClose();
+            return;
+          } else {
+            setAuthError('معرّف العيادة أو الهاتف مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".');
+          }
+        }
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code || '';
         let msg = 'حدث خطأ أثناء إنشاء الحساب.';
         if (code === 'auth/email-already-in-use') {
-          msg = 'هذا البريد مسجل بالفعل. يرجى اختيار "دخول" أو استعادة كلمة المرور.';
+          msg = 'هذا المعرّف أو البريد مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".';
         } else if (code === 'auth/invalid-email') {
-          msg = 'صيغة البريد الإلكتروني غير صالحة.';
+          msg = 'صيغة البريد أو المعرّف غير صالحة.';
         } else if (code === 'auth/weak-password') {
           msg = 'كلمة المرور ضعيفة. يرجى اختيار كلمة مرور أقوى.';
         } else if (err instanceof Error) {
@@ -211,11 +232,10 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
 
     setAuthLoading(true);
     try {
-      // First try standard email or bound identifier through loginWithEmailAndPassword
       try {
         const loggedInUser = await loginWithEmailAndPassword(cleanIdentifier, cleanPassword);
         if (!loggedInUser.emailVerified) {
-          notify('يرجى تأكيد البريد الإلكتروني عبر الرابط المرسل', 'warning');
+          notify('تم تسجيل الدخول بنجاح', 'success');
         } else {
           notify('تم تسجيل الدخول بنجاح', 'success');
         }
@@ -223,7 +243,6 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
         onClose();
         return;
       } catch (firstErr: unknown) {
-        // If not found in email/bound identifiers and doesn't contain @, check legacy direct workspace auth
         if (!cleanIdentifier.includes('@')) {
           const directOk = await onDirectLogin(cleanIdentifier, cleanPassword, {
             mode: 'login',
@@ -239,8 +258,12 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
       let msg = 'البريد أو المعرّف أو كلمة المرور غير صحيحة.';
-      if (code === 'auth/too-many-requests') {
-        msg = 'تم حظر المحاولات مؤقتاً بسبب التكرار. يرجى الانتظار قليلاً.';
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+        msg = 'بيانات الدخول غير صحيحة أو الحساب غير مسجل بعد.';
+      } else if (code === 'auth/wrong-password') {
+        msg = 'كلمة المرور غير صحيحة.';
+      } else if (code === 'auth/too-many-requests') {
+        msg = 'تم حظر المحاولات مؤقتاً بسبب التكرار. يرجى الانتظار دقيقة.';
       } else if (err instanceof Error) {
         msg = err.message;
       }
@@ -520,9 +543,35 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                 )}
 
                 {authError && (
-                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-300 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{authError}</span>
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-300 space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{authError}</span>
+                    </div>
+                    {authMode === 'register' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('login');
+                          setAuthError(null);
+                        }}
+                        className="text-sky-600 dark:text-sky-400 underline font-black block pr-6 text-xs hover:text-sky-500"
+                      >
+                        اضغط هنا لتسجيل الدخول بهذا المعرّف ←
+                      </button>
+                    )}
+                    {authMode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('register');
+                          setAuthError(null);
+                        }}
+                        className="text-emerald-600 dark:text-emerald-400 underline font-black block pr-6 text-xs hover:text-emerald-500"
+                      >
+                        حساب جديد؟ اضغط هنا لإنشاء حساب الآن ←
+                      </button>
+                    )}
                   </div>
                 )}
 
