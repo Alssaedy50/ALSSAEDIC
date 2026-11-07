@@ -101,8 +101,43 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      handleAppearanceChange('customLogoDataUrl', String(reader.result || ''));
-      notify('تم اختيار الشعار، اضغط حفظ لاعتماده', 'info');
+      const rawDataUrl = String(reader.result || '');
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 220;
+          let w = img.width || maxDim;
+          let h = img.height || maxDim;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            const optimized = canvas.toDataURL('image/png', 0.85);
+            handleAppearanceChange('customLogoDataUrl', optimized);
+          } else {
+            handleAppearanceChange('customLogoDataUrl', rawDataUrl);
+          }
+        } catch {
+          handleAppearanceChange('customLogoDataUrl', rawDataUrl);
+        }
+        notify('تم اختيار الشعار وضغط حجمه تلقائياً، اضغط حفظ لاعتماده', 'info');
+      };
+      img.onerror = () => {
+        handleAppearanceChange('customLogoDataUrl', rawDataUrl);
+        notify('تم اختيار الشعار، اضغط حفظ لاعتماده', 'info');
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   };

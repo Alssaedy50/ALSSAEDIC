@@ -275,9 +275,19 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       }
 
       if (data.toothFDI) {
+        ctx.textAlign = 'right';
         ctx.fillStyle = '#475569';
         ctx.font = '700 12px "Tajawal", sans-serif';
-        ctx.fillText(`أرقام الأسنان (FDI): ${data.toothFDI}`, W - 16, y);
+        const fdiLabel = 'أرقام الأسنان (FDI):';
+        ctx.fillText(fdiLabel, W - 16, y);
+        const fdiLabelW = ctx.measureText(fdiLabel).width;
+        ctx.save();
+        ctx.direction = 'ltr';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#0C4A6E';
+        ctx.font = '800 12px "JetBrains Mono", monospace';
+        ctx.fillText(data.toothFDI, W - 16 - fdiLabelW - 8, y);
+        ctx.restore();
         y += 22;
       }
 
@@ -404,7 +414,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     // ==================== STANDARD A5 LANDSCAPE RECEIPT ====================
     const W = 760;
     measureCtx.font = '800 14px "Tajawal", sans-serif';
-    const serviceLines = wrapCanvasText(measureCtx, servicesText, W - 245);
+    const serviceLines = wrapCanvasText(measureCtx, servicesText, W - 240);
     const wordsLines = wrapCanvasText(measureCtx, data.amountWords, W - 180);
     measureCtx.font = '700 11px "Tajawal", sans-serif';
     const notesLines = wrapCanvasText(
@@ -418,7 +428,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     const extraNotesH = Math.max(0, notesLines.length - 1) * 16;
 
     const H =
-      (data.toothFDI ? 625 : 585) + extraServiceH + extraWordsH + extraNotesH;
+      (data.toothFDI ? 640 : 600) + extraServiceH + extraWordsH + extraNotesH;
 
     canvas.width = W * scale;
     canvas.height = H * scale;
@@ -433,11 +443,11 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, W - 4, H - 4);
 
-    // Watermark centered in the body area above the QR row so it never overlaps the QR code
+    // Subtle Watermark centered cleanly in the upper body area so it never overlaps financial boxes or text
     if (logoImg) {
       ctx.save();
-      ctx.globalAlpha = (settings.appearance.watermarkOpacity || 6) / 100;
-      ctx.drawImage(logoImg, (W - 180) / 2, 175, 180, 180);
+      ctx.globalAlpha = Math.min(settings.appearance.watermarkOpacity || 4, 5) / 100;
+      ctx.drawImage(logoImg, (W - 140) / 2, 168, 140, 140);
       ctx.restore();
     }
 
@@ -445,23 +455,26 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.textAlign = 'right';
     ctx.fillStyle = '#0F172A';
     ctx.font = '900 18px "Tajawal", sans-serif';
-    ctx.fillText(settings.identity.doctorAr, W - 24, 42);
+    ctx.fillText(settings.identity.doctorAr, W - 24, 38);
     ctx.fillStyle = '#075985';
     ctx.font = '800 13px "Tajawal", sans-serif';
-    ctx.fillText(settings.identity.specialtyAr, W - 24, 64);
+    ctx.fillText(settings.identity.specialtyAr, W - 24, 59);
+    ctx.fillStyle = '#475569';
+    ctx.font = '700 12px "Tajawal", sans-serif';
+    ctx.fillText(settings.identity.clinicAr, W - 24, 79);
 
     // Center Logo & Capsule
     if (logoImg) {
-      ctx.drawImage(logoImg, (W - 48) / 2, 16, 48, 48);
+      ctx.drawImage(logoImg, (W - 48) / 2, 14, 48, 48);
     }
     ctx.fillStyle = '#0F172A';
     ctx.beginPath();
-    ctx.roundRect((W - 220) / 2, 70, 220, 26, 13);
+    ctx.roundRect((W - 224) / 2, 68, 224, 26, 13);
     ctx.fill();
     ctx.fillStyle = '#FFFFFF';
     ctx.textAlign = 'center';
     ctx.font = '900 12px "Tajawal", sans-serif';
-    ctx.fillText('سند قبض مالي | RECEIPT VOUCHER', W / 2, 87);
+    ctx.fillText('سند قبض مالي | RECEIPT VOUCHER', W / 2, 85);
 
     // Left English Identity
     ctx.save();
@@ -479,8 +492,8 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.strokeStyle = '#1E293B';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(24, 108);
-    ctx.lineTo(W - 24, 108);
+    ctx.moveTo(24, 106);
+    ctx.lineTo(W - 24, 106);
     ctx.stroke();
 
     // 2. Meta Strip (Receipt No, Date, Payment Method)
@@ -488,30 +501,51 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.strokeStyle = '#CBD5E1';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(24, 120, W - 48, 38, 10);
+    ctx.roundRect(24, 118, W - 48, 38, 10);
     ctx.fill();
     ctx.stroke();
 
+    // Right: Receipt Number
     ctx.textAlign = 'right';
     ctx.font = '800 13px "Tajawal", sans-serif';
     ctx.fillStyle = '#64748B';
-    ctx.fillText('رقم السند:', W - 38, 144);
+    const noLabel = 'رقم السند:';
+    ctx.fillText(noLabel, W - 38, 142);
+    const noLabelW = ctx.measureText(noLabel).width;
     ctx.save();
     ctx.direction = 'ltr';
     ctx.textAlign = 'right';
     ctx.fillStyle = '#BE123C';
     ctx.font = '900 14px "JetBrains Mono", monospace';
-    ctx.fillText(`#${data.receiptNo}`, W - 108, 144);
+    ctx.fillText(`#${data.receiptNo}`, W - 38 - noLabelW - 8, 142);
     ctx.restore();
 
-    ctx.textAlign = 'center';
+    // Center: Date (rendered with LTR direction on the date value so YYYY-MM-DD never reverses)
+    ctx.font = '800 13px "Tajawal", sans-serif';
+    const dateLabel = 'التاريخ:';
+    const dateLabelW = ctx.measureText(dateLabel).width;
+    ctx.font = '800 13px "JetBrains Mono", monospace';
+    const dateValW = ctx.measureText(data.date).width;
+    const totalDateW = dateLabelW + 8 + dateValW;
+    const dateStartRight = W / 2 + totalDateW / 2;
+
+    ctx.textAlign = 'right';
     ctx.fillStyle = '#64748B';
     ctx.font = '800 13px "Tajawal", sans-serif';
-    ctx.fillText(`التاريخ: ${data.date}`, W / 2, 144);
+    ctx.fillText(dateLabel, dateStartRight, 142);
+    ctx.save();
+    ctx.direction = 'ltr';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#0F172A';
+    ctx.font = '800 13px "JetBrains Mono", monospace';
+    ctx.fillText(data.date, dateStartRight - dateLabelW - 8, 142);
+    ctx.restore();
 
+    // Left: Payment Method
     ctx.textAlign = 'left';
     ctx.fillStyle = '#0F172A';
-    ctx.fillText(`الدفع: ${data.paymentMethod}`, 38, 144);
+    ctx.font = '800 13px "Tajawal", sans-serif';
+    ctx.fillText(`الدفع: ${data.paymentMethod}`, 38, 142);
 
     // 3. Patient & Services Rows
     let y = 186;
@@ -530,15 +564,32 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.textAlign = 'right';
     ctx.fillStyle = '#475569';
     ctx.font = '700 14px "Tajawal", sans-serif';
-    ctx.fillText('استلمنا من /', W - 24, y);
+    const fromLabel = 'استلمنا من /';
+    ctx.fillText(fromLabel, W - 24, y);
+    const fromLabelW = ctx.measureText(fromLabel).width;
     ctx.fillStyle = '#020617';
     ctx.font = '900 15px "Tajawal", sans-serif';
-    ctx.fillText(`${data.patientName || '....................'} المحترم`, W - 110, y);
+    ctx.fillText(
+      `${data.patientName || '....................'} المحترم`,
+      W - 24 - fromLabelW - 10,
+      y
+    );
+
+    // Left: Patient Phone (LTR number on the left, Arabic label immediately to its right)
+    const phoneText = data.patientPhone || '—';
+    ctx.save();
+    ctx.direction = 'ltr';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0F172A';
+    ctx.font = '800 13px "JetBrains Mono", monospace';
+    ctx.fillText(phoneText, 24, y);
+    const phoneValW = ctx.measureText(phoneText).width;
+    ctx.restore();
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#475569';
     ctx.font = '700 13px "Tajawal", sans-serif';
-    ctx.fillText(`هاتف: ${data.patientPhone || '—'}`, 24, y);
+    ctx.fillText('هاتف:', 24 + phoneValW + 8, y);
     drawDashedLine(y + 12);
 
     // Wrapped Services
@@ -546,11 +597,13 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.textAlign = 'right';
     ctx.fillStyle = '#475569';
     ctx.font = '700 14px "Tajawal", sans-serif';
-    ctx.fillText('وذلك مقابل (الخدمات العلاجية):', W - 24, y);
+    const srvLabel = 'وذلك مقابل (الخدمات العلاجية):';
+    ctx.fillText(srvLabel, W - 24, y);
+    const srvLabelW = ctx.measureText(srvLabel).width;
     ctx.fillStyle = '#0C4A6E';
     ctx.font = '800 14px "Tajawal", sans-serif';
     serviceLines.forEach((line, idx) => {
-      ctx.fillText(line, W - 220, y + idx * 22);
+      ctx.fillText(line, W - 24 - srvLabelW - 10, y + idx * 22);
     });
     y += extraServiceH;
     drawDashedLine(y + 12);
@@ -560,10 +613,16 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       ctx.textAlign = 'right';
       ctx.fillStyle = '#475569';
       ctx.font = '700 14px "Tajawal", sans-serif';
-      ctx.fillText('أرقام الأسنان (FDI):', W - 24, y);
+      const fdiLabel = 'أرقام الأسنان (FDI):';
+      ctx.fillText(fdiLabel, W - 24, y);
+      const fdiLabelW = ctx.measureText(fdiLabel).width;
+      ctx.save();
+      ctx.direction = 'ltr';
+      ctx.textAlign = 'right';
       ctx.fillStyle = '#0C4A6E';
-      ctx.font = '800 14px "Tajawal", sans-serif';
-      ctx.fillText(data.toothFDI, W - 165, y);
+      ctx.font = '800 14px "JetBrains Mono", monospace';
+      ctx.fillText(data.toothFDI, W - 24 - fdiLabelW - 10, y);
+      ctx.restore();
       drawDashedLine(y + 12);
     }
 
@@ -572,11 +631,13 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.textAlign = 'right';
     ctx.fillStyle = '#475569';
     ctx.font = '700 14px "Tajawal", sans-serif';
-    ctx.fillText('مبلغاً وقدره كتابةً:', W - 24, y);
+    const wordsLabel = 'مبلغاً وقدره كتابةً:';
+    ctx.fillText(wordsLabel, W - 24, y);
+    const wordsLabelW = ctx.measureText(wordsLabel).width;
     ctx.fillStyle = '#0F172A';
     ctx.font = '800 14px "Tajawal", sans-serif';
     wordsLines.forEach((line, idx) => {
-      ctx.fillText(line, W - 155, y + idx * 22);
+      ctx.fillText(line, W - 24 - wordsLabelW - 10, y + idx * 22);
     });
     y += extraWordsH;
     drawDashedLine(y + 12);
@@ -659,21 +720,21 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       ctx.fillText('التوقيع والختم', b1X + boxW / 2, y + 50);
     }
 
-    // Center QR & Wrapped Notes
+    // Center QR & Wrapped Notes aligned cleanly with signature boxes
     if (qrImg) {
       ctx.fillStyle = '#FFFFFF';
       ctx.strokeStyle = '#E2E8F0';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(W / 2 - 40, y + 2, 80, 76, 8);
+      ctx.roundRect(W / 2 - 37, y + 8, 74, 70, 8);
       ctx.fill();
       ctx.stroke();
-      ctx.drawImage(qrImg, W / 2 - 35, y + 5, 70, 70);
+      ctx.drawImage(qrImg, W / 2 - 32, y + 11, 64, 64);
     }
     ctx.fillStyle = '#475569';
     ctx.font = '700 11px "Tajawal", sans-serif';
     notesLines.forEach((line, idx) => {
-      ctx.fillText(line, W / 2, y + 90 + idx * 16);
+      ctx.fillText(line, W / 2, y + 92 + idx * 16);
     });
 
     // Left signature: Receiver
@@ -983,8 +1044,8 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
           alt=""
           aria-hidden="true"
           referrerPolicy="no-referrer"
-          className="pointer-events-none select-none absolute top-32 left-1/2 -translate-x-1/2 w-44 h-44 sm:w-52 sm:h-52 object-contain"
-          style={{ opacity: (settings.appearance.watermarkOpacity || 6) / 100 }}
+          className="pointer-events-none select-none absolute top-36 left-1/2 -translate-x-1/2 w-36 h-36 sm:w-44 sm:h-44 object-contain"
+          style={{ opacity: Math.min(settings.appearance.watermarkOpacity || 4, 5) / 100 }}
         />
 
         {/* ترويسة السند الثلاثية */}
@@ -1028,22 +1089,25 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
 
         {/* شريط رقم السند والتاريخ وطريقة الدفع (بدون اقتصاص للتاريخ أو الرقم) */}
         <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 mb-3.5 text-[11px] sm:text-xs">
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-slate-500 font-bold">رقم السند:</span>
             <span
               dir="ltr"
-              className="font-black text-rose-700 font-mono tabular-nums whitespace-nowrap"
+              className="inline-block font-black text-rose-700 font-mono tabular-nums whitespace-nowrap"
             >
               #{data.receiptNo}
             </span>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-slate-500 font-bold">التاريخ:</span>
-            <span className="font-extrabold text-slate-900 font-mono tabular-nums whitespace-nowrap">
+            <span
+              dir="ltr"
+              className="inline-block font-extrabold text-slate-900 font-mono tabular-nums whitespace-nowrap"
+            >
               {data.date}
             </span>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <span className="text-slate-500 font-bold">الدفع:</span>
             <span className="font-extrabold text-slate-900">
               {data.paymentMethod}
@@ -1056,16 +1120,16 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-dashed border-slate-300 pb-2">
             <div className="min-w-0">
               <span className="font-bold text-slate-600">استلمنا من /</span>
-              <span className="font-black text-slate-950 mr-1 break-words">
+              <span className="font-black text-slate-950 mr-1.5 break-words">
                 {data.patientName || '....................'}
               </span>
               <span className="font-bold text-slate-600 mr-1">المحترم</span>
             </div>
-            <div className="shrink-0">
+            <div className="shrink-0 flex items-center gap-1">
               <span className="font-bold text-slate-600">هاتف:</span>
               <span
                 dir="ltr"
-                className="inline-block whitespace-nowrap font-bold text-slate-800 mr-1 font-mono tabular-nums"
+                className="inline-block whitespace-nowrap font-bold text-slate-800 font-mono tabular-nums"
               >
                 {data.patientPhone || '—'}
               </span>
@@ -1080,9 +1144,12 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
           </div>
 
           {data.toothFDI && (
-            <div className="border-b border-dashed border-slate-300 pb-2">
+            <div className="border-b border-dashed border-slate-300 pb-2 flex items-center gap-2">
               <span className="font-bold text-slate-600">أرقام الأسنان (FDI):</span>
-              <span dir="ltr" className="font-extrabold text-sky-900 mr-2 font-mono tabular-nums">
+              <span
+                dir="ltr"
+                className="inline-block font-extrabold text-sky-900 font-mono tabular-nums"
+              >
                 {data.toothFDI}
               </span>
             </div>

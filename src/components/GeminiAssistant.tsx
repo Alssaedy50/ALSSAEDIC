@@ -290,19 +290,69 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
   };
 
+  const renderFormattedMessageText = (rawText: string, isUser: boolean) => {
+    const lines = String(rawText || '').split('\n');
+    const englishParenRegex = /\(([A-Za-z0-9][^()\u0600-\u06FF]*)\)/g;
+
+    return lines.map((line, lineIdx) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return <div key={lineIdx} className="h-2" />;
+      }
+
+      const parts: React.ReactNode[] = [];
+      let lastIdx = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = englishParenRegex.exec(line)) !== null) {
+        if (match.index > lastIdx) {
+          parts.push(line.slice(lastIdx, match.index));
+        }
+        const term = match[1].trim();
+        parts.push(
+          <span
+            key={`${lineIdx}_${match.index}`}
+            dir="ltr"
+            className={`inline-block px-1.5 py-0.5 mx-0.5 rounded-md font-mono text-[11px] font-bold leading-tight align-baseline ${
+              isUser
+                ? 'bg-white/20 text-white'
+                : 'bg-sky-500/10 border border-sky-500/20 text-sky-700 dark:text-sky-300'
+            }`}
+          >
+            {term}
+          </span>
+        );
+        lastIdx = match.index + match[0].length;
+      }
+
+      if (lastIdx < line.length) {
+        parts.push(line.slice(lastIdx));
+      }
+
+      return (
+        <p key={lineIdx} className="leading-relaxed break-words">
+          {parts.length > 0 ? parts : line}
+        </p>
+      );
+    });
+  };
+
   return (
     <div className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-[calc(100dvh-10.5rem)] md:h-[calc(100dvh-6.5rem)] overflow-hidden shadow-xs">
-      {/* Clean Integrated Assistant Top Bar (No Duplicate Header) */}
-      <div className="shrink-0 px-3.5 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5 min-w-0">
+      {/* Clean Integrated Assistant Top Bar (No Truncation on Mobile) */}
+      <div className="shrink-0 px-3 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
             <Sparkles className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 truncate">
-              المساعد الطبي والمالي الذكي
+            <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">
+              المساعد الطبي والمالي
             </h2>
-            <p className="text-[10px] sm:text-[11px] font-bold text-sky-600 dark:text-sky-400 truncate">
+            <p
+              dir="ltr"
+              className="text-[10px] sm:text-[11px] font-bold text-sky-600 dark:text-sky-400 text-right truncate"
+            >
               Gemini 2.5 Flash
             </p>
           </div>
@@ -312,9 +362,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <button
             type="button"
             onClick={onClearMessages}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl shrink-0 transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] sm:text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl shrink-0 transition-colors whitespace-nowrap"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-3.5 h-3.5 shrink-0" />
             <span>مسح المحادثة</span>
           </button>
         )}
@@ -328,7 +378,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             type="button"
             onClick={() => sendMessage(q)}
             disabled={isSending}
-            className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+            className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors whitespace-nowrap"
           >
             {q}
           </button>
@@ -336,8 +386,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       </div>
 
       {/* Scrollable Messages Area */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-4">
-        <div className="max-w-4xl mx-auto h-full space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-5 py-3.5">
+        <div className="max-w-4xl mx-auto space-y-3.5">
           {messages.length === 0 ? (
             <div className="min-h-[42vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-3 px-4">
               <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
@@ -354,14 +404,14 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             messages.map((msg) => (
               <div
                 key={msg.id}
-                className={`flex items-start gap-2.5 sm:gap-3 ${
-                  msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
+                className={`flex items-start gap-2.5 ${
+                  msg.role === 'user' ? 'justify-end' : 'justify-start'
                 }`}
               >
                 <div
-                  className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                  className={`hidden sm:flex w-8 h-8 rounded-xl items-center justify-center shrink-0 ${
                     msg.role === 'user'
-                      ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                      ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 order-2'
                       : 'bg-sky-600 text-white'
                   }`}
                 >
@@ -373,12 +423,33 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                 </div>
 
                 <div
-                  className={`max-w-[88%] sm:max-w-[80%] rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed space-y-2 break-words shadow-2xs ${
+                  className={`w-full sm:w-auto sm:max-w-[84%] rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm space-y-2 break-words shadow-2xs ${
                     msg.role === 'user'
                       ? 'bg-sky-600 text-white'
-                      : 'bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
+                      : 'bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
                   }`}
                 >
+                  {/* Mobile compact sender header so bubble gets 100% width */}
+                  <div
+                    className={`flex sm:hidden items-center justify-between gap-2 pb-1.5 border-b text-[11px] font-bold ${
+                      msg.role === 'user'
+                        ? 'border-white/20 text-white/90'
+                        : 'border-slate-200 dark:border-slate-800 text-sky-600 dark:text-sky-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {msg.role === 'user' ? (
+                        <User className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
+                        <Bot className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      <span>{msg.role === 'user' ? 'أنت' : 'المساعد الذكي'}</span>
+                    </div>
+                    <span className="font-mono tabular-nums text-[10px] opacity-80">
+                      {msg.timestamp}
+                    </span>
+                  </div>
+
                   {msg.attachmentPreview && (
                     <img
                       src={msg.attachmentPreview}
@@ -386,7 +457,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                       className="max-h-56 rounded-xl border border-slate-300 dark:border-slate-700 object-contain"
                     />
                   )}
-                  <div className="whitespace-pre-line">{msg.text}</div>
+
+                  <div className="space-y-1.5">
+                    {renderFormattedMessageText(msg.text, msg.role === 'user')}
+                  </div>
+
                   <div
                     className={`flex items-center justify-between gap-4 pt-1.5 border-t text-[10px] ${
                       msg.role === 'user'
@@ -454,7 +529,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           e.preventDefault();
           sendMessage();
         }}
-        className="shrink-0 p-2.5 sm:px-5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+        className="shrink-0 p-2 sm:px-5 sm:py-2.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
       >
         <div className="max-w-4xl mx-auto flex items-center gap-1.5 sm:gap-2">
           <input
@@ -468,7 +543,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="w-10 h-10 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 shrink-0 transition-colors"
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 shrink-0 transition-colors"
             title="إرفاق صورة أشعة أو ملف"
           >
             <ImagePlus className="w-4 h-4" />
@@ -477,7 +552,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <button
             type="button"
             onClick={toggleVoiceInput}
-            className={`w-10 h-10 flex items-center justify-center rounded-xl border shrink-0 transition-colors ${
+            className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border shrink-0 transition-colors ${
               isListening
                 ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
                 : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500'
@@ -491,8 +566,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="اكتب سؤالك المالي أو الطبي أو أرفق صورة أشعة..."
-            className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
+            placeholder="اكتب سؤالك الطبي أو المالي..."
+            className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
           />
 
           <button
@@ -500,7 +575,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             disabled={isSending || (!input.trim() && !attachment)}
             aria-label="إرسال"
             title="إرسال"
-            className="w-10 h-10 inline-flex items-center justify-center text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
+            className="w-9 h-9 sm:w-10 sm:h-10 inline-flex items-center justify-center text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs"
           >
             <Send className="w-4 h-4" />
           </button>

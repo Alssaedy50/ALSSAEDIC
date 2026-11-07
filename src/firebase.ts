@@ -2,8 +2,10 @@ import { initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
   User,
+  createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
@@ -31,6 +33,7 @@ import {
   InventoryItem,
   ReceiptRecord,
 } from './types/clinic';
+import { numberToArabicWords } from './utils/arabicTafqeet';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -100,7 +103,39 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// ==================== DEFENSIVE SANITIZATION HELPERS ====================
+// ==================== RELIABLE CLOUD RETRY HELPER ====================
+export async function withCloudRetry<T>(
+  operation: () => Promise<T>,
+  maxAttempts = 3,
+  baseDelayMs = 350
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+      // Do not retry permanent permission or authentication errors
+      if (
+        msg.includes('permission-denied') ||
+        msg.includes('missing or insufficient permissions') ||
+        msg.includes('unauthenticated') ||
+        msg.includes('invalid-credential') ||
+        msg.includes('wrong-password')
+      ) {
+        throw err;
+      }
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// ==================== DEFENSIVE SANITIZATION & FINANCIAL VALIDATION ====================
 export function sanitizeId(id: string): string {
   const cleaned = String(id || '')
     .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -120,6 +155,167 @@ export function sanitizeNum(val: unknown, min = 0, max = 1000000000): number {
   return Math.min(max, Math.max(min, num));
 }
 
+export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptRecord {
+  const rawTotal = Number(receipt.totalAmount);
+  const rawPaid = Number(receipt.paidAmount);
+  if (!Number.isFinite(rawTotal) || rawTotal < 0) {
+    throw new Error('قيمة إجمالي السند المالي غير صالحة.');
+  }
+  if (!Number.isFinite(rawPaid) || rawPaid < 0) {
+    throw new Error('قيمة المبلغ المدفوع في السند غير صالحة.');
+  }
+  const totalAmount = sanitizeNum(rawTotal, 0, 1000000000);
+  const paidAmount = sanitizeNum(Math.min(totalAmount, rawPaid), 0, totalAmount);
+  const remainingAmount = Math.max(0, +(totalAmount - paidAmount).toFixed(2));
+  const currency = sanitizeStr(receipt.currency, 40, 'ريال يمني') as CurrencyCode;
+  const patientName = sanitizeStr(receipt.patientName, 160, '');
+  if (!patientName) {
+    throw new Error('اسم المريض مطلوب لحفظ السند المالي.');
+  }
+
+  return {
+    ...receipt,
+    id: sanitizeId(receipt.id || `rec_${Date.now()}`),
+    receiptNo: sanitizeNum(receipt.receiptNo, 1, 99999999),
+    date: sanitizeStr(receipt.date, 30, new Date().toISOString().slice(0, 10)),
+    patientName,
+    patientPhone: sanitizeStr(receipt.patientPhone, 50, ''),
+    services: (Array.isArray(receipt.services) ? receipt.services : [])
+      .slice(0, 25)
+      .map((s) => sanitizeStr(s, 140, 'كشف')),
+    toothFDI: sanitizeStr(receipt.toothFDI, 200, ''),
+    totalAmount,
+    paidAmount,
+    remainingAmount,
+    currency,
+    paymentMethod: sanitizeStr(receipt.paymentMethod, 80, 'نقداً (Cash)'),
+    notes: sanitizeStr(receipt.notes, 500, ''),
+    amountWords: sanitizeStr(
+      receipt.amountWords || numberToArabicWords(paidAmount, currency),
+      300,
+      'فقط صفر ريال يمني لا غير'
+    ),
+    accountantSig: sanitizeStr(receipt.accountantSig, 250000, ''),
+    receiverSig: sanitizeStr(receipt.receiverSig, 250000, ''),
+    paperFormat: receipt.paperFormat === 'thermal80' ? 'thermal80' : 'a5',
+    createdAt: sanitizeStr(receipt.createdAt, 40, new Date().toISOString()),
+  };
+}
+
+export function validateAndNormalizeInventoryItem(item: InventoryItem): InventoryItem {
+  const name = sanitizeStr(item.name, 160, '');
+  if (!name) {
+    throw new Error('اسم الصنف الطبي مطلوب.');
+  }
+  const qty = sanitizeNum(item.qty, 0, 1000000);
+  const minQty = sanitizeNum(item.minQty, 0, 1000000);
+  const unitPrice = sanitizeNum(item.unitPrice, 0, 100000000);
+  const totalCost = sanitizeNum(+(qty * unitPrice).toFixed(2), 0, 1000000000);
+
+  return {
+    ...item,
+    id: sanitizeId(item.id || `inv_${Date.now()}`),
+    name,
+    notes: sanitizeStr(item.notes, 160, ''),
+    qty,
+    minQty,
+    unit: sanitizeStr(item.unit, 50, 'قطعة'),
+    unitPrice,
+    totalCost,
+    linkedService: sanitizeStr(item.linkedService, 140, ''),
+    updatedAt: sanitizeStr(item.updatedAt, 30, new Date().toISOString().slice(0, 10)),
+  };
+}
+
+export function validateAndNormalizeExpense(expense: ExpenseRecord): ExpenseRecord {
+  const title = sanitizeStr(expense.title, 200, '');
+  if (!title) {
+    throw new Error('عنوان المصروف مطلوب.');
+  }
+  const amount = sanitizeNum(expense.amount, 0, 1000000000);
+  return {
+    ...expense,
+    id: sanitizeId(expense.id || `exp_${Date.now()}`),
+    title,
+    amount,
+    category: sanitizeStr(expense.category, 100, 'تشغيل'),
+    currency: sanitizeStr(expense.currency, 40, 'ريال يمني') as CurrencyCode,
+    date: sanitizeStr(expense.date, 30, new Date().toISOString().slice(0, 10)),
+  };
+}
+
+// ==================== NON-DESTRUCTIVE RECORD MERGE HELPERS ====================
+function mergeByIdPreservingExisting<T extends { id: string }>(
+  cloudItems: T[],
+  localItems: T[]
+): T[] {
+  const map = new Map<string, T>();
+  for (const item of localItems) {
+    if (item && item.id) {
+      map.set(item.id, item);
+    }
+  }
+  for (const item of cloudItems) {
+    if (item && item.id) {
+      map.set(item.id, item);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// ==================== SERVER SESSION TOKEN ISSUANCE ====================
+export async function issueServerSessionToken(params: {
+  clinicId: string;
+  ownerUid: string;
+  password?: string;
+  storedPasswordVerifier?: string;
+}): Promise<{
+  ok: boolean;
+  sessionToken: string;
+  expiresAt: string;
+  passwordVerifier?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const rawText = await res.text();
+    if (!rawText || rawText.trim().startsWith('<')) {
+      return {
+        ok: false,
+        sessionToken: '',
+        expiresAt: '',
+        error: 'تعذر التحقق من جلسة الخادم.',
+      };
+    }
+    const parsed = JSON.parse(rawText);
+    if (!res.ok || !parsed?.ok || !parsed?.sessionToken) {
+      return {
+        ok: false,
+        sessionToken: '',
+        expiresAt: '',
+        error: parsed?.error || 'فشل التحقق من بيانات جلسة الأمان.',
+      };
+    }
+    return {
+      ok: true,
+      sessionToken: String(parsed.sessionToken),
+      expiresAt: String(parsed.expiresAt),
+      passwordVerifier: parsed.passwordVerifier ? String(parsed.passwordVerifier) : undefined,
+    };
+  } catch {
+    return {
+      ok: false,
+      sessionToken: '',
+      expiresAt: '',
+      error: 'تعذر الاتصال بخادم المصادقة.',
+    };
+  }
+}
+
 // ==================== AUTHENTICATION ====================
 export async function signInWithGoogleAccount(): Promise<User> {
   const provider = new GoogleAuthProvider();
@@ -135,39 +331,56 @@ export async function signOutAccount(): Promise<void> {
 export { onAuthStateChanged };
 export type { User };
 
-// ==================== CLOUD FIRESTORE OPERATIONS ====================
+// ==================== AUTHORITATIVE CLOUD FIRESTORE OPERATIONS ====================
 
 export async function ensureClinicDocumentInCloud(
   uid: string,
   settings: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('يجب تسجيل الدخول بحساب العيادة الموثق قبل الكتابة في السحابة.');
+  }
   const clinicPath = `clinics/${safeUid}`;
   const ref = doc(db, 'clinics', safeUid);
 
   try {
-    const snap = await getDoc(ref);
-    if (!snap.exists()) {
-      await setDoc(ref, {
-        ownerId: safeUid,
-        clinicAr: sanitizeStr(settings.identity.clinicAr, 160, 'عيادة السعيدي لطب وجراحة الفم والأسنان'),
-        doctorAr: sanitizeStr(settings.identity.doctorAr, 160, 'د. صلاح الدين السعيدي'),
-        specialtyAr: sanitizeStr(settings.identity.specialtyAr, 200, 'طب وجراحة الفم والأسنان وتجميل الابتسامة'),
-        clinicEn: sanitizeStr(settings.identity.clinicEn, 160, 'ALSSAEDY CLINIC FOR DENTISTRY'),
-        doctorEn: sanitizeStr(settings.identity.doctorEn, 160, 'Dr. Salahaldeen Alssaedy'),
-        address: sanitizeStr(settings.identity.address, 250, 'ريمة - كسمة - عزلة الضبارة'),
-        phones: sanitizeStr(settings.identity.phones, 200, '+967 775 956 520'),
-        defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
-        primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
-        watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
-        autoInventory: Boolean(settings.features.autoInventory),
-        showQrCode: Boolean(settings.features.showQrCode),
-        customLogoDataUrl: sanitizeStr(settings.appearance.customLogoDataUrl, 350000, ''),
-        permanentAccountantSig: sanitizeStr(settings.appearance.permanentAccountantSig, 250000, ''),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
+    await withCloudRetry(async () => {
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, {
+          ownerId: safeUid,
+          clinicAr: sanitizeStr(
+            settings.identity.clinicAr,
+            160,
+            'عيادة السعيدي لطب وجراحة الفم والأسنان'
+          ),
+          doctorAr: sanitizeStr(settings.identity.doctorAr, 160, 'د. صلاح الدين السعيدي'),
+          specialtyAr: sanitizeStr(
+            settings.identity.specialtyAr,
+            200,
+            'طب وجراحة الفم والأسنان وتجميل الابتسامة'
+          ),
+          clinicEn: sanitizeStr(settings.identity.clinicEn, 160, 'ALSSAEDY CLINIC FOR DENTISTRY'),
+          doctorEn: sanitizeStr(settings.identity.doctorEn, 160, 'Dr. Salahaldeen Alssaedy'),
+          address: sanitizeStr(settings.identity.address, 250, 'ريمة - كسمة - عزلة الضبارة'),
+          phones: sanitizeStr(settings.identity.phones, 200, '+967 775 956 520'),
+          defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
+          primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
+          watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
+          autoInventory: Boolean(settings.features.autoInventory),
+          showQrCode: Boolean(settings.features.showQrCode),
+          customLogoDataUrl: sanitizeStr(settings.appearance.customLogoDataUrl, 350000, ''),
+          permanentAccountantSig: sanitizeStr(
+            settings.appearance.permanentAccountantSig,
+            250000,
+            ''
+          ),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, clinicPath);
   }
@@ -178,38 +391,55 @@ export async function saveClinicSettingsToCloud(
   settings: ClinicSettings
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بتعديل إعدادات عيادة أخرى.');
+  }
   const clinicPath = `clinics/${safeUid}`;
   const ref = doc(db, 'clinics', safeUid);
 
   try {
-    const snap = await getDoc(ref);
-    const payload = {
-      clinicAr: sanitizeStr(settings.identity.clinicAr, 160, 'عيادة السعيدي لطب وجراحة الفم والأسنان'),
-      doctorAr: sanitizeStr(settings.identity.doctorAr, 160, 'د. صلاح الدين السعيدي'),
-      specialtyAr: sanitizeStr(settings.identity.specialtyAr, 200, 'طب وجراحة الفم والأسنان وتجميل الابتسامة'),
-      clinicEn: sanitizeStr(settings.identity.clinicEn, 160, 'ALSSAEDY CLINIC FOR DENTISTRY'),
-      doctorEn: sanitizeStr(settings.identity.doctorEn, 160, 'Dr. Salahaldeen Alssaedy'),
-      address: sanitizeStr(settings.identity.address, 250, 'ريمة - كسمة - عزلة الضبارة'),
-      phones: sanitizeStr(settings.identity.phones, 200, '+967 775 956 520'),
-      defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
-      primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
-      watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
-      autoInventory: Boolean(settings.features.autoInventory),
-      showQrCode: Boolean(settings.features.showQrCode),
-      customLogoDataUrl: sanitizeStr(settings.appearance.customLogoDataUrl, 350000, ''),
-      permanentAccountantSig: sanitizeStr(settings.appearance.permanentAccountantSig, 250000, ''),
-      updatedAt: serverTimestamp(),
-    };
+    await withCloudRetry(async () => {
+      const snap = await getDoc(ref);
+      const payload = {
+        clinicAr: sanitizeStr(
+          settings.identity.clinicAr,
+          160,
+          'عيادة السعيدي لطب وجراحة الفم والأسنان'
+        ),
+        doctorAr: sanitizeStr(settings.identity.doctorAr, 160, 'د. صلاح الدين السعيدي'),
+        specialtyAr: sanitizeStr(
+          settings.identity.specialtyAr,
+          200,
+          'طب وجراحة الفم والأسنان وتجميل الابتسامة'
+        ),
+        clinicEn: sanitizeStr(settings.identity.clinicEn, 160, 'ALSSAEDY CLINIC FOR DENTISTRY'),
+        doctorEn: sanitizeStr(settings.identity.doctorEn, 160, 'Dr. Salahaldeen Alssaedy'),
+        address: sanitizeStr(settings.identity.address, 250, 'ريمة - كسمة - عزلة الضبارة'),
+        phones: sanitizeStr(settings.identity.phones, 200, '+967 775 956 520'),
+        defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
+        primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
+        watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
+        autoInventory: Boolean(settings.features.autoInventory),
+        showQrCode: Boolean(settings.features.showQrCode),
+        customLogoDataUrl: sanitizeStr(settings.appearance.customLogoDataUrl, 350000, ''),
+        permanentAccountantSig: sanitizeStr(
+          settings.appearance.permanentAccountantSig,
+          250000,
+          ''
+        ),
+        updatedAt: serverTimestamp(),
+      };
 
-    if (snap.exists()) {
-      await updateDoc(ref, payload);
-    } else {
-      await setDoc(ref, {
-        ownerId: safeUid,
-        ...payload,
-        createdAt: serverTimestamp(),
-      });
-    }
+      if (snap.exists()) {
+        await updateDoc(ref, payload);
+      } else {
+        await setDoc(ref, {
+          ownerId: safeUid,
+          ...payload,
+          createdAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, clinicPath);
   }
@@ -220,6 +450,9 @@ export async function saveServiceToCloud(
   service: DentalServiceItem
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحفظ خدمات لعيادة أخرى.');
+  }
   const docId = sanitizeId(`${safeUid}_${service.id}`);
   const path = `services/${docId}`;
   const ref = doc(db, 'services', docId);
@@ -234,26 +467,28 @@ export async function saveServiceToCloud(
     .map((k) => sanitizeStr(k, 80, safeName));
 
   try {
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      await updateDoc(ref, {
-        name: safeName,
-        price: sanitizeNum(service.price, 0, 100000000),
-        category: safeCategory,
-        keywords: safeKeywords,
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      await setDoc(ref, {
-        ownerId: safeUid,
-        name: safeName,
-        price: sanitizeNum(service.price, 0, 100000000),
-        category: safeCategory,
-        keywords: safeKeywords,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
+    await withCloudRetry(async () => {
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        await updateDoc(ref, {
+          name: safeName,
+          price: sanitizeNum(service.price, 0, 100000000),
+          category: safeCategory,
+          keywords: safeKeywords,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(ref, {
+          ownerId: safeUid,
+          name: safeName,
+          price: sanitizeNum(service.price, 0, 100000000),
+          category: safeCategory,
+          keywords: safeKeywords,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -261,10 +496,13 @@ export async function saveServiceToCloud(
 
 export async function deleteServiceFromCloud(uid: string, serviceId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحذف خدمات لعيادة أخرى.');
+  }
   const docId = sanitizeId(`${safeUid}_${serviceId}`);
   const path = `services/${docId}`;
   try {
-    await deleteDoc(doc(db, 'services', docId));
+    await withCloudRetry(() => deleteDoc(doc(db, 'services', docId)));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -275,45 +513,47 @@ export async function saveReceiptToCloud(
   receipt: ReceiptRecord
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  const docId = sanitizeId(`${safeUid}_${receipt.id}`);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحفظ سندات لعيادة أخرى.');
+  }
+  const validated = validateAndNormalizeReceipt(receipt);
+  const docId = sanitizeId(`${safeUid}_${validated.id}`);
   const path = `receipts/${docId}`;
   const ref = doc(db, 'receipts', docId);
 
-  const boundedServices = (Array.isArray(receipt.services) ? receipt.services : [])
-    .slice(0, 25)
-    .map((s) => sanitizeStr(s, 140, 'كشف'));
-
   try {
-    const snap = await getDoc(ref);
-    const mutableFields = {
-      receiptNo: sanitizeNum(receipt.receiptNo, 1, 99999999),
-      date: sanitizeStr(receipt.date, 30, new Date().toISOString().slice(0, 10)),
-      patientName: sanitizeStr(receipt.patientName, 160, 'مريض'),
-      patientPhone: sanitizeStr(receipt.patientPhone, 50, ''),
-      services: boundedServices,
-      toothFDI: sanitizeStr(receipt.toothFDI, 200, ''),
-      totalAmount: sanitizeNum(receipt.totalAmount, 0, 1000000000),
-      paidAmount: sanitizeNum(receipt.paidAmount, 0, 1000000000),
-      remainingAmount: sanitizeNum(receipt.remainingAmount, 0, 1000000000),
-      currency: sanitizeStr(receipt.currency, 40, 'ريال يمني'),
-      paymentMethod: sanitizeStr(receipt.paymentMethod, 80, 'نقداً (Cash)'),
-      notes: sanitizeStr(receipt.notes, 500, ''),
-      amountWords: sanitizeStr(receipt.amountWords, 300, 'فقط صفر ريال يمني لا غير'),
-      accountantSig: sanitizeStr(receipt.accountantSig, 250000, ''),
-      receiverSig: sanitizeStr(receipt.receiverSig, 250000, ''),
-      paperFormat: receipt.paperFormat === 'thermal80' ? 'thermal80' : 'a5',
-      updatedAt: serverTimestamp(),
-    };
+    await withCloudRetry(async () => {
+      const snap = await getDoc(ref);
+      const mutableFields = {
+        receiptNo: validated.receiptNo,
+        date: validated.date,
+        patientName: validated.patientName,
+        patientPhone: validated.patientPhone,
+        services: validated.services,
+        toothFDI: validated.toothFDI,
+        totalAmount: validated.totalAmount,
+        paidAmount: validated.paidAmount,
+        remainingAmount: validated.remainingAmount,
+        currency: validated.currency,
+        paymentMethod: validated.paymentMethod,
+        notes: validated.notes,
+        amountWords: validated.amountWords,
+        accountantSig: validated.accountantSig,
+        receiverSig: validated.receiverSig,
+        paperFormat: validated.paperFormat,
+        updatedAt: serverTimestamp(),
+      };
 
-    if (snap.exists()) {
-      await updateDoc(ref, mutableFields);
-    } else {
-      await setDoc(ref, {
-        ownerId: safeUid,
-        ...mutableFields,
-        createdAt: serverTimestamp(),
-      });
-    }
+      if (snap.exists()) {
+        await updateDoc(ref, mutableFields);
+      } else {
+        await setDoc(ref, {
+          ownerId: safeUid,
+          ...mutableFields,
+          createdAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -321,10 +561,13 @@ export async function saveReceiptToCloud(
 
 export async function deleteReceiptFromCloud(uid: string, receiptId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحذف سندات لعيادة أخرى.');
+  }
   const docId = sanitizeId(`${safeUid}_${receiptId}`);
   const path = `receipts/${docId}`;
   try {
-    await deleteDoc(doc(db, 'receipts', docId));
+    await withCloudRetry(() => deleteDoc(doc(db, 'receipts', docId)));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -335,33 +578,39 @@ export async function saveInventoryItemToCloud(
   item: InventoryItem
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  const docId = sanitizeId(`${safeUid}_${item.id}`);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بتعديل مخزون عيادة أخرى.');
+  }
+  const validated = validateAndNormalizeInventoryItem(item);
+  const docId = sanitizeId(`${safeUid}_${validated.id}`);
   const path = `inventory/${docId}`;
   const ref = doc(db, 'inventory', docId);
 
   try {
-    const snap = await getDoc(ref);
-    const mutableFields = {
-      name: sanitizeStr(item.name, 160, 'صنف طبي'),
-      category: sanitizeStr(item.notes, 160, ''),
-      qty: sanitizeNum(item.qty, 0, 1000000),
-      minQty: sanitizeNum(item.minQty, 0, 1000000),
-      unit: sanitizeStr(item.unit, 50, 'قطعة'),
-      unitPrice: sanitizeNum(item.unitPrice, 0, 100000000),
-      totalCost: sanitizeNum(item.totalCost, 0, 1000000000),
-      linkedService: sanitizeStr(item.linkedService, 140, ''),
-      updatedAt: serverTimestamp(),
-    };
+    await withCloudRetry(async () => {
+      const snap = await getDoc(ref);
+      const mutableFields = {
+        name: validated.name,
+        category: validated.notes,
+        qty: validated.qty,
+        minQty: validated.minQty,
+        unit: validated.unit,
+        unitPrice: validated.unitPrice,
+        totalCost: validated.totalCost,
+        linkedService: validated.linkedService,
+        updatedAt: serverTimestamp(),
+      };
 
-    if (snap.exists()) {
-      await updateDoc(ref, mutableFields);
-    } else {
-      await setDoc(ref, {
-        ownerId: safeUid,
-        ...mutableFields,
-        createdAt: serverTimestamp(),
-      });
-    }
+      if (snap.exists()) {
+        await updateDoc(ref, mutableFields);
+      } else {
+        await setDoc(ref, {
+          ownerId: safeUid,
+          ...mutableFields,
+          createdAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -369,10 +618,13 @@ export async function saveInventoryItemToCloud(
 
 export async function deleteInventoryItemFromCloud(uid: string, itemId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحذف أصناف مخزون لعيادة أخرى.');
+  }
   const docId = sanitizeId(`${safeUid}_${itemId}`);
   const path = `inventory/${docId}`;
   try {
-    await deleteDoc(doc(db, 'inventory', docId));
+    await withCloudRetry(() => deleteDoc(doc(db, 'inventory', docId)));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -383,30 +635,36 @@ export async function saveExpenseToCloud(
   expense: ExpenseRecord
 ): Promise<void> {
   const safeUid = sanitizeId(uid);
-  const docId = sanitizeId(`${safeUid}_${expense.id}`);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحفظ مصروفات لعيادة أخرى.');
+  }
+  const validated = validateAndNormalizeExpense(expense);
+  const docId = sanitizeId(`${safeUid}_${validated.id}`);
   const path = `expenses/${docId}`;
   const ref = doc(db, 'expenses', docId);
 
   try {
-    const snap = await getDoc(ref);
-    const mutableFields = {
-      title: sanitizeStr(expense.title, 200, 'مصروف عيادة'),
-      amount: sanitizeNum(expense.amount, 0, 1000000000),
-      category: sanitizeStr(expense.category, 100, 'تشغيل'),
-      currency: sanitizeStr(expense.currency, 40, 'ريال يمني'),
-      date: sanitizeStr(expense.date, 30, new Date().toISOString().slice(0, 10)),
-      updatedAt: serverTimestamp(),
-    };
+    await withCloudRetry(async () => {
+      const snap = await getDoc(ref);
+      const mutableFields = {
+        title: validated.title,
+        amount: validated.amount,
+        category: validated.category,
+        currency: validated.currency,
+        date: validated.date,
+        updatedAt: serverTimestamp(),
+      };
 
-    if (snap.exists()) {
-      await updateDoc(ref, mutableFields);
-    } else {
-      await setDoc(ref, {
-        ownerId: safeUid,
-        ...mutableFields,
-        createdAt: serverTimestamp(),
-      });
-    }
+      if (snap.exists()) {
+        await updateDoc(ref, mutableFields);
+      } else {
+        await setDoc(ref, {
+          ownerId: safeUid,
+          ...mutableFields,
+          createdAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -414,10 +672,13 @@ export async function saveExpenseToCloud(
 
 export async function deleteExpenseFromCloud(uid: string, expenseId: string): Promise<void> {
   const safeUid = sanitizeId(uid);
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بحذف مصروفات لعيادة أخرى.');
+  }
   const docId = sanitizeId(`${safeUid}_${expenseId}`);
   const path = `expenses/${docId}`;
   try {
-    await deleteDoc(doc(db, 'expenses', docId));
+    await withCloudRetry(() => deleteDoc(doc(db, 'expenses', docId)));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -435,11 +696,10 @@ export async function syncLocalDataToCloud(
   const safeUid = sanitizeId(uid);
   await ensureClinicDocumentInCloud(safeUid, settings);
 
-  // Check if cloud already has receipts for this user
   const receiptsQuery = query(collection(db, 'receipts'), where('ownerId', '==', safeUid));
   let existingReceiptCount = 0;
   try {
-    const snap = await getDocs(receiptsQuery);
+    const snap = await withCloudRetry(() => getDocs(receiptsQuery));
     existingReceiptCount = snap.size;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'receipts');
@@ -460,6 +720,153 @@ export async function syncLocalDataToCloud(
       await saveExpenseToCloud(safeUid, exp);
     }
   }
+}
+
+// ==================== FETCH ALL AUTHORITATIVE CLINIC COLLECTIONS ====================
+async function fetchClinicCollectionsFromFirestore(
+  uid: string,
+  fallbackData: DirectWorkspacePayload
+): Promise<DirectWorkspacePayload> {
+  const safeUid = sanitizeId(uid);
+  const prefix = `${safeUid}_`;
+  const stripPrefix = (docId: string) =>
+    docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+
+  const [clinicSnap, servicesSnap, receiptsSnap, inventorySnap, expensesSnap] = await Promise.all([
+    withCloudRetry(() => getDoc(doc(db, 'clinics', safeUid))),
+    withCloudRetry(() => getDocs(query(collection(db, 'services'), where('ownerId', '==', safeUid)))),
+    withCloudRetry(() => getDocs(query(collection(db, 'receipts'), where('ownerId', '==', safeUid)))),
+    withCloudRetry(() => getDocs(query(collection(db, 'inventory'), where('ownerId', '==', safeUid)))),
+    withCloudRetry(() => getDocs(query(collection(db, 'expenses'), where('ownerId', '==', safeUid)))),
+  ]);
+
+  let nextSettings = fallbackData.settings;
+  if (clinicSnap.exists()) {
+    const d = clinicSnap.data();
+    const rawCurrency = String(d.defaultCurrency || 'ريال يمني');
+    const validCurrency: CurrencyCode =
+      rawCurrency === 'ريال سعودي' || rawCurrency === 'دولار أمريكي'
+        ? rawCurrency
+        : 'ريال يمني';
+
+    nextSettings = {
+      ...nextSettings,
+      identity: {
+        systemTitleAr: String(d.clinicAr || nextSettings.identity.systemTitleAr),
+        clinicAr: String(d.clinicAr || nextSettings.identity.clinicAr),
+        doctorAr: String(d.doctorAr || nextSettings.identity.doctorAr),
+        specialtyAr: String(d.specialtyAr || nextSettings.identity.specialtyAr),
+        clinicEn: String(d.clinicEn || nextSettings.identity.clinicEn),
+        doctorEn: String(d.doctorEn || nextSettings.identity.doctorEn),
+        address: String(d.address || nextSettings.identity.address),
+        phones: String(d.phones || nextSettings.identity.phones),
+        defaultCurrency: validCurrency,
+      },
+      appearance: {
+        primaryColor: String(d.primaryColor || nextSettings.appearance.primaryColor),
+        accentColor: '#0EA5E9',
+        watermarkOpacity: Number(d.watermarkOpacity ?? nextSettings.appearance.watermarkOpacity),
+        customLogoDataUrl: String(
+          d.customLogoDataUrl || nextSettings.appearance.customLogoDataUrl
+        ),
+        permanentAccountantSig: String(
+          d.permanentAccountantSig || nextSettings.appearance.permanentAccountantSig
+        ),
+      },
+      features: {
+        autoPrice: true,
+        debtAlert: true,
+        autoInventory: Boolean(d.autoInventory ?? true),
+        showQrCode: Boolean(d.showQrCode ?? true),
+      },
+    };
+  }
+
+  if (!servicesSnap.empty) {
+    const cloudServices: DentalServiceItem[] = servicesSnap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      const name = String(d.name || '');
+      const rawKeywords = Array.isArray(d.keywords)
+        ? d.keywords.map((k: unknown) => String(k || '').trim()).filter(Boolean)
+        : [];
+      return {
+        id: stripPrefix(docSnap.id),
+        name,
+        price: Number(d.price || 0),
+        category: String(d.category || 'علاجات سنية'),
+        keywords: rawKeywords.length > 0 ? rawKeywords : [name],
+      };
+    });
+    nextSettings = {
+      ...nextSettings,
+      services: mergeByIdPreservingExisting(cloudServices, fallbackData.settings.services),
+    };
+  }
+
+  const cloudReceipts: ReceiptRecord[] = receiptsSnap.docs.map((docSnap) => {
+    const d = docSnap.data();
+    return {
+      id: stripPrefix(docSnap.id),
+      receiptNo: Number(d.receiptNo || 1001),
+      date: String(d.date || ''),
+      patientName: String(d.patientName || ''),
+      patientPhone: String(d.patientPhone || ''),
+      services: Array.isArray(d.services) ? d.services.map(String) : [],
+      toothFDI: String(d.toothFDI || ''),
+      totalAmount: Number(d.totalAmount || 0),
+      paidAmount: Number(d.paidAmount || 0),
+      remainingAmount: Number(d.remainingAmount || 0),
+      currency: String(d.currency || 'ريال يمني') as CurrencyCode,
+      paymentMethod: String(d.paymentMethod || 'نقداً (Cash)'),
+      notes: String(d.notes || ''),
+      amountWords: String(d.amountWords || ''),
+      accountantSig: String(d.accountantSig || ''),
+      receiverSig: String(d.receiverSig || ''),
+      paperFormat: (d.paperFormat === 'thermal80' ? 'thermal80' : 'a5') as 'a5' | 'thermal80',
+      createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
+    };
+  });
+
+  const cloudInventory: InventoryItem[] = inventorySnap.docs.map((docSnap) => {
+    const d = docSnap.data();
+    return {
+      id: stripPrefix(docSnap.id),
+      name: String(d.name || ''),
+      notes: String(d.category || ''),
+      qty: Number(d.qty || 0),
+      minQty: Number(d.minQty || 0),
+      unit: String(d.unit || 'قطعة'),
+      unitPrice: Number(d.unitPrice || 0),
+      totalCost: Number(d.totalCost || 0),
+      linkedService: String(d.linkedService || ''),
+      updatedAt: d.updatedAt?.toDate
+        ? d.updatedAt.toDate().toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10),
+    };
+  });
+
+  const cloudExpenses: ExpenseRecord[] = expensesSnap.docs.map((docSnap) => {
+    const d = docSnap.data();
+    return {
+      id: stripPrefix(docSnap.id),
+      title: String(d.title || ''),
+      amount: Number(d.amount || 0),
+      category: String(d.category || 'تشغيل'),
+      currency: String(d.currency || 'ريال يمني') as CurrencyCode,
+      date: String(d.date || ''),
+    };
+  });
+
+  return {
+    settings: nextSettings,
+    receipts: mergeByIdPreservingExisting(cloudReceipts, fallbackData.receipts).sort(
+      (a, b) => b.receiptNo - a.receiptNo
+    ),
+    inventory: mergeByIdPreservingExisting(cloudInventory, fallbackData.inventory),
+    expenses: mergeByIdPreservingExisting(cloudExpenses, fallbackData.expenses).sort((a, b) =>
+      b.date.localeCompare(a.date)
+    ),
+  };
 }
 
 // ==================== REAL-TIME CLOUD LISTENERS ====================
@@ -536,7 +943,9 @@ export function subscribeToClinicCloudData(
           keywords: rawKeywords.length > 0 ? rawKeywords : [name],
         };
       });
-      callbacks.onServicesUpdate(items);
+      if (items.length > 0) {
+        callbacks.onServicesUpdate(items);
+      }
     },
     (err) => handleFirestoreError(err, OperationType.LIST, 'services')
   );
@@ -558,7 +967,7 @@ export function subscribeToClinicCloudData(
             totalAmount: Number(d.totalAmount || 0),
             paidAmount: Number(d.paidAmount || 0),
             remainingAmount: Number(d.remainingAmount || 0),
-            currency: String(d.currency || 'ريال يمني'),
+            currency: String(d.currency || 'ريال يمني') as CurrencyCode,
             paymentMethod: String(d.paymentMethod || 'نقداً (Cash)'),
             notes: String(d.notes || ''),
             amountWords: String(d.amountWords || ''),
@@ -610,7 +1019,7 @@ export function subscribeToClinicCloudData(
             title: String(d.title || ''),
             amount: Number(d.amount || 0),
             category: String(d.category || 'تشغيل'),
-            currency: String(d.currency || 'ريال يمني'),
+            currency: String(d.currency || 'ريال يمني') as CurrencyCode,
             date: String(d.date || ''),
           };
         })
@@ -629,7 +1038,7 @@ export function subscribeToClinicCloudData(
   };
 }
 
-// ==================== DIRECT CLINIC WORKSPACE (clinic_workspaces/{clinicId}) ====================
+// ==================== AUTHENTICATED CLINIC WORKSPACE (clinic_workspaces/{clinicId}) ====================
 
 export function normalizeClinicWorkspaceId(raw: string): string {
   const cleaned = String(raw || '')
@@ -642,31 +1051,15 @@ export function normalizeClinicWorkspaceId(raw: string): string {
   return cleaned.length >= 3 ? cleaned : `clinic-${cleaned || 'default'}`;
 }
 
-export async function hashClinicPassword(password: string): Promise<string> {
-  const normalized = String(password || '').trim();
-  if (typeof window !== 'undefined' && window.crypto?.subtle) {
-    try {
-      const msgBuffer = new TextEncoder().encode(normalized);
-      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-    } catch {
-      // Fallback below if subtle crypto is unavailable in non-secure context
-    }
-  }
-  // Pure deterministic 64-char hex fallback
-  let h1 = 0xdeadbeef ^ normalized.length;
-  let h2 = 0x41c6ce57 ^ normalized.length;
-  for (let i = 0; i < normalized.length; i++) {
-    const ch = normalized.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  const baseHex =
-    (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
-  return baseHex.repeat(4).slice(0, 64);
+function buildSyntheticClinicEmail(clinicId: string): string {
+  const safeId = normalizeClinicWorkspaceId(clinicId);
+  return `${safeId}@clinic.alssaedic.local`;
+}
+
+function buildFirebaseAuthPassword(clinicId: string, rawPassword: string): string {
+  const safeId = normalizeClinicWorkspaceId(clinicId);
+  // Ensure Firebase Auth >= 6 character requirement while binding to clinicId
+  return `alssaedic#${safeId}#${String(rawPassword || '').trim()}`;
 }
 
 export interface DirectWorkspacePayload {
@@ -685,6 +1078,9 @@ export async function authenticateDirectWorkspaceInCloud(
   ok: boolean;
   status?: 'authenticated' | 'created';
   clinicId: string;
+  ownerUid?: string;
+  sessionToken?: string;
+  expiresAt?: string;
   updatedAt: string;
   error?: string;
   data?: DirectWorkspacePayload;
@@ -710,288 +1106,269 @@ export async function authenticateDirectWorkspaceInCloud(
     };
   }
 
-  const passwordHash = await hashClinicPassword(cleanPass);
-  const ref = doc(db, 'clinic_workspaces', safeId);
+  const syntheticEmail = buildSyntheticClinicEmail(safeId);
+  const firebasePassword = buildFirebaseAuthPassword(safeId, cleanPass);
 
-  // 1. Try Server Cloud Endpoint (/api/cloud/auth)
-  let serverResult: {
-    ok: boolean;
-    status?: 'authenticated' | 'created';
-    clinicId?: string;
-    updatedAt?: string;
-    error?: string;
-    data?: DirectWorkspacePayload;
-  } | null = null;
+  let firebaseUser: User | null = null;
+  let authStatus: 'authenticated' | 'created' = 'authenticated';
 
+  // 1. Authenticate with real Firebase Authentication (Email/Password)
   try {
-    const res = await fetch('/api/cloud/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clinicId: safeId,
-        password: cleanPass,
-        mode,
-        initialData,
-      }),
-    });
-    const text = await res.text();
-    if (text && !text.trim().startsWith('<')) {
-      const parsed = JSON.parse(text);
-      if (!res.ok || parsed.ok === false) {
-        return {
-          ok: false,
-          clinicId: safeId,
-          updatedAt: nowIso,
-          error: parsed.error || 'كلمة المرور غير صحيحة لهذا الحساب السحابي.',
-        };
+    if (mode === 'register') {
+      const cred = await createUserWithEmailAndPassword(auth, syntheticEmail, firebasePassword);
+      firebaseUser = cred.user;
+      authStatus = 'created';
+    } else if (mode === 'login') {
+      const cred = await signInWithEmailAndPassword(auth, syntheticEmail, firebasePassword);
+      firebaseUser = cred.user;
+      authStatus = 'authenticated';
+    } else {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, syntheticEmail, firebasePassword);
+        firebaseUser = cred.user;
+        authStatus = 'authenticated';
+      } catch (loginErr: unknown) {
+        const code = (loginErr as { code?: string })?.code || '';
+        if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+          const cred = await createUserWithEmailAndPassword(auth, syntheticEmail, firebasePassword);
+          firebaseUser = cred.user;
+          authStatus = 'created';
+        } else {
+          throw loginErr;
+        }
       }
-      serverResult = {
-        ok: true,
-        status: parsed.status === 'authenticated' ? 'authenticated' : 'created',
-        clinicId: parsed.clinicId || safeId,
-        updatedAt: parsed.updatedAt || nowIso,
-        data: parsed.data || initialData,
+    }
+  } catch (authErr: unknown) {
+    const code = (authErr as { code?: string })?.code || '';
+    if (code === 'auth/email-already-in-use') {
+      return {
+        ok: false,
+        clinicId: safeId,
+        updatedAt: nowIso,
+        error:
+          'معرّف العيادة هذا مسجل مسبقاً. يرجى اختيار تبويب "تسجيل الدخول" وإدخال كلمة المرور الصحيحة.',
       };
     }
-  } catch {
-    // Continue to Firestore check
-  }
-
-  // 2. Also sync with Firestore clinic_workspaces/{safeId} if accessible
-  try {
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const d = snap.data();
-      if (d.passwordHash && d.passwordHash !== passwordHash) {
-        return {
-          ok: false,
-          clinicId: safeId,
-          updatedAt: nowIso,
-          error:
-            mode === 'register'
-              ? 'معرّف العيادة هذا مسجل مسبقاً بكلمة مرور مختلفة. اختر "تسجيل الدخول" أو استخدم معرّفاً آخر.'
-              : 'كلمة المرور غير صحيحة لمعرّف العيادة هذا.',
-        };
-      }
-      const updatedAt = d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : nowIso;
-      const firestoreData: DirectWorkspacePayload = {
-        settings: (d.settings as ClinicSettings) || initialData.settings,
-        receipts: Array.isArray(d.receipts) ? (d.receipts as ReceiptRecord[]) : initialData.receipts,
-        inventory: Array.isArray(d.inventory)
-          ? (d.inventory as InventoryItem[])
-          : initialData.inventory,
-        expenses: Array.isArray(d.expenses) ? (d.expenses as ExpenseRecord[]) : initialData.expenses,
-      };
-
-      // Mirror to server backup if needed
-      fetch('/api/cloud/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clinicId: safeId, password: cleanPass, data: firestoreData }),
-      }).catch(() => {});
-
+    if (
+      code === 'auth/wrong-password' ||
+      code === 'auth/invalid-credential' ||
+      code === 'auth/user-not-found'
+    ) {
       return {
-        ok: true,
-        status: 'authenticated',
+        ok: false,
         clinicId: safeId,
-        updatedAt,
-        data: firestoreData,
+        updatedAt: nowIso,
+        error: 'معرّف العيادة أو كلمة المرور غير صحيحة.',
       };
     }
-
-    const seedData = serverResult?.data || initialData;
-    await setDoc(ref, {
-      clinicId: safeId,
-      passwordHash,
-      settings: seedData.settings,
-      receipts: (seedData.receipts || []).slice(0, 500),
-      inventory: (seedData.inventory || []).slice(0, 500),
-      expenses: (seedData.expenses || []).slice(0, 500),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    return {
-      ok: true,
-      status: serverResult?.status || (mode === 'login' ? 'authenticated' : 'created'),
-      clinicId: safeId,
-      updatedAt: serverResult?.updatedAt || nowIso,
-      data: seedData,
-    };
-  } catch {
-    if (serverResult) {
+    if (code === 'auth/operation-not-allowed') {
       return {
-        ok: serverResult.ok,
-        status: serverResult.status,
-        clinicId: serverResult.clinicId || safeId,
-        updatedAt: serverResult.updatedAt || nowIso,
-        data: serverResult.data || initialData,
+        ok: false,
+        clinicId: safeId,
+        updatedAt: nowIso,
+        error:
+          'مصادقة البريد وكلمة المرور غير مفعلة في مشروع Firebase الحالي. يرجى تسجيل الدخول عبر زر حساب Google أدناه لتوثيق ملكية العيادة سحابياً.',
       };
     }
     return {
-      ok: true,
-      status: mode === 'login' ? 'authenticated' : 'created',
+      ok: false,
       clinicId: safeId,
       updatedAt: nowIso,
-      data: initialData,
+      error: 'تعذر التحقق من هوية الحساب في Firebase Authentication. تحقق من الاتصال بالإنترنت.',
+    };
+  }
+
+  if (!firebaseUser || !firebaseUser.uid) {
+    return {
+      ok: false,
+      clinicId: safeId,
+      updatedAt: nowIso,
+      error: 'لم يتم الحصول على معرّف مستخدم موثق من Firebase Authentication.',
+    };
+  }
+
+  const ownerUid = sanitizeId(firebaseUser.uid);
+
+  // 2. Issue signed, expiring server session token (HMAC-SHA256 + scrypt verifier)
+  const sessionRes = await issueServerSessionToken({
+    clinicId: safeId,
+    ownerUid,
+    password: cleanPass,
+  });
+
+  if (!sessionRes.ok || !sessionRes.sessionToken) {
+    return {
+      ok: false,
+      clinicId: safeId,
+      updatedAt: nowIso,
+      error: sessionRes.error || 'تعذر إصدار رمز الجلسة الأمنية الموقّع.',
+    };
+  }
+
+  // 3. Verify and synchronize with authoritative Firestore collections
+  const workspaceRef = doc(db, 'clinic_workspaces', safeId);
+  try {
+    await ensureClinicDocumentInCloud(ownerUid, initialData.settings);
+
+    const workspaceSnap = await withCloudRetry(() => getDoc(workspaceRef));
+    let mergedData = await fetchClinicCollectionsFromFirestore(ownerUid, initialData);
+
+    if (workspaceSnap.exists()) {
+      const wsData = workspaceSnap.data();
+      if (wsData.ownerId && wsData.ownerId !== ownerUid) {
+        return {
+          ok: false,
+          clinicId: safeId,
+          updatedAt: nowIso,
+          error: 'رفض الوصول: معرّف العيادة هذا مملوك لحساب آخر.',
+        };
+      }
+
+      // Non-destructive migration of any legacy embedded arrays on clinic_workspaces/{clinicId}
+      const legacyReceipts = Array.isArray(wsData.receipts)
+        ? (wsData.receipts as ReceiptRecord[])
+        : [];
+      const legacyInventory = Array.isArray(wsData.inventory)
+        ? (wsData.inventory as InventoryItem[])
+        : [];
+      const legacyExpenses = Array.isArray(wsData.expenses)
+        ? (wsData.expenses as ExpenseRecord[])
+        : [];
+
+      if (legacyReceipts.length > 0 || legacyInventory.length > 0 || legacyExpenses.length > 0) {
+        mergedData = {
+          settings: (wsData.settings as ClinicSettings) || mergedData.settings,
+          receipts: mergeByIdPreservingExisting(mergedData.receipts, legacyReceipts),
+          inventory: mergeByIdPreservingExisting(mergedData.inventory, legacyInventory),
+          expenses: mergeByIdPreservingExisting(mergedData.expenses, legacyExpenses),
+        };
+      }
+    }
+
+    // Persist individual documents and verified workspace metadata
+    await syncLocalDataToCloud(
+      ownerUid,
+      mergedData.settings,
+      mergedData.receipts,
+      mergedData.inventory,
+      mergedData.expenses,
+      true
+    );
+
+    const boundedSettingsMetadata = {
+      identity: mergedData.settings.identity,
+      appearance: {
+        primaryColor: mergedData.settings.appearance.primaryColor,
+        accentColor: mergedData.settings.appearance.accentColor,
+        watermarkOpacity: mergedData.settings.appearance.watermarkOpacity,
+      },
+      features: mergedData.settings.features,
+    };
+
+    if (workspaceSnap.exists()) {
+      await withCloudRetry(() =>
+        updateDoc(workspaceRef, {
+          settings: boundedSettingsMetadata,
+          receiptCount: mergedData.receipts.length,
+          inventoryCount: mergedData.inventory.length,
+          expenseCount: mergedData.expenses.length,
+          updatedAt: serverTimestamp(),
+        })
+      );
+    } else {
+      await withCloudRetry(() =>
+        setDoc(workspaceRef, {
+          ownerId: ownerUid,
+          clinicId: safeId,
+          settings: boundedSettingsMetadata,
+          receiptCount: mergedData.receipts.length,
+          inventoryCount: mergedData.inventory.length,
+          expenseCount: mergedData.expenses.length,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+      );
+    }
+
+    return {
+      ok: true,
+      status: authStatus,
+      clinicId: safeId,
+      ownerUid,
+      sessionToken: sessionRes.sessionToken,
+      expiresAt: sessionRes.expiresAt,
+      updatedAt: nowIso,
+      data: mergedData,
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      clinicId: safeId,
+      updatedAt: nowIso,
+      error:
+        err instanceof Error
+          ? `فشل حفظ أو مزامنة البيانات في السحابة: ${err.message}`
+          : 'فشل التحقق من الكتابة في قاعدة بيانات السحابة (Firestore).',
     };
   }
 }
 
 export async function pushDirectWorkspaceToCloud(
   clinicId: string,
-  password: string,
+  ownerUid: string,
   data: DirectWorkspacePayload
 ): Promise<string> {
   const safeId = normalizeClinicWorkspaceId(clinicId);
-  const cleanPass = String(password || '').trim();
-  const passwordHash = await hashClinicPassword(cleanPass);
-  let nowIso = new Date().toISOString();
+  const safeUid = sanitizeId(ownerUid);
+
+  if (!auth.currentUser || auth.currentUser.uid !== safeUid) {
+    throw new Error('غير مصرح بالمزامنة السحابية: الجلسة غير موثقة في Firebase Authentication.');
+  }
+
+  // Validate and persist individual collections so no document ever exceeds Firestore's 1MB limit
+  await syncLocalDataToCloud(
+    safeUid,
+    data.settings,
+    data.receipts,
+    data.inventory,
+    data.expenses,
+    true
+  );
+
+  const boundedSettingsMetadata = {
+    identity: data.settings.identity,
+    appearance: {
+      primaryColor: data.settings.appearance.primaryColor,
+      accentColor: data.settings.appearance.accentColor,
+      watermarkOpacity: data.settings.appearance.watermarkOpacity,
+    },
+    features: data.settings.features,
+  };
+
   const ref = doc(db, 'clinic_workspaces', safeId);
-
-  // 1. Always push to Server Cloud Store (/api/cloud/push)
-  const serverPromise = (async () => {
-    try {
-      const res = await fetch('/api/cloud/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clinicId: safeId,
-          password: cleanPass,
-          data,
-        }),
+  await withCloudRetry(async () => {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        settings: boundedSettingsMetadata,
+        receiptCount: data.receipts.length,
+        inventoryCount: data.inventory.length,
+        expenseCount: data.expenses.length,
+        updatedAt: serverTimestamp(),
       });
-      const text = await res.text();
-      if (text && !text.trim().startsWith('<')) {
-        const parsed = JSON.parse(text);
-        if (parsed?.updatedAt) {
-          nowIso = String(parsed.updatedAt);
-        }
-      }
-    } catch {
-      // Offline
-    }
-  })();
-
-  // 2. Also push to Firestore clinic_workspaces/{safeId}
-  const firestorePromise = (async () => {
-    try {
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        await updateDoc(ref, {
-          settings: data.settings,
-          receipts: (data.receipts || []).slice(0, 500),
-          inventory: (data.inventory || []).slice(0, 500),
-          expenses: (data.expenses || []).slice(0, 500),
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await setDoc(ref, {
-          clinicId: safeId,
-          passwordHash,
-          settings: data.settings,
-          receipts: (data.receipts || []).slice(0, 500),
-          inventory: (data.inventory || []).slice(0, 500),
-          expenses: (data.expenses || []).slice(0, 500),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch {
-      // Handled by serverPromise backup
-    }
-  })();
-
-  await Promise.allSettled([serverPromise, firestorePromise]);
-  return nowIso;
-}
-
-export function subscribeToDirectWorkspaceInCloud(
-  clinicId: string,
-  password: string,
-  onUpdate: (payload: DirectWorkspacePayload & { updatedAt: string }) => void
-): () => void {
-  const safeId = normalizeClinicWorkspaceId(clinicId);
-  const cleanPass = String(password || '').trim();
-  let unsubFirestore: (() => void) | null = null;
-  let backupInterval: ReturnType<typeof setInterval> | null = null;
-  let cancelled = false;
-
-  const pullFromBackupApi = async () => {
-    if (cancelled) return;
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-    try {
-      const res = await fetch('/api/cloud/pull', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clinicId: safeId, password: cleanPass }),
+    } else {
+      await setDoc(ref, {
+        ownerId: safeUid,
+        clinicId: safeId,
+        settings: boundedSettingsMetadata,
+        receiptCount: data.receipts.length,
+        inventoryCount: data.inventory.length,
+        expenseCount: data.expenses.length,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
-      const text = await res.text();
-      if (!text || text.trim().startsWith('<')) return;
-      const json = JSON.parse(text);
-      if (json?.ok && json?.data) {
-        onUpdate({
-          settings: json.data.settings,
-          receipts: Array.isArray(json.data.receipts) ? json.data.receipts : [],
-          inventory: Array.isArray(json.data.inventory) ? json.data.inventory : [],
-          expenses: Array.isArray(json.data.expenses) ? json.data.expenses : [],
-          updatedAt: String(json.updatedAt || new Date().toISOString()),
-        });
-      }
-    } catch {
-      // Ignore offline errors
     }
-  };
-
-  const startBackupPolling = () => {
-    if (backupInterval || cancelled) return;
-    pullFromBackupApi();
-    backupInterval = setInterval(pullFromBackupApi, 6000);
-  };
-
-  hashClinicPassword(cleanPass).then((passwordHash) => {
-    if (cancelled) return;
-    const ref = doc(db, 'clinic_workspaces', safeId);
-    unsubFirestore = onSnapshot(
-      ref,
-      (snap) => {
-        if (!snap.exists()) {
-          pullFromBackupApi();
-          return;
-        }
-        const d = snap.data();
-        if (d.passwordHash && d.passwordHash !== passwordHash) return;
-        const updatedAt = d.updatedAt?.toDate
-          ? d.updatedAt.toDate().toISOString()
-          : new Date().toISOString();
-        onUpdate({
-          settings: d.settings as ClinicSettings,
-          receipts: Array.isArray(d.receipts) ? (d.receipts as ReceiptRecord[]) : [],
-          inventory: Array.isArray(d.inventory) ? (d.inventory as InventoryItem[]) : [],
-          expenses: Array.isArray(d.expenses) ? (d.expenses as ExpenseRecord[]) : [],
-          updatedAt,
-        });
-      },
-      () => {
-        // Firestore listener blocked by remote rules; activate server sync loop automatically
-        startBackupPolling();
-      }
-    );
   });
 
-  const handleOnlineOrFocus = () => {
-    pullFromBackupApi();
-  };
-  window.addEventListener('online', handleOnlineOrFocus);
-  window.addEventListener('focus', handleOnlineOrFocus);
-
-  return () => {
-    cancelled = true;
-    window.removeEventListener('online', handleOnlineOrFocus);
-    window.removeEventListener('focus', handleOnlineOrFocus);
-    if (backupInterval) clearInterval(backupInterval);
-    if (unsubFirestore) unsubFirestore();
-  };
+  return new Date().toISOString();
 }
-
-

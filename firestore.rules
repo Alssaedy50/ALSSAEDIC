@@ -13,7 +13,10 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'password'
+      );
     }
 
     function incoming() {
@@ -160,7 +163,9 @@ service cloud.firestore {
       data.toothFDI is string && data.toothFDI.size() <= 200 &&
       data.totalAmount is number && data.totalAmount >= 0 && data.totalAmount <= 1000000000 &&
       data.paidAmount is number && data.paidAmount >= 0 && data.paidAmount <= 1000000000 &&
+      data.paidAmount <= data.totalAmount &&
       data.remainingAmount is number && data.remainingAmount >= 0 && data.remainingAmount <= 1000000000 &&
+      data.remainingAmount == data.totalAmount - data.paidAmount &&
       data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 40 &&
       data.paymentMethod is string && data.paymentMethod.size() >= 1 && data.paymentMethod.size() <= 80 &&
       data.notes is string && data.notes.size() <= 500 &&
@@ -248,34 +253,32 @@ service cloud.firestore {
 
     function isValidClinicWorkspace(data) {
       return data.keys().hasAll([
+        'ownerId',
         'clinicId',
-        'passwordHash',
         'settings',
-        'receipts',
-        'inventory',
-        'expenses',
+        'receiptCount',
+        'inventoryCount',
+        'expenseCount',
         'createdAt',
         'updatedAt'
       ]) &&
       data.keys().hasOnly([
+        'ownerId',
         'clinicId',
-        'passwordHash',
         'settings',
-        'receipts',
-        'inventory',
-        'expenses',
+        'receiptCount',
+        'inventoryCount',
+        'expenseCount',
         'createdAt',
         'updatedAt'
       ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
       data.clinicId is string && data.clinicId.size() >= 3 && data.clinicId.size() <= 64 && data.clinicId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.passwordHash is string && data.passwordHash.size() == 64 && data.passwordHash.matches('^[a-f0-9]{64}$') &&
       data.settings is map && data.settings.size() >= 1 && data.settings.size() <= 10 &&
-      data.receipts is list && data.receipts.size() <= 500 &&
-      (data.receipts.size() == 0 || (data.receipts[0] is map && data.receipts[0].size() <= 25)) &&
-      data.inventory is list && data.inventory.size() <= 500 &&
-      (data.inventory.size() == 0 || (data.inventory[0] is map && data.inventory[0].size() <= 20)) &&
-      data.expenses is list && data.expenses.size() <= 500 &&
-      (data.expenses.size() == 0 || (data.expenses[0] is map && data.expenses[0].size() <= 15)) &&
+      data.receiptCount is number && data.receiptCount >= 0 && data.receiptCount <= 1000000 &&
+      data.inventoryCount is number && data.inventoryCount >= 0 && data.inventoryCount <= 1000000 &&
+      data.expenseCount is number && data.expenseCount >= 0 && data.expenseCount <= 1000000 &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -450,26 +453,37 @@ service cloud.firestore {
       allow delete: if isVerifiedUser() && isValidId(expenseId) && existing().ownerId == request.auth.uid;
     }
 
-    // 6. Direct Multi-Device Clinic Workspaces (/clinic_workspaces/{clinicId})
+    // 6. Authenticated Clinic Workspaces (/clinic_workspaces/{clinicId})
     match /clinic_workspaces/{clinicId} {
-      allow get: if isValidId(clinicId);
-      allow list: if false;
-      allow create: if isValidId(clinicId) &&
+      allow get: if isSignedIn() && isValidId(clinicId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(clinicId) &&
         incoming().clinicId == clinicId &&
         isValidClinicWorkspace(incoming()) &&
         incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isValidId(clinicId) &&
+        incoming().updatedAt == request.time &&
+        hasClinicParent(incoming().ownerId);
+      allow update: if isVerifiedUser() &&
+        isValidId(clinicId) &&
         incoming().clinicId == clinicId &&
         isValidClinicWorkspace(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
         incoming().clinicId == existing().clinicId &&
-        incoming().passwordHash == existing().passwordHash &&
         incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time && (
-          // Action: Sync Workspace Collections
-          incoming().diff(existing()).affectedKeys().hasOnly(['settings', 'receipts', 'inventory', 'expenses', 'updatedAt'])
+        incoming().updatedAt == request.time &&
+        hasClinicParent(existing().ownerId) && (
+          // Action: Update Workspace Metadata & Settings
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'settings',
+            'receiptCount',
+            'inventoryCount',
+            'expenseCount',
+            'updatedAt'
+          ])
         );
-      allow delete: if false;
+      allow delete: if isVerifiedUser() && isValidId(clinicId) && existing().ownerId == request.auth.uid;
     }
   }
 }

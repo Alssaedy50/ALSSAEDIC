@@ -1,3 +1,5 @@
+declare module '*.css';
+
 export type CurrencyCode = 'ريال يمني' | 'ريال سعودي' | 'دولار أمريكي';
 
 export type PaperFormat = 'a5' | 'thermal80';
@@ -107,3 +109,6 @@ export interface CurrencyFinancialSummary {
   receiptsCount: number;
   debtorsCount: number;
 }
+
+export default null;
+

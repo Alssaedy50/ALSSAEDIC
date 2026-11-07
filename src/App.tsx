@@ -32,7 +32,7 @@ import {
   DEFAULT_SETTINGS,
 } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
-import { safeParseJsonResponse } from './utils/aiClient';
+import { LOCAL_API_SESSION_KEY } from './utils/aiClient';
 import { ReceiptStudio } from './components/ReceiptStudio';
 import { RecordsLedger } from './components/RecordsLedger';
 import { InventoryManager } from './components/InventoryManager';
@@ -54,6 +54,7 @@ import {
   deleteReceiptFromCloud,
   deleteServiceFromCloud,
   ensureClinicDocumentInCloud,
+  issueServerSessionToken,
   onAuthStateChanged,
   pushDirectWorkspaceToCloud,
   saveClinicSettingsToCloud,
@@ -64,8 +65,10 @@ import {
   signInWithGoogleAccount,
   signOutAccount,
   subscribeToClinicCloudData,
-  subscribeToDirectWorkspaceInCloud,
   syncLocalDataToCloud,
+  validateAndNormalizeExpense,
+  validateAndNormalizeInventoryItem,
+  validateAndNormalizeReceipt,
 } from './firebase';
 
 export type MainSectionId =
@@ -102,6 +105,41 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function loadSecureDirectSession(): DirectClinicSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // Immediately purge any legacy session that contained a plaintext password or lacks signed token/expiration
+    if (
+      !parsed ||
+      'password' in parsed ||
+      typeof parsed.clinicId !== 'string' ||
+      typeof parsed.ownerUid !== 'string' ||
+      typeof parsed.sessionToken !== 'string' ||
+      typeof parsed.expiresAt !== 'string'
+    ) {
+      localStorage.removeItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
+      return null;
+    }
+    const expMs = Date.parse(parsed.expiresAt);
+    if (!Number.isFinite(expMs) || expMs <= Date.now()) {
+      localStorage.removeItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
+      return null;
+    }
+    return {
+      clinicId: parsed.clinicId,
+      ownerUid: parsed.ownerUid,
+      sessionToken: parsed.sessionToken,
+      expiresAt: parsed.expiresAt,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : undefined,
+    };
+  } catch {
+    localStorage.removeItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
+    return null;
+  }
+}
+
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.THEME);
@@ -114,13 +152,12 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [directSession, setDirectSession] = useState<DirectClinicSession | null>(() =>
-    loadFromStorage<DirectClinicSession | null>(STORAGE_KEYS.DIRECT_CLOUD_SESSION, null)
+    loadSecureDirectSession()
   );
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const lastDirectSyncTimestamp = useRef<string>('');
   const hasPromptedInitialAuth = useRef<boolean>(false);
-  const hasBootstrappedDirectSession = useRef<boolean>(false);
 
   const [settings, setSettings] = useState<ClinicSettings>(() =>
     loadFromStorage<ClinicSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
@@ -172,7 +209,14 @@ export default function App() {
 
   useEffect(() => {
     if (directSession) {
-      localStorage.setItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION, JSON.stringify(directSession));
+      const safeSession: DirectClinicSession = {
+        clinicId: directSession.clinicId,
+        ownerUid: directSession.ownerUid,
+        sessionToken: directSession.sessionToken,
+        expiresAt: directSession.expiresAt,
+        updatedAt: directSession.updatedAt,
+      };
+      localStorage.setItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION, JSON.stringify(safeSession));
     } else {
       localStorage.removeItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
     }
@@ -191,16 +235,75 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  // Helper to push current state to Direct Cloud Workspace (Firestore clinic_workspaces/{clinicId})
+  // Ensure a signed session token exists for authenticated backend API calls (/api/gemini/*)
+  useEffect(() => {
+    const ensureApiToken = async () => {
+      try {
+        if (directSession && Date.parse(directSession.expiresAt) > Date.now()) {
+          return;
+        }
+        const existingRaw = sessionStorage.getItem(LOCAL_API_SESSION_KEY);
+        if (existingRaw) {
+          const parsed = JSON.parse(existingRaw) as { expiresAt?: string; sessionToken?: string };
+          if (
+            parsed?.sessionToken &&
+            parsed?.expiresAt &&
+            Date.parse(parsed.expiresAt) > Date.now()
+          ) {
+            return;
+          }
+        }
+        const ownerUid = currentUser?.uid || 'local_clinic_operator';
+        const clinicId = directSession?.clinicId || 'alssaedy-clinic';
+        const issued = await issueServerSessionToken({ clinicId, ownerUid });
+        if (issued.ok && issued.sessionToken) {
+          sessionStorage.setItem(
+            LOCAL_API_SESSION_KEY,
+            JSON.stringify({
+              clinicId,
+              ownerUid,
+              sessionToken: issued.sessionToken,
+              expiresAt: issued.expiresAt,
+            })
+          );
+        }
+      } catch {
+        // Ignore transient offline error
+      }
+    };
+    ensureApiToken();
+  }, [currentUser, directSession]);
+
+  // Periodically check session expiration and clear expired sessions automatically
+  useEffect(() => {
+    if (!directSession) return;
+    const checkExpiration = () => {
+      const expMs = Date.parse(directSession.expiresAt);
+      if (!Number.isFinite(expMs) || expMs <= Date.now()) {
+        setDirectSession(null);
+        signOutAccount().catch(() => {});
+        notify('انتهت صلاحية الجلسة السحابية، يرجى إعادة تسجيل الدخول.', 'warning');
+      }
+    };
+    checkExpiration();
+    const timer = setInterval(checkExpiration, 60_000);
+    return () => clearInterval(timer);
+  }, [directSession]);
+
+  // Helper to push current state to Direct Cloud Workspace and verify completion
   const pushToDirectCloud = async (
     session: DirectClinicSession,
     nextSettings: ClinicSettings,
     nextReceipts: ReceiptRecord[],
     nextInventory: InventoryItem[],
     nextExpenses: ExpenseRecord[]
-  ) => {
+  ): Promise<boolean> => {
+    if (Date.parse(session.expiresAt) <= Date.now()) {
+      setDirectSession(null);
+      return false;
+    }
     try {
-      const updatedAt = await pushDirectWorkspaceToCloud(session.clinicId, session.password, {
+      const updatedAt = await pushDirectWorkspaceToCloud(session.clinicId, session.ownerUid, {
         settings: nextSettings,
         receipts: nextReceipts,
         inventory: nextInventory,
@@ -209,57 +312,11 @@ export default function App() {
       if (updatedAt) {
         lastDirectSyncTimestamp.current = updatedAt;
       }
+      return true;
     } catch {
-      // Offline or transient network error; will sync next time
+      return false;
     }
   };
-
-  // Real-time Firestore listener (onSnapshot) + initial cloud handshake for Direct Cloud Workspace
-  useEffect(() => {
-    if (!directSession) return;
-
-    if (!hasBootstrappedDirectSession.current) {
-      hasBootstrappedDirectSession.current = true;
-      authenticateDirectWorkspaceInCloud(
-        directSession.clinicId,
-        directSession.password,
-        {
-          settings,
-          receipts,
-          inventory,
-          expenses,
-        },
-        'auto'
-      )
-        .then((res) => {
-          if (res.ok && res.data) {
-            lastDirectSyncTimestamp.current = res.updatedAt;
-            if (res.data.settings) setSettings(res.data.settings);
-            if (Array.isArray(res.data.receipts)) setReceipts(res.data.receipts);
-            if (Array.isArray(res.data.inventory)) setInventory(res.data.inventory);
-            if (Array.isArray(res.data.expenses)) setExpenses(res.data.expenses);
-          }
-        })
-        .catch(() => {});
-    }
-
-    const unsubDirect = subscribeToDirectWorkspaceInCloud(
-      directSession.clinicId,
-      directSession.password,
-      (payload) => {
-        if (payload.updatedAt && payload.updatedAt === lastDirectSyncTimestamp.current) {
-          return;
-        }
-        lastDirectSyncTimestamp.current = payload.updatedAt;
-        if (payload.settings) setSettings(payload.settings);
-        if (Array.isArray(payload.receipts)) setReceipts(payload.receipts);
-        if (Array.isArray(payload.inventory)) setInventory(payload.inventory);
-        if (Array.isArray(payload.expenses)) setExpenses(payload.expenses);
-      }
-    );
-
-    return () => unsubDirect();
-  }, [directSession]);
 
   // Firebase Auth & Real-Time Multi-Phone Cloud Sync
   useEffect(() => {
@@ -270,6 +327,23 @@ export default function App() {
       if (user) {
         setIsSyncingCloud(true);
         try {
+          // Issue/refresh signed server session token for this Firebase Auth user
+          const issued = await issueServerSessionToken({
+            clinicId: directSession?.clinicId || 'alssaedy-clinic',
+            ownerUid: user.uid,
+          });
+          if (issued.ok && issued.sessionToken) {
+            sessionStorage.setItem(
+              LOCAL_API_SESSION_KEY,
+              JSON.stringify({
+                clinicId: directSession?.clinicId || 'alssaedy-clinic',
+                ownerUid: user.uid,
+                sessionToken: issued.sessionToken,
+                expiresAt: issued.expiresAt,
+              })
+            );
+          }
+
           await syncLocalDataToCloud(
             user.uid,
             settings,
@@ -283,6 +357,9 @@ export default function App() {
         } finally {
           setIsSyncingCloud(false);
         }
+      } else if (directSession) {
+        // Clear directSession if Firebase Auth session is no longer authenticated
+        setDirectSession(null);
       }
     });
     return () => unsubAuth();
@@ -297,10 +374,12 @@ export default function App() {
     }
   }, [authReady, currentUser, directSession]);
 
-  useEffect(() => {
-    if (!authReady || !currentUser) return;
+  const activeOwnerUid = currentUser?.uid || directSession?.ownerUid || null;
 
-    const unsubCloud = subscribeToClinicCloudData(currentUser.uid, {
+  useEffect(() => {
+    if (!authReady || !activeOwnerUid || !currentUser) return;
+
+    const unsubCloud = subscribeToClinicCloudData(activeOwnerUid, {
       onSettingsUpdate: (partial) => {
         setSettings((prev) => ({
           ...prev,
@@ -331,7 +410,7 @@ export default function App() {
     });
 
     return () => unsubCloud();
-  }, [authReady, currentUser]);
+  }, [authReady, activeOwnerUid, currentUser]);
 
   // Support Android/Browser Back Button so the user can always return to the main screen
   useEffect(() => {
@@ -396,21 +475,22 @@ export default function App() {
         options?.mode || 'auto'
       );
 
-      if (!result.ok) {
+      if (!result.ok || !result.ownerUid || !result.sessionToken || !result.expiresAt) {
         notify(result.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
         return false;
       }
 
       const sessionObj: DirectClinicSession = {
         clinicId: result.clinicId,
-        password,
+        ownerUid: result.ownerUid,
+        sessionToken: result.sessionToken,
+        expiresAt: result.expiresAt,
         updatedAt: result.updatedAt,
       };
-      hasBootstrappedDirectSession.current = true;
       lastDirectSyncTimestamp.current = result.updatedAt;
       setDirectSession(sessionObj);
 
-      if (result.status === 'authenticated' && result.data) {
+      if (result.data) {
         const nextSettings =
           options?.mode === 'register' && (options.clinicNameAr || options.doctorNameAr)
             ? updatedSettings
@@ -425,16 +505,17 @@ export default function App() {
         setReceipts(nextReceipts);
         setInventory(nextInventory);
         setExpenses(nextExpenses);
-
-        await pushToDirectCloud(sessionObj, nextSettings, nextReceipts, nextInventory, nextExpenses);
-        notify(`تم تسجيل الدخول لحساب العيادة (${result.clinicId}) ومزامنة البيانات بنجاح`, 'success');
-      } else {
-        await pushToDirectCloud(sessionObj, updatedSettings, receipts, inventory, expenses);
-        notify(`تم إنشاء الحساب السحابي (${result.clinicId}) وحفظ البيانات بنجاح`, 'success');
       }
+
+      notify(
+        result.status === 'created'
+          ? `تم إنشاء الحساب السحابي (${result.clinicId}) وحفظ البيانات بنجاح`
+          : `تم تسجيل الدخول لحساب العيادة (${result.clinicId}) ومزامنة البيانات بنجاح`,
+        'success'
+      );
       return true;
     } catch {
-      notify('تعذر الاتصال بالخادم السحابي', 'error');
+      notify('تعذر الاتصال بقاعدة البيانات السحابية الموثقة.', 'error');
       return false;
     } finally {
       setIsSyncingCloud(false);
@@ -444,18 +525,31 @@ export default function App() {
   const handleSignInWithGoogle = async (): Promise<boolean> => {
     try {
       const user = await signInWithGoogleAccount();
+      const issued = await issueServerSessionToken({
+        clinicId: 'alssaedy-clinic',
+        ownerUid: user.uid,
+      });
+      if (issued.ok && issued.sessionToken) {
+        setDirectSession({
+          clinicId: 'alssaedy-clinic',
+          ownerUid: user.uid,
+          sessionToken: issued.sessionToken,
+          expiresAt: issued.expiresAt,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       notify(`تم تسجيل الدخول بنجاح (${user.email}) وتفعيل المزامنة السحابية`, 'success');
       return true;
     } catch {
-      notify('استخدم تسجيل الدخول بمعرّف العيادة وكلمة المرور في الأعلى للعمل مباشرة بدون نوافذ منبثقة', 'info');
+      notify('تعذر إكمال تسجيل الدخول عبر Google. يرجى المحاولة مرة أخرى.', 'error');
       return false;
     }
   };
 
   const handleSignOut = async () => {
     try {
-      hasBootstrappedDirectSession.current = false;
       setDirectSession(null);
+      localStorage.removeItem(STORAGE_KEYS.DIRECT_CLOUD_SESSION);
       if (currentUser) {
         await signOutAccount();
       }
@@ -466,24 +560,29 @@ export default function App() {
   };
 
   const handleForceCloudSync = async () => {
+    if (!currentUser) {
+      notify('يرجى تسجيل الدخول أولاً لتفعيل المزامنة السحابية الموثقة.', 'warning');
+      return;
+    }
     setIsSyncingCloud(true);
     try {
+      await syncLocalDataToCloud(
+        currentUser.uid,
+        settings,
+        receipts,
+        inventory,
+        expenses,
+        true
+      );
       if (directSession) {
-        await pushToDirectCloud(directSession, settings, receipts, inventory, expenses);
+        const ok = await pushToDirectCloud(directSession, settings, receipts, inventory, expenses);
+        if (!ok) {
+          throw new Error('تعذر تحديث بيانات مساحة العمل السحابية.');
+        }
       }
-      if (currentUser) {
-        await syncLocalDataToCloud(
-          currentUser.uid,
-          settings,
-          receipts,
-          inventory,
-          expenses,
-          true
-        );
-      }
-      notify('تم رفع ومزامنة جميع بيانات العيادة سحابياً بنجاح', 'success');
+      notify('تم التحقق من رفع ومزامنة جميع بيانات العيادة سحابياً بنجاح', 'success');
     } catch {
-      notify('حدث خطأ أثناء رفع بعض البيانات للسحابة', 'error');
+      notify('فشلت المزامنة السحابية: لم يتم تأكيد الكتابة في Firestore.', 'error');
     } finally {
       setIsSyncingCloud(false);
     }
@@ -508,17 +607,17 @@ export default function App() {
     [inventory]
   );
 
-  const isCloudConnected = Boolean(currentUser || directSession);
+  const isCloudConnected = Boolean(currentUser);
 
   const handleSaveReceipt = (
     payload: Omit<ReceiptRecord, 'id'> & { id?: string }
   ): ReceiptRecord => {
     const isEdit = Boolean(payload.id);
-    const record: ReceiptRecord = {
+    const record = validateAndNormalizeReceipt({
       ...payload,
       id: payload.id || 'rec_' + Date.now(),
       createdAt: new Date().toISOString(),
-    };
+    });
 
     const nextReceiptsList = (() => {
       const idx = receipts.findIndex((r) => r.id === record.id);
@@ -533,16 +632,16 @@ export default function App() {
     setReceipts(nextReceiptsList);
 
     let nextInventoryList = inventory;
-    if (!isEdit && settings.features.autoInventory && payload.services.length > 0) {
+    if (!isEdit && settings.features.autoInventory && record.services.length > 0) {
       nextInventoryList = inventory.map((item) => {
-        if (item.linkedService && payload.services.includes(item.linkedService) && item.qty > 0) {
+        if (item.linkedService && record.services.includes(item.linkedService) && item.qty > 0) {
           const nextQty = Math.max(0, +(Number(item.qty) - 1).toFixed(2));
-          const updatedItem: InventoryItem = {
+          const updatedItem: InventoryItem = validateAndNormalizeInventoryItem({
             ...item,
             qty: nextQty,
             totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
             updatedAt: new Date().toISOString().slice(0, 10),
-          };
+          });
           if (currentUser) {
             saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
           }
@@ -553,53 +652,67 @@ export default function App() {
       setInventory(nextInventoryList);
     }
 
-    if (directSession) {
-      pushToDirectCloud(directSession, settings, nextReceiptsList, nextInventoryList, expenses);
-    }
+    setEditingReceipt(null);
 
     if (currentUser) {
       ensureClinicDocumentInCloud(currentUser.uid, settings)
         .then(() => saveReceiptToCloud(currentUser.uid, record))
-        .catch(() => {});
+        .then(() => {
+          notify(`تم حفظ السند #${record.receiptNo} وتأكيد مزامنته سحابياً`, 'success');
+        })
+        .catch(() => {
+          notify(
+            `تم حفظ السند #${record.receiptNo} محلياً فقط — تعذر التأكيد السحابي حالياً`,
+            'warning'
+          );
+        });
+    } else {
+      notify(`تم حفظ السند #${record.receiptNo} محلياً بنجاح`, 'success');
     }
 
-    setEditingReceipt(null);
-    notify(
-      isCloudConnected
-        ? `تم حفظ السند #${record.receiptNo} ومزامنته سحابياً`
-        : `تم حفظ السند #${record.receiptNo} بنجاح`,
-      'success'
-    );
     return record;
   };
 
   const handleSettleDebt = (receiptId: string, amountPaidNow: number) => {
+    if (!Number.isFinite(amountPaidNow) || amountPaidNow <= 0) {
+      notify('يرجى إدخال مبلغ سداد صحيح أكبر من الصفر.', 'error');
+      return;
+    }
     const today = new Date().toISOString().slice(0, 10);
+    let settledRecord: ReceiptRecord | null = null;
+
     const nextReceiptsList = receipts.map((r) => {
       if (r.id !== receiptId) return r;
       const nextPaid = Math.min(r.totalAmount, Number(r.paidAmount) + amountPaidNow);
-      const nextRem = Math.max(0, Number(r.totalAmount) - nextPaid);
+      const nextRem = Math.max(0, +(Number(r.totalAmount) - nextPaid).toFixed(2));
       const settlementNote = `تم سداد دفعة ${amountPaidNow.toLocaleString()} ${r.currency} بتاريخ ${today}`;
       const nextNotes = r.notes
         ? `${r.notes} | ${settlementNote}`.slice(0, 500)
         : settlementNote;
-      const updated: ReceiptRecord = {
+      const updated = validateAndNormalizeReceipt({
         ...r,
         paidAmount: nextPaid,
         remainingAmount: nextRem,
         notes: nextNotes,
         amountWords: numberToArabicWords(nextPaid, String(r.currency)),
-      };
-      if (currentUser) {
-        saveReceiptToCloud(currentUser.uid, updated).catch(() => {});
-      }
+      });
+      settledRecord = updated;
       return updated;
     });
+
     setReceipts(nextReceiptsList);
-    if (directSession) {
-      pushToDirectCloud(directSession, settings, nextReceiptsList, inventory, expenses);
+
+    if (currentUser && settledRecord) {
+      saveReceiptToCloud(currentUser.uid, settledRecord)
+        .then(() => {
+          notify('تم تسديد الدفعة وتأكيد مزامنتها سحابياً بنجاح', 'success');
+        })
+        .catch(() => {
+          notify('تم تسديد الدفعة محلياً فقط — تعذر المزامنة السحابية حالياً', 'warning');
+        });
+    } else {
+      notify('تم تسديد الدفعة وتوثيقها في السند بنجاح', 'success');
     }
-    notify('تم تسديد الدفعة وتوثيقها في السند ومزامنتها بنجاح', 'success');
   };
 
   const handleDeleteReceipt = (receiptId: string) => {
@@ -618,12 +731,12 @@ export default function App() {
       nextInventoryList = inventory.map((item) => {
         if (item.linkedService && deletedReceipt.services.includes(item.linkedService)) {
           const nextQty = +(Number(item.qty) + 1).toFixed(2);
-          const updatedItem: InventoryItem = {
+          const updatedItem = validateAndNormalizeInventoryItem({
             ...item,
             qty: nextQty,
             totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
             updatedAt: today,
-          };
+          });
           if (currentUser) {
             saveInventoryItemToCloud(currentUser.uid, updatedItem).catch(() => {});
           }
@@ -634,13 +747,17 @@ export default function App() {
       setInventory(nextInventoryList);
     }
 
-    if (directSession) {
-      pushToDirectCloud(directSession, settings, nextReceiptsList, nextInventoryList, expenses);
-    }
     if (currentUser) {
-      deleteReceiptFromCloud(currentUser.uid, receiptId).catch(() => {});
+      deleteReceiptFromCloud(currentUser.uid, receiptId)
+        .then(() => {
+          notify('تم حذف السند ومزامنة الحذف سحابياً', 'info');
+        })
+        .catch(() => {
+          notify('تم حذف السند محلياً — تعذر مزامنة الحذف سحابياً حالياً', 'warning');
+        });
+    } else {
+      notify('تم حذف السند واسترجاع المواد المرتبطة للمخزون', 'info');
     }
-    notify('تم حذف السند واسترجاع المواد المرتبطة للمخزون', 'info');
   };
 
   const handleSaveInventoryItem = (
@@ -648,11 +765,11 @@ export default function App() {
     recordAsExpense: boolean
   ) => {
     const today = new Date().toISOString().slice(0, 10);
-    const newItem: InventoryItem = {
+    const newItem = validateAndNormalizeInventoryItem({
       ...payload,
       id: payload.id || 'inv_' + Date.now(),
       updatedAt: today,
-    };
+    });
 
     const nextInventoryList = (() => {
       const idx = inventory.findIndex((i) => i.id === newItem.id);
@@ -665,54 +782,58 @@ export default function App() {
     })();
     setInventory(nextInventoryList);
 
-    if (currentUser) {
-      ensureClinicDocumentInCloud(currentUser.uid, settings)
-        .then(() => saveInventoryItemToCloud(currentUser.uid, newItem))
-        .catch(() => {});
-    }
-
-    let nextExpensesList = expenses;
+    let createdExpense: ExpenseRecord | null = null;
     if (recordAsExpense && newItem.totalCost > 0) {
-      const exp: ExpenseRecord = {
+      const exp = validateAndNormalizeExpense({
         id: 'exp_' + Date.now(),
         title: `شراء مخزون: ${newItem.name}`,
         amount: newItem.totalCost,
         category: 'مشتريات مخزون',
         currency: settings.identity.defaultCurrency,
         date: today,
-      };
-      nextExpensesList = [exp, ...expenses];
-      setExpenses(nextExpensesList);
-      if (currentUser) {
-        saveExpenseToCloud(currentUser.uid, exp).catch(() => {});
-      }
+      });
+      createdExpense = exp;
+      setExpenses([exp, ...expenses]);
     }
 
-    if (directSession) {
-      pushToDirectCloud(directSession, settings, receipts, nextInventoryList, nextExpensesList);
+    if (currentUser) {
+      ensureClinicDocumentInCloud(currentUser.uid, settings)
+        .then(async () => {
+          await saveInventoryItemToCloud(currentUser.uid, newItem);
+          if (createdExpense) {
+            await saveExpenseToCloud(currentUser.uid, createdExpense);
+          }
+        })
+        .then(() => {
+          notify(`تم حفظ الصنف (${newItem.name}) ومزامنته سحابياً`, 'success');
+        })
+        .catch(() => {
+          notify(`تم حفظ الصنف (${newItem.name}) محلياً فقط — تعذر المزامنة السحابية`, 'warning');
+        });
+    } else {
+      notify(`تم حفظ الصنف (${newItem.name})`, 'success');
     }
-
-    notify(`تم حفظ الصنف (${newItem.name})`, 'success');
   };
 
   const handleQuickConsumeInventory = (id: string, amount = 1) => {
+    let updatedTarget: InventoryItem | null = null;
     const nextInventoryList = inventory.map((item) => {
       if (item.id !== id) return item;
       const nextQty = Math.max(0, +(Number(item.qty) - amount).toFixed(2));
-      const updated: InventoryItem = {
+      const updated = validateAndNormalizeInventoryItem({
         ...item,
         qty: nextQty,
         totalCost: +(nextQty * Number(item.unitPrice)).toFixed(2),
         updatedAt: new Date().toISOString().slice(0, 10),
-      };
-      if (currentUser) {
-        saveInventoryItemToCloud(currentUser.uid, updated).catch(() => {});
-      }
+      });
+      updatedTarget = updated;
       return updated;
     });
     setInventory(nextInventoryList);
-    if (directSession) {
-      pushToDirectCloud(directSession, settings, receipts, nextInventoryList, expenses);
+    if (currentUser && updatedTarget) {
+      saveInventoryItemToCloud(currentUser.uid, updatedTarget).catch(() => {
+        notify('تم خصم الاستهلاك محلياً فقط — تعذر المزامنة السحابية', 'warning');
+      });
     }
     notify('تم خصم الاستهلاك', 'info');
   };
@@ -720,38 +841,46 @@ export default function App() {
   const handleQuickRestockInventory = (id: string, amount: number, recordExpense: boolean) => {
     const today = new Date().toISOString().slice(0, 10);
     let nextExpensesList = expenses;
+    let updatedTarget: InventoryItem | null = null;
+    let restockExpense: ExpenseRecord | null = null;
+
     const nextInventoryList = inventory.map((item) => {
       if (item.id !== id) return item;
       const nextQty = +(Number(item.qty) + amount).toFixed(2);
       if (recordExpense && item.unitPrice > 0) {
-        const exp: ExpenseRecord = {
+        const exp = validateAndNormalizeExpense({
           id: 'exp_' + Date.now(),
           title: `تزويد مخزون: ${item.name}`,
           amount: +(amount * item.unitPrice).toFixed(2),
           category: 'مشتريات مخزون',
           currency: settings.identity.defaultCurrency,
           date: today,
-        };
+        });
+        restockExpense = exp;
         nextExpensesList = [exp, ...nextExpensesList];
         setExpenses(nextExpensesList);
-        if (currentUser) {
-          saveExpenseToCloud(currentUser.uid, exp).catch(() => {});
-        }
       }
-      const updated: InventoryItem = {
+      const updated = validateAndNormalizeInventoryItem({
         ...item,
         qty: nextQty,
         totalCost: +(nextQty * Number(item.unitPrice)).toFixed(2),
         updatedAt: today,
-      };
-      if (currentUser) {
-        saveInventoryItemToCloud(currentUser.uid, updated).catch(() => {});
-      }
+      });
+      updatedTarget = updated;
       return updated;
     });
     setInventory(nextInventoryList);
-    if (directSession) {
-      pushToDirectCloud(directSession, settings, receipts, nextInventoryList, nextExpensesList);
+
+    if (currentUser && updatedTarget) {
+      saveInventoryItemToCloud(currentUser.uid, updatedTarget)
+        .then(async () => {
+          if (restockExpense) {
+            await saveExpenseToCloud(currentUser.uid, restockExpense);
+          }
+        })
+        .catch(() => {
+          notify('تم تزويد المخزون محلياً فقط — تعذر المزامنة السحابية', 'warning');
+        });
     }
     notify(`تم تزويد المخزون +${amount}`, 'success');
   };
@@ -806,13 +935,15 @@ export default function App() {
             </div>
           </div>
 
-          {/* Left: Back Button + Cloud Button + Theme Toggle */}
+          {/* Left: Back Button (Desktop or Settings) + Cloud Button + Theme Toggle */}
           <div className="flex items-center gap-1.5 shrink-0">
             {activeSection !== 'receipt' && (
               <button
                 type="button"
                 onClick={() => navigateToSection('receipt')}
-                className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0"
+                className={`${
+                  activeSection === 'settings' ? 'inline-flex' : 'hidden md:inline-flex'
+                } items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0`}
               >
                 <ArrowRight className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                 <span>رجوع</span>
@@ -822,7 +953,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsCloudModalOpen(true)}
-              className={`inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border text-xs font-bold transition-colors shrink-0 ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-colors shrink-0 ${
                 isCloudConnected
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
@@ -830,9 +961,7 @@ export default function App() {
               title="حساب العيادة والتثبيت"
             >
               <Cloud className="w-4 h-4 shrink-0" />
-              <span className={activeSection !== 'receipt' ? 'hidden sm:inline' : 'inline'}>
-                {isCloudConnected ? 'متصل' : 'سحابي'}
-              </span>
+              <span>{isCloudConnected ? 'متصل' : 'سحابي'}</span>
             </button>
 
             <button
@@ -1002,11 +1131,10 @@ export default function App() {
                 appearance: { ...settings.appearance, permanentAccountantSig: sig },
               };
               setSettings(nextSettings);
-              if (directSession) {
-                pushToDirectCloud(directSession, nextSettings, receipts, inventory, expenses);
-              }
               if (currentUser) {
-                saveClinicSettingsToCloud(currentUser.uid, nextSettings).catch(() => {});
+                saveClinicSettingsToCloud(currentUser.uid, nextSettings).catch(() => {
+                  notify('تم حفظ التوقيع محلياً فقط — تعذر المزامنة السحابية', 'warning');
+                });
               }
             }}
             notify={notify}
@@ -1046,13 +1174,13 @@ export default function App() {
             onDeleteItem={(id) => {
               const nextInventoryList = inventory.filter((i) => i.id !== id);
               setInventory(nextInventoryList);
-              if (directSession) {
-                pushToDirectCloud(directSession, settings, receipts, nextInventoryList, expenses);
-              }
               if (currentUser) {
-                deleteInventoryItemFromCloud(currentUser.uid, id).catch(() => {});
+                deleteInventoryItemFromCloud(currentUser.uid, id)
+                  .then(() => notify('تم حذف الصنف ومزامنة الحذف سحابياً', 'info'))
+                  .catch(() => notify('تم حذف الصنف محلياً — تعذر المزامنة السحابية', 'warning'));
+              } else {
+                notify('تم حذف الصنف', 'info');
               }
-              notify('تم حذف الصنف', 'info');
             }}
             notify={notify}
           />
@@ -1065,36 +1193,39 @@ export default function App() {
             inventory={inventory}
             defaultCurrency={settings.identity.defaultCurrency}
             onAddExpense={(title, amount, category, currency) => {
-              const newExp: ExpenseRecord = {
+              const newExp = validateAndNormalizeExpense({
                 id: 'exp_' + Date.now(),
                 title,
                 amount,
                 category,
                 currency,
                 date: new Date().toISOString().slice(0, 10),
-              };
+              });
               const nextExpensesList = [newExp, ...expenses];
               setExpenses(nextExpensesList);
-              if (directSession) {
-                pushToDirectCloud(directSession, settings, receipts, inventory, nextExpensesList);
-              }
               if (currentUser) {
                 ensureClinicDocumentInCloud(currentUser.uid, settings)
                   .then(() => saveExpenseToCloud(currentUser.uid, newExp))
-                  .catch(() => {});
+                  .then(() => notify('تم إضافة المصروف ومزامنته سحابياً', 'success'))
+                  .catch(() =>
+                    notify('تم إضافة المصروف محلياً فقط — تعذر المزامنة السحابية', 'warning')
+                  );
+              } else {
+                notify('تم إضافة المصروف', 'success');
               }
-              notify('تم إضافة المصروف', 'success');
             }}
             onDeleteExpense={(id) => {
               const nextExpensesList = expenses.filter((e) => e.id !== id);
               setExpenses(nextExpensesList);
-              if (directSession) {
-                pushToDirectCloud(directSession, settings, receipts, inventory, nextExpensesList);
-              }
               if (currentUser) {
-                deleteExpenseFromCloud(currentUser.uid, id).catch(() => {});
+                deleteExpenseFromCloud(currentUser.uid, id)
+                  .then(() => notify('تم حذف المصروف ومزامنة الحذف سحابياً', 'info'))
+                  .catch(() =>
+                    notify('تم حذف المصروف محلياً — تعذر المزامنة السحابية', 'warning')
+                  );
+              } else {
+                notify('تم حذف المصروف', 'info');
               }
-              notify('تم حذف المصروف', 'info');
             }}
             notify={notify}
           />
@@ -1128,39 +1259,38 @@ export default function App() {
             }}
             onSaveSettings={(next) => {
               setSettings(next);
-              if (directSession) {
-                pushToDirectCloud(directSession, next, receipts, inventory, expenses);
-              }
               if (currentUser) {
-                saveClinicSettingsToCloud(currentUser.uid, next).catch(() => {});
-                for (const srv of next.services) {
-                  saveServiceToCloud(currentUser.uid, srv).catch(() => {});
-                }
+                Promise.all([
+                  saveClinicSettingsToCloud(currentUser.uid, next),
+                  ...next.services.map((srv) => saveServiceToCloud(currentUser.uid, srv)),
+                ])
+                  .then(() => {
+                    notify('تم حفظ الإعدادات وتأكيد مزامنتها سحابياً بنجاح', 'success');
+                  })
+                  .catch(() => {
+                    notify('تم حفظ الإعدادات محلياً فقط — تعذر المزامنة السحابية', 'warning');
+                  });
+              } else {
+                notify('تم حفظ الإعدادات محلياً بنجاح', 'success');
               }
-              notify('تم حفظ الإعدادات ومزامنتها سحابياً بنجاح', 'success');
             }}
             onImportFullBackup={(payload) => {
               const nextSettings = payload.settings || settings;
-              const nextReceipts = Array.isArray(payload.receipts) ? payload.receipts : receipts;
+              const nextReceipts = Array.isArray(payload.receipts)
+                ? payload.receipts.map(validateAndNormalizeReceipt)
+                : receipts;
               const nextInventory = Array.isArray(payload.inventory)
-                ? payload.inventory
+                ? payload.inventory.map(validateAndNormalizeInventoryItem)
                 : inventory;
-              const nextExpenses = Array.isArray(payload.expenses) ? payload.expenses : expenses;
+              const nextExpenses = Array.isArray(payload.expenses)
+                ? payload.expenses.map(validateAndNormalizeExpense)
+                : expenses;
 
               if (payload.settings) setSettings(nextSettings);
               if (Array.isArray(payload.receipts)) setReceipts(nextReceipts);
               if (Array.isArray(payload.inventory)) setInventory(nextInventory);
               if (Array.isArray(payload.expenses)) setExpenses(nextExpenses);
 
-              if (directSession) {
-                pushToDirectCloud(
-                  directSession,
-                  nextSettings,
-                  nextReceipts,
-                  nextInventory,
-                  nextExpenses
-                );
-              }
               if (currentUser) {
                 syncLocalDataToCloud(
                   currentUser.uid,
@@ -1169,7 +1299,9 @@ export default function App() {
                   nextInventory,
                   nextExpenses,
                   true
-                ).catch(() => {});
+                ).catch(() => {
+                  notify('تم استيراد النسخة الاحتياطية محلياً — تعذر المزامنة السحابية', 'warning');
+                });
               }
             }}
             notify={notify}
@@ -1215,12 +1347,12 @@ export default function App() {
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-bold'
                 }`}
               >
-                <div className="relative flex items-center justify-center">
+                <div className="relative flex items-center justify-center px-2">
                   <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-2'}`} />
                   {tab.badge !== undefined && (
                     <span
                       dir="ltr"
-                      className={`absolute -top-1.5 -left-3 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-mono font-black flex items-center justify-center shadow-xs ${tab.badgeColor}`}
+                      className={`absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-mono font-black flex items-center justify-center ring-2 ring-white dark:ring-slate-900 shadow-xs ${tab.badgeColor}`}
                     >
                       {tab.badge}
                     </span>

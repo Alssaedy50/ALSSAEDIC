@@ -286,46 +286,41 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
       </div>
 
       {/* Summary Cards (Per-Currency Breakdown + Linked Exchange Rate Totals) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 flex flex-col justify-between">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">عدد السندات</span>
-            <button
-              type="button"
-              onClick={() => setShowRatesPanel((v) => !v)}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 text-[10px] font-bold border border-sky-200 dark:border-sky-800"
-              title="أسعار صرف العملات"
-            >
-              <SlidersHorizontal className="w-3 h-3" />
-              <span>أسعار الصرف</span>
-            </button>
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+            عدد السندات
           </div>
-          <div className="mt-1.5 text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 dark:text-slate-100">
+          <div className="my-1 text-xl sm:text-2xl font-black font-mono tabular-nums text-slate-900 dark:text-slate-100">
             {filteredReceipts.length}
           </div>
-          <div className="mt-1 text-[10px] text-slate-400">
+          <div className="text-[11px] font-bold text-slate-400">
             {perCurrencyStats.length > 1
               ? `${perCurrencyStats.length} عملات نشطة`
-              : perCurrencyStats[0]?.currency}
+              : 'سند مسجل'}
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 space-y-1.5">
-          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">إجمالي السندات</div>
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 flex flex-col justify-between space-y-1.5">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+            إجمالي السندات
+          </div>
           <div className="space-y-1">
             {perCurrencyStats.map((st) => (
               <div
                 key={st.currency}
-                className="flex items-baseline justify-between gap-1 text-xs sm:text-sm font-mono tabular-nums font-black text-slate-900 dark:text-slate-100"
+                className="flex items-baseline justify-between gap-1.5 text-sm sm:text-base font-mono tabular-nums font-black text-slate-900 dark:text-slate-100"
               >
                 <span>{st.totalBilled.toLocaleString()}</span>
-                <span className="text-[10px] font-sans font-bold text-slate-500">{st.currency}</span>
+                <span className="text-[11px] font-sans font-bold text-slate-500 shrink-0">
+                  {st.currency}
+                </span>
               </div>
             ))}
           </div>
           {perCurrencyStats.length > 1 && (
-            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 flex items-center justify-between">
-              <span>المعادل الموحد:</span>
+            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 flex items-center justify-between gap-1">
+              <span>المعادل:</span>
               <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
                 {unifiedTotalsInDefaultCurrency.billed.toLocaleString()} {defaultCurrency}
               </span>
@@ -333,24 +328,26 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
           )}
         </div>
 
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 space-y-1.5">
-          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">المقبوض نقداً</div>
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 flex flex-col justify-between space-y-1.5">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+            المقبوض نقداً
+          </div>
           <div className="space-y-1">
             {perCurrencyStats.map((st) => (
               <div
                 key={st.currency}
-                className="flex items-baseline justify-between gap-1 text-xs sm:text-sm font-mono tabular-nums font-black text-emerald-600 dark:text-emerald-400"
+                className="flex items-baseline justify-between gap-1.5 text-sm sm:text-base font-mono tabular-nums font-black text-emerald-600 dark:text-emerald-400"
               >
                 <span>{st.totalPaid.toLocaleString()}</span>
-                <span className="text-[10px] font-sans font-bold text-emerald-600/80 dark:text-emerald-400/80">
+                <span className="text-[11px] font-sans font-bold text-emerald-600/80 dark:text-emerald-400/80 shrink-0">
                   {st.currency}
                 </span>
               </div>
             ))}
           </div>
           {perCurrencyStats.length > 1 && (
-            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-emerald-600/80 flex items-center justify-between">
-              <span>المعادل الموحد:</span>
+            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-emerald-600/80 flex items-center justify-between gap-1">
+              <span>المعادل:</span>
               <span className="font-mono font-bold">
                 {unifiedTotalsInDefaultCurrency.paid.toLocaleString()} {defaultCurrency}
               </span>
@@ -358,24 +355,26 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
           )}
         </div>
 
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 space-y-1.5">
-          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">الديون المتبقية</div>
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 flex flex-col justify-between space-y-1.5">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+            الديون المتبقية
+          </div>
           <div className="space-y-1">
             {perCurrencyStats.map((st) => (
               <div
                 key={st.currency}
-                className="flex items-baseline justify-between gap-1 text-xs sm:text-sm font-mono tabular-nums font-black text-rose-600 dark:text-rose-400"
+                className="flex items-baseline justify-between gap-1.5 text-sm sm:text-base font-mono tabular-nums font-black text-rose-600 dark:text-rose-400"
               >
                 <span>{st.totalRemaining.toLocaleString()}</span>
-                <span className="text-[10px] font-sans font-bold text-rose-600/80 dark:text-rose-400/80">
+                <span className="text-[11px] font-sans font-bold text-rose-600/80 dark:text-rose-400/80 shrink-0">
                   {st.currency}
                 </span>
               </div>
             ))}
           </div>
           {perCurrencyStats.length > 1 && (
-            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-rose-600/80 flex items-center justify-between">
-              <span>المعادل الموحد:</span>
+            <div className="pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 text-[10px] text-rose-600/80 flex items-center justify-between gap-1">
+              <span>المعادل:</span>
               <span className="font-mono font-bold">
                 {unifiedTotalsInDefaultCurrency.remaining.toLocaleString()} {defaultCurrency}
               </span>
@@ -451,7 +450,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
       )}
 
       {/* Search & Currency Filter */}
-      <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-4">
+      <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 space-y-3.5">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -464,18 +463,34 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
             />
           </div>
 
-          <select
-            value={currencyFilter}
-            onChange={(e) => setCurrencyFilter(e.target.value)}
-            className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-800 dark:text-slate-200"
-          >
-            <option value="all">كل العملات</option>
-            {availableCurrencies.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={currencyFilter}
+              onChange={(e) => setCurrencyFilter(e.target.value)}
+              className="flex-1 sm:flex-none rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-800 dark:text-slate-200"
+            >
+              <option value="all">كل العملات</option>
+              {availableCurrencies.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setShowRatesPanel((v) => !v)}
+              className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition-colors shrink-0 ${
+                showRatesPanel
+                  ? 'bg-sky-600 text-white border-sky-500'
+                  : 'bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-800'
+              }`}
+              title="إعدادات أسعار الصرف"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+              <span>أسعار الصرف</span>
+            </button>
+          </div>
         </div>
 
         {filteredReceipts.length === 0 ? (
@@ -503,62 +518,86 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     key={rec.id}
                     className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 space-y-2.5"
                   >
-                    <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-                      <div className="flex items-center gap-2 min-w-0">
+                    {/* Top Meta & Full Patient Name Header (No Truncation) */}
+                    <div className="border-b border-slate-200 dark:border-slate-800 pb-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            dir="ltr"
+                            className="inline-block px-2 py-0.5 rounded-md bg-sky-500/10 font-mono tabular-nums font-black text-sky-600 dark:text-sky-400 text-xs shrink-0"
+                          >
+                            #{rec.receiptNo}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-slate-200/80 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300 shrink-0">
+                            {rec.currency}
+                          </span>
+                        </div>
                         <span
                           dir="ltr"
-                          className="font-mono tabular-nums font-black text-sky-600 dark:text-sky-400 text-sm shrink-0"
+                          className="inline-block whitespace-nowrap shrink-0 font-mono tabular-nums text-[11px] font-bold text-slate-500 dark:text-slate-400"
                         >
-                          #{rec.receiptNo}
-                        </span>
-                        <span className="font-bold text-slate-900 dark:text-slate-100 text-sm truncate">
-                          {rec.patientName}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="px-2 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                          {rec.currency}
-                        </span>
-                        <span className="whitespace-nowrap shrink-0 font-mono tabular-nums text-[11px] text-slate-500">
                           {rec.date}
                         </span>
+                      </div>
+
+                      <div className="flex items-baseline justify-between gap-2">
+                        <div className="font-black text-slate-900 dark:text-slate-100 text-sm sm:text-base break-words leading-snug">
+                          {rec.patientName}
+                        </div>
+                        {rec.patientPhone && (
+                          <span
+                            dir="ltr"
+                            className="inline-block font-mono tabular-nums text-[11px] font-bold text-slate-500 dark:text-slate-400 shrink-0"
+                          >
+                            {rec.patientPhone}
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
                       <div>
-                        <span className="text-slate-400">الخدمات: </span>
-                        <span className="font-semibold break-words">
+                        <span className="text-slate-400 font-bold">الخدمات: </span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 break-words">
                           {(rec.services || []).join(' + ') || rec.notes || '—'}
                         </span>
                       </div>
                       {rec.toothFDI && (
-                        <div>
-                          <span className="text-slate-400">الأسنان (FDI): </span>
-                          <span dir="ltr" className="font-mono font-bold text-sky-500">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-400 font-bold">الأسنان (FDI):</span>
+                          <span
+                            dir="ltr"
+                            className="inline-block font-mono font-bold text-sky-500"
+                          >
                             {rec.toothFDI}
                           </span>
                         </div>
                       )}
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 text-center bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
+                    <div className="grid grid-cols-3 gap-2 text-center bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
                       <div>
-                        <div className="text-[10px] text-slate-400">الإجمالي ({rec.currency})</div>
-                        <div className="font-mono tabular-nums font-bold">
+                        <div className="text-[10px] font-bold text-slate-400 whitespace-nowrap">
+                          الإجمالي
+                        </div>
+                        <div className="font-mono tabular-nums font-black text-slate-900 dark:text-slate-100 mt-0.5">
                           {Number(rec.totalAmount).toLocaleString()}
                         </div>
                       </div>
                       <div>
-                        <div className="text-[10px] text-emerald-500">المقبوض</div>
-                        <div className="font-mono tabular-nums font-bold text-emerald-600 dark:text-emerald-400">
+                        <div className="text-[10px] font-bold text-emerald-500 whitespace-nowrap">
+                          المقبوض
+                        </div>
+                        <div className="font-mono tabular-nums font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
                           {Number(rec.paidAmount).toLocaleString()}
                         </div>
                       </div>
                       <div>
-                        <div className="text-[10px] text-rose-500">المتبقي</div>
+                        <div className="text-[10px] font-bold text-rose-500 whitespace-nowrap">
+                          المتبقي
+                        </div>
                         <div
-                          className={`font-mono tabular-nums font-bold ${
+                          className={`font-mono tabular-nums font-black mt-0.5 ${
                             hasDebt
                               ? 'text-rose-600 dark:text-rose-400'
                               : 'text-emerald-600 dark:text-emerald-400'
@@ -569,13 +608,18 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1">
+                    {/* Balanced Single-Row Action Bar */}
+                    <div
+                      className={`grid ${
+                        hasDebt ? 'grid-cols-5' : 'grid-cols-4'
+                      } gap-1.5 pt-1`}
+                    >
                       <button
                         type="button"
                         onClick={() => setPreviewReceipt(rec)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 rounded-lg border border-sky-200 dark:border-sky-800"
+                        className="inline-flex items-center justify-center gap-1 py-2 px-1.5 text-[11px] font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 rounded-lg border border-sky-200 dark:border-sky-800 whitespace-nowrap"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3.5 h-3.5 shrink-0" />
                         <span>معاينة</span>
                       </button>
 
@@ -583,9 +627,9 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         href={buildWhatsAppHref(rec)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 rounded-lg border border-emerald-200 dark:border-emerald-800"
+                        className="inline-flex items-center justify-center gap-1 py-2 px-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 rounded-lg border border-emerald-200 dark:border-emerald-800 whitespace-nowrap"
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
+                        <MessageCircle className="w-3.5 h-3.5 shrink-0" />
                         <span>واتساب</span>
                       </a>
 
@@ -593,9 +637,9 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         <button
                           type="button"
                           onClick={() => openSettleModal(rec)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 rounded-lg border border-amber-200 dark:border-amber-800"
+                          className="inline-flex items-center justify-center gap-1 py-2 px-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 rounded-lg border border-amber-200 dark:border-amber-800 whitespace-nowrap"
                         >
-                          <CreditCard className="w-3.5 h-3.5" />
+                          <CreditCard className="w-3.5 h-3.5 shrink-0" />
                           <span>تسديد</span>
                         </button>
                       )}
@@ -603,9 +647,9 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                       <button
                         type="button"
                         onClick={() => onEditReceipt(rec)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-200/70 dark:bg-slate-800 rounded-lg"
+                        className="inline-flex items-center justify-center gap-1 py-2 px-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200 bg-slate-200/70 dark:bg-slate-800 rounded-lg whitespace-nowrap"
                       >
-                        <Edit3 className="w-3.5 h-3.5" />
+                        <Edit3 className="w-3.5 h-3.5 shrink-0" />
                         <span>تعديل</span>
                       </button>
 
@@ -616,7 +660,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                             onDeleteReceipt(rec.id);
                             setDeletingId(null);
                           }}
-                          className="px-2.5 py-1.5 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                          className="inline-flex items-center justify-center py-2 px-1 text-[11px] font-bold text-white bg-rose-600 rounded-lg whitespace-nowrap"
                         >
                           تأكيد؟
                         </button>
@@ -624,10 +668,10 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         <button
                           type="button"
                           onClick={() => setDeletingId(rec.id)}
-                          className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                          className="inline-flex items-center justify-center py-2 px-1.5 text-[11px] font-bold text-rose-500 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg"
                           title="حذف"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-4 h-4 shrink-0" />
                         </button>
                       )}
                     </div>

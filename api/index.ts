@@ -1,62 +1,140 @@
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 
-interface ServerlessWorkspaceRecord {
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const SERVER_HMAC_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto
+    .createHash('sha256')
+    .update(`alssaedic-erp-secret-${process.env.GEMINI_API_KEY || 'local-runtime-key'}`)
+    .digest('hex');
+
+interface SignedSessionPayload {
   clinicId: string;
-  passwordHash: string;
-  updatedAt: string;
-  data: {
-    settings?: unknown;
-    receipts?: unknown[];
-    inventory?: unknown[];
-    expenses?: unknown[];
-  };
-}
-
-const TMP_STORE_PATH = path.join('/tmp', '.docai_cloud_workspaces.json');
-const memoryWorkspaces: Record<string, ServerlessWorkspaceRecord> = {};
-
-function readServerlessStore(): Record<string, ServerlessWorkspaceRecord> {
-  try {
-    if (fs.existsSync(TMP_STORE_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(TMP_STORE_PATH, 'utf-8'));
-      return { ...memoryWorkspaces, ...parsed };
-    }
-  } catch {
-    // Fallback to memory store
-  }
-  return { ...memoryWorkspaces };
-}
-
-function writeServerlessStore(store: Record<string, ServerlessWorkspaceRecord>): void {
-  Object.assign(memoryWorkspaces, store);
-  try {
-    fs.writeFileSync(TMP_STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
-  } catch {
-    // Kept in memoryWorkspaces
-  }
-}
-
-function hashServerlessPassword(password: string): string {
-  return crypto.createHash('sha256').update(String(password).trim()).digest('hex');
+  ownerUid: string;
+  iat: number;
+  exp: number;
 }
 
 function normalizeServerlessClinicId(raw: string): string {
-  return String(raw || '')
+  const cleaned = String(raw || '')
     .trim()
     .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9_\-\u0600-\u06FF]/g, '')
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
     .slice(0, 64);
+  return cleaned.length >= 3 ? cleaned : `clinic-${cleaned || 'default'}`;
+}
+
+function hashPasswordScrypt(password: string, existingSaltHex?: string): string {
+  const normalized = String(password || '').trim();
+  const salt = existingSaltHex
+    ? Buffer.from(existingSaltHex, 'hex')
+    : crypto.randomBytes(16);
+  const derivedKey = crypto.scryptSync(normalized, salt, 64, {
+    N: 16384,
+    r: 8,
+    p: 1,
+  });
+  return `scrypt$${salt.toString('hex')}$${derivedKey.toString('hex')}`;
+}
+
+function verifyPasswordScrypt(password: string, storedHash: string): boolean {
+  try {
+    const parts = String(storedHash || '').split('$');
+    if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
+    const [, saltHex, keyHex] = parts;
+    const expectedBuf = Buffer.from(keyHex, 'hex');
+    const actualDerived = crypto.scryptSync(
+      String(password || '').trim(),
+      Buffer.from(saltHex, 'hex'),
+      64,
+      {
+        N: 16384,
+        r: 8,
+        p: 1,
+      }
+    );
+    if (expectedBuf.length !== actualDerived.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, actualDerived);
+  } catch {
+    return false;
+  }
+}
+
+function createSignedSessionToken(clinicId: string, ownerUid: string): {
+  sessionToken: string;
+  expiresAt: string;
+} {
+  const now = Date.now();
+  const exp = now + SESSION_TTL_MS;
+  const payload: SignedSessionPayload = {
+    clinicId: normalizeServerlessClinicId(clinicId),
+    ownerUid: String(ownerUid || '').trim().slice(0, 128),
+    iat: now,
+    exp,
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', SERVER_HMAC_SECRET)
+    .update(encodedPayload)
+    .digest('base64url');
+  return {
+    sessionToken: `${encodedPayload}.${signature}`,
+    expiresAt: new Date(exp).toISOString(),
+  };
+}
+
+function verifySignedSessionToken(token: string): SignedSessionPayload | null {
+  try {
+    const raw = String(token || '').trim();
+    const dotIndex = raw.indexOf('.');
+    if (dotIndex <= 0) return null;
+    const encodedPayload = raw.slice(0, dotIndex);
+    const providedSig = raw.slice(dotIndex + 1);
+    const expectedSig = crypto
+      .createHmac('sha256', SERVER_HMAC_SECRET)
+      .update(encodedPayload)
+      .digest('base64url');
+
+    const providedBuf = Buffer.from(providedSig, 'utf-8');
+    const expectedBuf = Buffer.from(expectedSig, 'utf-8');
+    if (providedBuf.length !== expectedBuf.length) return null;
+    if (!crypto.timingSafeEqual(providedBuf, expectedBuf)) return null;
+
+    const payload = JSON.parse(
+      Buffer.from(encodedPayload, 'base64url').toString('utf-8')
+    ) as SignedSessionPayload;
+    if (!payload || typeof payload.exp !== 'number' || payload.exp <= Date.now()) {
+      return null;
+    }
+    if (!payload.clinicId || !payload.ownerUid) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+const rateBuckets = new Map<string, number[]>();
+
+function checkRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
+  const now = Date.now();
+  const timestamps = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+  if (timestamps.length >= maxRequests) {
+    rateBuckets.set(key, timestamps);
+    return false;
+  }
+  timestamps.push(now);
+  rateBuckets.set(key, timestamps);
+  return true;
 }
 
 function getGenAIClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) return null;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !apiKey.trim()) return null;
   return new GoogleGenAI({
-    apiKey,
+    apiKey: apiKey.trim(),
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -141,18 +219,6 @@ function buildLocalIntelligentReply(
       currency?: string;
       date?: string;
     }>;
-    recentReceipts?: Array<{
-      receiptNo?: number;
-      date?: string;
-      patientName?: string;
-      patientPhone?: string;
-      services?: string[];
-      toothFDI?: string;
-      totalAmount?: number;
-      paidAmount?: number;
-      remainingAmount?: number;
-      currency?: string;
-    }>;
     inventoryStatus?: Array<{
       name?: string;
       qty?: number;
@@ -189,7 +255,6 @@ function buildLocalIntelligentReply(
 
   const defaultCurr = ctx.identity?.defaultCurrency || ctx.defaultCurrency || 'ريال يمني';
 
-  // 1. كشف ديون المرضى بالتفصيل
   if (p.includes('ديون') || p.includes('مديون') || p.includes('متبقي') || p.includes('آجل')) {
     const debtors = Array.isArray(ctx.pendingDebtsPatients) ? ctx.pendingDebtsPatients : [];
     if (debtors.length === 0) {
@@ -203,7 +268,6 @@ function buildLocalIntelligentReply(
     return `📋 كشف ديون المرضى بالتفصيل (${debtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المتبقية: ${totalDebt.toLocaleString()} ${defaultCurr}\n💡 التوصية: متابعة تحصيل المبالغ الآجلة عبر إشعارات واتساب من قسم "سجل السندات".`;
   }
 
-  // 2. تقرير نواقص المخزون الطبي / جرد المخزون
   if (p.includes('مخزون') || p.includes('نواقص') || p.includes('جرد') || p.includes('أصناف')) {
     const allItems = Array.isArray(ctx.inventoryStatus)
       ? ctx.inventoryStatus
@@ -232,7 +296,6 @@ function buildLocalIntelligentReply(
     return `⚠️ تقرير نواقص وجرد المخزون الطبي:\n• إجمالي الأصناف: ${allItems.length} صنف (بقيمة ${totalVal.toLocaleString()} ${defaultCurr})\n• أصناف وصلت لحد النقص (${lowList.length}):\n\n${lowLines.join('\n')}\n\n💡 التوصية: سرعة تزويد الأصناف الحرجة لضمان استمرارية الجلسات العلاجية دون توقف.`;
   }
 
-  // 3. ملخص صافي الأرباح والمصروفات / التقرير المالي
   if (
     p.includes('أرباح') ||
     p.includes('ارباح') ||
@@ -249,7 +312,7 @@ function buildLocalIntelligentReply(
             : 100;
         return `💵 عملة (${c.currency}):\n• إجمالي المفوتر: ${Number(c.totalBilledAmount || 0).toLocaleString()} (${c.receiptsCount || 0} سند)\n• الإيراد المقبوض نقداً: ${Number(c.totalCollectedRevenue || 0).toLocaleString()} (نسبة التحصيل: ${rate}%)\n• الديون الآجلة: ${Number(c.totalPendingDebts || 0).toLocaleString()} (${c.debtorsCount || 0} حالة)\n• المصروفات: ${Number(c.totalExpenses || 0).toLocaleString()}\n• صافي الربح النقدي: ${Number(c.netCashProfit || 0).toLocaleString()} ${c.currency}`;
       });
-      return `📊 التقرير المالي التنفيذي للعيادة:\n\n${blocks.join('\n\n')}\n\n💡 التوصيات الإدارية:\n1. تعزيز تحصيل الذمم المتأخرة لرفع السيولة النقدية.\n2. ربط المشتريات الطبية بسجل المصروفات لضبط التكاليف التشغيلية.\n3. مراجعة الخدمات الأكثر طلباً وتوفير مستلزماتها بكميات اقتصادية.`;
+      return `📊 التقرير المالي التنفيذي للعيادة:\n\n${blocks.join('\n\n')}`;
     }
 
     const fin = ctx.financialSummary || {};
@@ -263,19 +326,16 @@ function buildLocalIntelligentReply(
     return `📊 ملخص الأداء المالي وصافي الأرباح:\n• عدد السندات المصدرة: ${fin.totalReceipts || 0} سند\n• إجمالي قيمة العلاج المفوتر: ${billed.toLocaleString()} ${defaultCurr}\n• الإيراد المقبوض فعلياً: ${collected.toLocaleString()} ${defaultCurr} (نسبة التحصيل ${rate}%)\n• إجمالي ديون المرضى: ${debts.toLocaleString()} ${defaultCurr}\n• إجمالي المصروفات التشغيلية: ${expenses.toLocaleString()} ${defaultCurr}\n• صافي الربح النقدي: ${net.toLocaleString()} ${defaultCurr}`;
   }
 
-  // 4. تعليمات بعد خلع الضرس
   if (p.includes('خلع') || p.includes('ضرس') || p.includes('جراح')) {
-    return `🦷 تعليمات طبية للمريض بعد خلع الضرس:\n1. العضّ جيداً على قطعة الشاش المعقم لمدة 45 إلى 60 دقيقة لوقف النزيف وتكوين الخثرة الدموية.\n2. تجنب المضمضة القوية أو البصق أو استخدام المصاصة (الشفاط) خلال أول 24 ساعة.\n3. الامتناع التام عن التدخين والمشروبات الساخنة في اليوم الأول.\n4. تناول أطعمة لينة وباردة أو فاترة (مثل الزبادي، العصائر الطبيعية، الشوربة الفاترة) على الجهة الأخرى.\n5. الالتزام بالمسكنات والمضاد الحيوي الموصوف من الدكتور صلاح الدين السعيدي في مواعيدها.\n6. بعد مرور 24 ساعة، يُنصح بالمضمضة اللطيفة بماء دافئ وملح 3 مرات يومياً.`;
+    return `🦷 تعليمات طبية للمريض بعد خلع الضرس:\n1. العضّ جيداً على قطعة الشاش المعقم لمدة 45 إلى 60 دقيقة لوقف النزيف وتكوين الخثرة الدموية.\n2. تجنب المضمضة القوية أو البصق أو استخدام المصاصة خلال أول 24 ساعة.\n3. الامتناع التام عن التدخين والمشروبات الساخنة في اليوم الأول.\n4. تناول أطعمة لينة وباردة أو فاترة.\n5. الالتزام بالمسكنات والمضاد الحيوي الموصوف من الدكتور صلاح الدين السعيدي في مواعيدها.`;
   }
 
-  // 5. خطة علاج عصب
   if (p.includes('عصب') || p.includes('جذور') || p.includes('16') || p.includes('سن')) {
-    return `🦷 البروتوكول الإكلينيكي وخطة علاج العصب (Root Canal Therapy):\n1. التشخيص والأشعة: أخذ صورة أشعة ذروية (Periapical X-Ray) لتحديد عدد القنوات وشكل الجذور ووجود أي التهاب ذروي.\n2. التخدير والعزل: إعطاء التخدير الموضعي (Lidocaine 2%) وعزل السن وفتح حجرة اللب (Access Cavity).\n3. استئصال اللب وتحديد الطول: إزالة الأنسجة اللبية وتحديد الطول العامل للقنوات (Working Length) عبر جهاز Apex Locator.\n4. التنظيف والتشكيل (Cleaning & Shaping): تحضير القنوات بالمبارد الدوارة (Rotary Files) مع الإرواء المستمر بمحلول هيبوكلوريت الصوديوم (NaOCl).\n5. الحشو النهائي والتعويض: تجفيف القنوات وحشوها بأقماع Gutta-Percha مع Sealer، ثم وضع الحشوة النهائية أو التوصية بتركيب تاج خزفي (Crown) لحماية السن من الكسر.`;
+    return `🦷 البروتوكول الإكلينيكي وخطة علاج العصب (Root Canal Therapy):\n1. التشخيص والأشعة: أخذ صورة أشعة ذروية (Periapical X-Ray).\n2. التخدير والعزل: إعطاء التخدير الموضعي وعزل السن وفتح حجرة اللب.\n3. استئصال اللب وتحديد الطول العامل عبر جهاز Apex Locator.\n4. التنظيف والتشكيل بالمبارد الدوارة (Rotary Files) مع الإرواء بمحلول NaOCl.\n5. الحشو النهائي بأقماع Gutta-Percha مع Sealer ووضع التعويض النهائي.`;
   }
 
-  // Default comprehensive clinic status summary
   const fin = ctx.financialSummary || {};
-  return `مرحباً بك في المساعد الطبي والمالي الذكي (${ctx.identity?.clinicAr || 'عيادة السعيدي'}):\n\n📌 ملخص السجلات الحالية:\n• إجمالي السندات: ${fin.totalReceipts || 0} سند\n• الإيرادات المقبوضة: ${Number(fin.totalCollected || 0).toLocaleString()} ${defaultCurr}\n• الديون المتبقية: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ${defaultCurr}\n• المصروفات: ${Number(fin.totalExpenses || 0).toLocaleString()} ${defaultCurr}\n\nيمكنك الاستفسار عن: "كشف ديون المرضى بالتفصيل"، "تقرير نواقص المخزون الطبي"، "ملخص صافي الأرباح والمصروفات"، أو طلب أي بروتوكول علاجي.`;
+  return `مرحباً بك في المساعد الطبي والمالي الذكي (${ctx.identity?.clinicAr || 'عيادة السعيدي'}):\n\n📌 ملخص السجلات الحالية:\n• إجمالي السندات: ${fin.totalReceipts || 0} سند\n• الإيرادات المقبوضة: ${Number(fin.totalCollected || 0).toLocaleString()} ${defaultCurr}\n• الديون المتبقية: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ${defaultCurr}\n• المصروفات: ${Number(fin.totalExpenses || 0).toLocaleString()} ${defaultCurr}`;
 }
 
 function parseReceiptHeuristicServer(
@@ -305,7 +365,7 @@ function parseReceiptHeuristicServer(
   const matchedServices: string[] = [];
   let calculatedPrice = 0;
   if (Array.isArray(availableServices)) {
-    availableServices.forEach((srv) => {
+    availableServices.slice(0, 50).forEach((srv) => {
       const allTerms = [srv.name || '', ...(srv.keywords || [])];
       if (allTerms.some((term) => term && raw.includes(term))) {
         if (srv.name) matchedServices.push(srv.name);
@@ -320,17 +380,17 @@ function parseReceiptHeuristicServer(
   const totalMatch = raw.match(/(?:بمبلغ|مبلغ|إجمالي|اجمالي)\s*(\d+)/);
   const paidMatch = raw.match(/(?:دفع|سدد|المدفوع|استلمنا)\s*(\d+)/);
 
-  const totalAmount = totalMatch ? Number(totalMatch[1]) : calculatedPrice;
-  const paidAmount = paidMatch ? Number(paidMatch[1]) : totalAmount;
+  const totalAmount = Math.max(0, totalMatch ? Number(totalMatch[1]) : calculatedPrice);
+  const paidAmount = Math.min(totalAmount, Math.max(0, paidMatch ? Number(paidMatch[1]) : totalAmount));
 
   return {
-    patientName: extractedName || 'مريض',
-    patientPhone: extractedPhone,
-    services: matchedServices,
-    toothFDI,
+    patientName: (extractedName || 'مريض').slice(0, 160),
+    patientPhone: extractedPhone.slice(0, 50),
+    services: matchedServices.slice(0, 25),
+    toothFDI: toothFDI.slice(0, 200),
     totalAmount,
     paidAmount,
-    currency: defaultCurrency || 'ريال يمني',
+    currency: String(defaultCurrency || 'ريال يمني').slice(0, 40),
     paymentMethod: raw.includes('تحويل') || raw.includes('محفظة') ? 'تحويل بنكي / محفظة' : 'نقداً (Cash)',
     notes: '',
   };
@@ -338,26 +398,139 @@ function parseReceiptHeuristicServer(
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).json({ ok: true });
   }
 
+  const clientIp =
+    String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'serverless-ip';
   const url = String(req.url || '');
+
+  const rawBodyStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {});
+  if (rawBodyStr.length > 1_000_000) {
+    return res.status(413).json({
+      ok: false,
+      error: 'حجم الطلب يتجاوز الحد الأقصى المسموح به (1MB).',
+    });
+  }
+
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
 
   try {
-    // 1. Parse Receipt Endpoint
+    // 1. Session Issuance & Scrypt Password Verification Endpoint
+    if (url.includes('/auth/session')) {
+      if (!checkRateLimit(`auth:${clientIp}`, 20, 60_000)) {
+        return res.status(429).json({
+          ok: false,
+          error: 'محاولات كثيرة جداً. يرجى الانتظار دقيقة قبل المحاولة مرة أخرى.',
+        });
+      }
+
+      const clinicId = normalizeServerlessClinicId(body.clinicId || 'default-clinic');
+      const ownerUid = String(body.ownerUid || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 128);
+
+      if (!ownerUid || ownerUid.length < 3) {
+        return res.status(400).json({
+          ok: false,
+          error: 'معرّف ملكية الحساب غير صالح.',
+        });
+      }
+
+      let passwordVerifier: string | undefined;
+      if (body.password && typeof body.password === 'string' && body.password.trim().length >= 4) {
+        if (body.storedPasswordVerifier && typeof body.storedPasswordVerifier === 'string') {
+          if (!verifyPasswordScrypt(body.password, body.storedPasswordVerifier)) {
+            return res.status(401).json({
+              ok: false,
+              error: 'كلمة المرور غير صحيحة لهذا الحساب.',
+            });
+          }
+          passwordVerifier = body.storedPasswordVerifier;
+        } else {
+          passwordVerifier = hashPasswordScrypt(body.password);
+        }
+      }
+
+      const { sessionToken, expiresAt } = createSignedSessionToken(clinicId, ownerUid);
+      return res.status(200).json({
+        ok: true,
+        clinicId,
+        ownerUid,
+        sessionToken,
+        expiresAt,
+        passwordVerifier,
+      });
+    }
+
+    // Reject legacy /tmp cloud routes so Vercel /tmp is never used as fake persistence
+    if (url.includes('/cloud/')) {
+      return res.status(410).json({
+        ok: false,
+        error:
+          'تم إيقاف التخزين المؤقت غير الآمن. يتم الحفظ والمزامنة حصرياً عبر قاعدة بيانات Firebase Firestore الموثقة.',
+      });
+    }
+
+    // Authenticate & Authorize all sensitive AI endpoints
+    if (!checkRateLimit(`api:${clientIp}`, 40, 60_000)) {
+      return res.status(429).json({
+        ok: false,
+        error: 'تم تجاوز الحد المسموح للطلبات في الدقيقة.',
+      });
+    }
+
+    const authHeader = String(req.headers?.authorization || '').trim();
+    const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const sessionHeader = String(req.headers?.['x-clinic-session'] || '').trim();
+    const rawToken = bearerToken || sessionHeader;
+
+    const verifiedSession = rawToken ? verifySignedSessionToken(rawToken) : null;
+    if (!verifiedSession) {
+      return res.status(401).json({
+        ok: false,
+        error: 'غير مصرح بالوصول. يرجى تسجيل الدخول إلى حساب العيادة.',
+      });
+    }
+
+    const headerClinicId = String(req.headers?.['x-clinic-id'] || '').trim();
+    if (
+      headerClinicId &&
+      normalizeServerlessClinicId(headerClinicId) !== verifiedSession.clinicId
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: 'رفض الوصول: لا تملك صلاحية الوصول إلى بيانات عيادة أخرى.',
+      });
+    }
+
+    const headerOwnerUid = String(req.headers?.['x-clinic-owner'] || '').trim();
+    if (headerOwnerUid && headerOwnerUid !== verifiedSession.ownerUid) {
+      return res.status(403).json({
+        ok: false,
+        error: 'رفض الوصول: عدم تطابق ملكية حساب العيادة.',
+      });
+    }
+
+    // 2. Parse Receipt Endpoint
     if (url.includes('/parse-receipt')) {
       const { text, availableServices = [], defaultCurrency = 'ريال يمني' } = body;
       if (!text || typeof text !== 'string' || !text.trim()) {
         return res.status(400).json({ error: 'يرجى إدخال نص السند للتحليل.' });
       }
+      const cleanText = text.trim().slice(0, 2000);
 
       const ai = getGenAIClient();
       if (!ai) {
         const fallbackResult = parseReceiptHeuristicServer(
-          text.trim(),
+          cleanText,
           availableServices,
           defaultCurrency
         );
@@ -366,6 +539,7 @@ export default async function handler(req: any, res: any) {
 
       const serviceNames = Array.isArray(availableServices)
         ? availableServices
+            .slice(0, 50)
             .map((s: { name?: string; price?: number }) => `${s.name} (${s.price || 0})`)
             .join('، ')
         : '';
@@ -373,9 +547,9 @@ export default async function handler(req: any, res: any) {
       try {
         const { response } = await generateWithFastFallback(ai, {
           contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
-النص المدخل: "${text.trim()}"
+النص المدخل: "${cleanText}"
 الخدمات المعتمدة في العيادة وأسعارها الافتراضية: ${serviceNames || 'كشف ومعاينة، حشوات وتجميل، علاج عصب وجذور، خلع وجراحة، تنظيف وتجليح لثة، تركيبات أسنان، تقويم أسنان، أشعة تشخيصية'}
-العملة الافتراضية: ${defaultCurrency}`,
+العملة الافتراضية: ${String(defaultCurrency).slice(0, 40)}`,
           config: {
             responseMimeType: 'application/json',
             responseSchema: {
@@ -401,7 +575,7 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ result: parsed });
       } catch {
         const fallbackResult = parseReceiptHeuristicServer(
-          text.trim(),
+          cleanText,
           availableServices,
           defaultCurrency
         );
@@ -409,7 +583,7 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 2. Assistant / Reports Endpoint
+    // 3. Assistant / Reports Endpoint
     if (url.includes('/assistant')) {
       const {
         prompt,
@@ -419,13 +593,14 @@ export default async function handler(req: any, res: any) {
         taskType = 'chat',
       } = body;
 
-      if (!prompt || typeof prompt !== 'string') {
+      if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'الرسالة مطلوبة.' });
       }
+      const cleanPrompt = prompt.trim().slice(0, 4000);
 
       const ai = getGenAIClient();
       if (!ai) {
-        const localReply = buildLocalIntelligentReply(prompt, clinicContext);
+        const localReply = buildLocalIntelligentReply(cleanPrompt, clinicContext);
         return res.status(200).json({
           reply: localReply,
           model: 'local-clinical-engine',
@@ -444,16 +619,19 @@ ${JSON.stringify(cleanContext)}`;
       const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
 
       if (attachment && attachment.base64Data && attachment.mimeType) {
-        const cleanBase64 = String(attachment.base64Data).includes(',')
-          ? String(attachment.base64Data).slice(String(attachment.base64Data).indexOf(',') + 1)
-          : String(attachment.base64Data);
+        const rawBase64 = String(attachment.base64Data);
+        if (rawBase64.length <= 800_000) {
+          const cleanBase64 = rawBase64.includes(',')
+            ? rawBase64.slice(rawBase64.indexOf(',') + 1)
+            : rawBase64;
 
-        parts.push({
-          inlineData: {
-            mimeType: String(attachment.mimeType),
-            data: cleanBase64,
-          },
-        });
+          parts.push({
+            inlineData: {
+              mimeType: String(attachment.mimeType).slice(0, 64),
+              data: cleanBase64,
+            },
+          });
+        }
       }
 
       const historyText =
@@ -463,14 +641,14 @@ ${JSON.stringify(cleanContext)}`;
               .slice(-6)
               .map(
                 (m: { role: string; text: string }) =>
-                  `${m.role === 'user' ? 'المستخدم' : 'المساعد'}: ${m.text}`
+                  `${m.role === 'user' ? 'المستخدم' : 'المساعد'}: ${String(m.text || '').slice(0, 1000)}`
               )
               .join('\n') +
             '\n\n'
           : '';
 
       parts.push({
-        text: `${historyText}الطلب الحالي (${taskType}):\n${prompt}`,
+        text: `${historyText}الطلب الحالي (${String(taskType).slice(0, 20)}):\n${cleanPrompt}`,
       });
 
       try {
@@ -482,11 +660,11 @@ ${JSON.stringify(cleanContext)}`;
         });
 
         return res.status(200).json({
-          reply: response.text || buildLocalIntelligentReply(prompt, clinicContext),
+          reply: response.text || buildLocalIntelligentReply(cleanPrompt, clinicContext),
           model: modelName,
         });
       } catch {
-        const localReply = buildLocalIntelligentReply(prompt, clinicContext);
+        const localReply = buildLocalIntelligentReply(cleanPrompt, clinicContext);
         return res.status(200).json({
           reply: localReply,
           model: 'local-clinical-engine',
@@ -494,112 +672,11 @@ ${JSON.stringify(cleanContext)}`;
       }
     }
 
-    // 3. Cloud Sync Endpoints on Serverless
-    if (url.includes('/cloud/')) {
-      const store = readServerlessStore();
-      const clinicId = normalizeServerlessClinicId(body.clinicId || '');
-      const password = String(body.password || '').trim();
-      const passHash = hashServerlessPassword(password);
-
-      if (url.includes('/cloud/auth')) {
-        if (!clinicId || clinicId.length < 3) {
-          return res.status(400).json({
-            ok: false,
-            error: 'يرجى إدخال معرّف العيادة أو رقم الهاتف (3 أحرف أو أرقام على الأقل).',
-          });
-        }
-        if (password.length < 4) {
-          return res.status(400).json({
-            ok: false,
-            error: 'يرجى إدخال كلمة مرور مكونة من 4 أحرف أو أرقام على الأقل.',
-          });
-        }
-
-        const existing = store[clinicId];
-        const mode = body.mode || 'auto';
-
-        if (!existing) {
-          const newRecord: ServerlessWorkspaceRecord = {
-            clinicId,
-            passwordHash: passHash,
-            updatedAt: new Date().toISOString(),
-            data: body.initialData || body.data || {},
-          };
-          store[clinicId] = newRecord;
-          writeServerlessStore(store);
-          return res.status(200).json({
-            ok: true,
-            status: mode === 'login' ? 'authenticated' : 'created',
-            clinicId,
-            updatedAt: newRecord.updatedAt,
-            data: newRecord.data,
-          });
-        }
-
-        if (existing.passwordHash !== passHash) {
-          return res.status(401).json({
-            ok: false,
-            error:
-              mode === 'register'
-                ? 'معرّف العيادة هذا مسجل مسبقاً بكلمة مرور مختلفة. اختر "تسجيل الدخول" أو استخدم معرّفاً آخر.'
-                : 'كلمة المرور غير صحيحة لهذا الحساب السحابي.',
-          });
-        }
-
-        return res.status(200).json({
-          ok: true,
-          status: 'authenticated',
-          clinicId,
-          updatedAt: existing.updatedAt,
-          data: existing.data,
-        });
-      }
-
-      if (url.includes('/cloud/push')) {
-        if (!clinicId || !password) {
-          return res.status(400).json({ ok: false, error: 'بيانات الحساب السحابي غير مكتملة.' });
-        }
-        const existing = store[clinicId];
-        if (existing && existing.passwordHash !== passHash) {
-          return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
-        }
-        const updatedAt = new Date().toISOString();
-        store[clinicId] = {
-          clinicId,
-          passwordHash: passHash,
-          updatedAt,
-          data: body.data || {},
-        };
-        writeServerlessStore(store);
-        return res.status(200).json({ ok: true, clinicId, updatedAt });
-      }
-
-      if (url.includes('/cloud/pull')) {
-        if (!clinicId || !password) {
-          return res.status(400).json({ ok: false, error: 'بيانات الحساب السحابي غير مكتملة.' });
-        }
-        const existing = store[clinicId];
-        if (!existing) {
-          return res.status(404).json({ ok: false, error: 'لم يتم العثور على الحساب السحابي.' });
-        }
-        if (existing.passwordHash !== passHash) {
-          return res.status(401).json({ ok: false, error: 'كلمة المرور غير صحيحة.' });
-        }
-        return res.status(200).json({
-          ok: true,
-          clinicId,
-          updatedAt: existing.updatedAt,
-          data: existing.data,
-        });
-      }
-    }
-
-    return res.status(200).json({ ok: true });
-  } catch (error: unknown) {
-    const fallbackReply = buildLocalIntelligentReply(body?.prompt || '', body?.clinicContext);
-    return res.status(200).json({
-      reply: fallbackReply,
-      error: error instanceof Error ? error.message : 'حدث خطأ غير متوقع',
+    return res.status(404).json({ ok: false, error: 'المسار غير موجود.' });
+  } catch {
+    return res.status(500).json({
+      ok: false,
+      error: 'حدث خطأ داخلي في الخادم.',
     });
   }
 }

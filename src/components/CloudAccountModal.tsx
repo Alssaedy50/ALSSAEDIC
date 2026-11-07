@@ -24,7 +24,9 @@ import { PWAInstallButton } from './PWAInstallButton';
 
 export interface DirectClinicSession {
   clinicId: string;
-  password: string;
+  ownerUid: string;
+  sessionToken: string;
+  expiresAt: string;
   updatedAt?: string;
 }
 

@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import {
   ClinicSettings,
   CurrencyFinancialSummary,
@@ -58,17 +57,44 @@ export async function safeParseJsonResponse<T = Record<string, unknown>>(
   }
 }
 
-function getBrowserGenAIClient(): GoogleGenAI | null {
+export const SESSION_STORAGE_KEY = 'docai_direct_cloud_session_v1';
+export const LOCAL_API_SESSION_KEY = 'docai_api_session_v1';
+
+export function getStoredSessionAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
   try {
-    const envKey =
-      (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) || '';
-    if (!envKey || !String(envKey).trim()) {
-      return null;
+    if (typeof window === 'undefined') return headers;
+    const rawCloud = window.localStorage?.getItem(SESSION_STORAGE_KEY);
+    const rawLocal = window.sessionStorage?.getItem(LOCAL_API_SESSION_KEY);
+    const raw = rawCloud || rawLocal;
+    if (!raw) return headers;
+    const parsed = JSON.parse(raw) as {
+      clinicId?: string;
+      ownerUid?: string;
+      sessionToken?: string;
+      expiresAt?: string;
+    };
+    if (parsed?.expiresAt && Date.parse(parsed.expiresAt) <= Date.now()) {
+      if (rawCloud) window.localStorage?.removeItem(SESSION_STORAGE_KEY);
+      if (rawLocal) window.sessionStorage?.removeItem(LOCAL_API_SESSION_KEY);
+      return headers;
     }
-    return new GoogleGenAI({ apiKey: String(envKey).trim() });
+    if (parsed?.sessionToken) {
+      headers['Authorization'] = `Bearer ${parsed.sessionToken}`;
+      headers['X-Clinic-Session'] = parsed.sessionToken;
+    }
+    if (parsed?.clinicId) {
+      headers['X-Clinic-Id'] = parsed.clinicId;
+    }
+    if (parsed?.ownerUid) {
+      headers['X-Clinic-Owner'] = parsed.ownerUid;
+    }
   } catch {
-    return null;
+    // Ignore storage read errors
   }
+  return headers;
 }
 
 function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
@@ -299,76 +325,12 @@ export function generateLocalClinicalResponse(
   return `مرحباً بك في المساعد الطبي والمالي الذكي لـ ${clinicName} (${doctorName}):\n\n📌 الملخص المباشر لقاعدة بيانات العيادة الآن:\n• السندات المسجلة: ${fin.totalReceipts || 0} سند\n• الإيرادات المقبوضة: ${Number(fin.totalCollected || 0).toLocaleString()} ${defaultCurr}\n• الديون المتبقية على المرضى: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ${defaultCurr} (${debtorsCount} مريض)\n• المصروفات المسجلة: ${Number(fin.totalExpenses || 0).toLocaleString()} ${defaultCurr}\n• تنبيهات نواقص المخزون: ${lowCount} صنف\n\nيمكنك الضغط على أي من الأزرار السريعة بالأعلى للحصول على:\n- كشف ديون المرضى بالتفصيل\n- تقرير نواقص المخزون الطبي\n- ملخص صافي الأرباح والمصروفات\n- أو كتابة اسم مريض أو استشارة علاجية مباشرة.`;
 }
 
-async function queryBrowserGeminiFallback(payload: AssistantRequestPayload): Promise<string | null> {
-  const ai = getBrowserGenAIClient();
-  if (!ai) return null;
-
-  const cleanContext = sanitizeClinicContextForPrompt(payload.clinicContext);
-  const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة عيادة السعيدي لطب وجراحة الفم والأسنان (د. صلاح الدين السعيدي).
-تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة، وتعتمد حصرياً على البيانات الحقيقية للعيادة المرفقة في السياق أدناه عند الإجابة عن المرضى، السندات، الديون، المخزون، والمصروفات.
-لا تخترع أرقاماً غير موجودة في السياق، وقدم إجابات منظمة ومباشرة للطبيب أو المحاسب.
-عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة، قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
-
-سياق قاعدة بيانات العيادة الحالية (JSON):
-${JSON.stringify(cleanContext)}`;
-
-  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
-
-  if (payload.attachment && payload.attachment.base64Data && payload.attachment.mimeType) {
-    const cleanBase64 = String(payload.attachment.base64Data).includes(',')
-      ? String(payload.attachment.base64Data).slice(
-          String(payload.attachment.base64Data).indexOf(',') + 1
-        )
-      : String(payload.attachment.base64Data);
-
-    parts.push({
-      inlineData: {
-        mimeType: String(payload.attachment.mimeType),
-        data: cleanBase64,
-      },
-    });
-  }
-
-  const historyText =
-    Array.isArray(payload.history) && payload.history.length > 0
-      ? 'سجل المحادثة السابق:\n' +
-        payload.history
-          .slice(-6)
-          .map((m) => `${m.role === 'user' ? 'المستخدم' : 'المساعد'}: ${m.text}`)
-          .join('\n') +
-        '\n\n'
-      : '';
-
-  parts.push({
-    text: `${historyText}الطلب الحالي (${payload.taskType || 'chat'}):\n${payload.prompt}`,
-  });
-
-  for (const modelName of GEMINI_CANDIDATE_MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: { parts },
-        config: {
-          systemInstruction,
-        },
-      });
-      if (response.text && response.text.trim()) {
-        return response.text.trim();
-      }
-    } catch {
-      // Try next candidate model
-    }
-  }
-
-  return null;
-}
-
 export async function queryClinicAssistant(payload: AssistantRequestPayload): Promise<string> {
-  // 1. Try server endpoint (/api/gemini/assistant) using safe text->JSON reader
+  // 1. Call authenticated server endpoint (/api/gemini/assistant) using safe text->JSON reader
   try {
     const response = await fetch('/api/gemini/assistant', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getStoredSessionAuthHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -377,20 +339,10 @@ export async function queryClinicAssistant(payload: AssistantRequestPayload): Pr
       return String(parsed.data.reply).trim();
     }
   } catch {
-    // Server route unreachable or failed; proceed to browser SDK fallback
+    // Server route unreachable or failed; fall back to local clinical engine
   }
 
-  // 2. Try direct browser @google/genai fallback if process.env.GEMINI_API_KEY is available
-  try {
-    const browserReply = await queryBrowserGeminiFallback(payload);
-    if (browserReply) {
-      return browserReply;
-    }
-  } catch {
-    // Browser SDK fallback unavailable or failed; proceed silently to local clinical engine
-  }
-
-  // 3. Silent immediate fallback to Local Clinical Intelligence Engine
+  // 2. Silent immediate fallback to Local Clinical Intelligence Engine (never expose API keys to browser)
   return generateLocalClinicalResponse(payload.prompt, payload.clinicContext);
 }
 
@@ -402,11 +354,11 @@ export async function parseSmartReceiptWithFallback(
   const cleanText = String(text || '').trim();
   if (!cleanText) return null;
 
-  // 1. Try server endpoint (/api/gemini/parse-receipt) using safe text->JSON reader
+  // Call authenticated server endpoint (/api/gemini/parse-receipt) using safe text->JSON reader
   try {
     const response = await fetch('/api/gemini/parse-receipt', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getStoredSessionAuthHeaders(),
       body: JSON.stringify({
         text: cleanText,
         availableServices,
@@ -422,52 +374,7 @@ export async function parseSmartReceiptWithFallback(
       return parsed.data.result;
     }
   } catch {
-    // Fall through to browser SDK fallback
-  }
-
-  // 2. Try direct browser @google/genai fallback if process.env.GEMINI_API_KEY is available
-  const ai = getBrowserGenAIClient();
-  if (ai) {
-    const serviceNames = Array.isArray(availableServices)
-      ? availableServices.map((s) => `${s.name} (${s.price || 0})`).join('، ')
-      : '';
-
-    for (const modelName of GEMINI_CANDIDATE_MODELS) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
-النص المدخل: "${cleanText}"
-الخدمات المعتمدة في العيادة وأسعارها الافتراضية: ${serviceNames || 'كشف ومعاينة، حشوات وتجميل، علاج عصب وجذور، خلع وجراحة، تنظيف وتجليح لثة، تركيبات أسنان، تقويم أسنان، أشعة تشخيصية'}
-العملة الافتراضية: ${defaultCurrency}`,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                patientName: { type: Type.STRING },
-                patientPhone: { type: Type.STRING },
-                services: { type: Type.ARRAY, items: { type: Type.STRING } },
-                toothFDI: { type: Type.STRING },
-                totalAmount: { type: Type.NUMBER },
-                paidAmount: { type: Type.NUMBER },
-                currency: { type: Type.STRING },
-                paymentMethod: { type: Type.STRING },
-                notes: { type: Type.STRING },
-              },
-              required: ['patientName', 'services', 'totalAmount', 'paidAmount', 'currency'],
-            },
-          },
-        });
-
-        const rawJson = (response.text ?? '').trim();
-        if (rawJson) {
-          return JSON.parse(rawJson) as SmartReceiptParseResult;
-        }
-      } catch {
-        // Try next candidate model
-      }
-    }
+    // Fall back to caller's local deterministic parser
   }
 
   return null;

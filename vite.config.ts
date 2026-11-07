@@ -4,6 +4,8 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const emptyStubPath = path.resolve(import.meta.dirname, 'src/types/clinic.ts');
+
 export default defineConfig(() => {
   return {
     plugins: [
@@ -47,7 +49,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
           cleanupOutdatedCaches: true,
           navigateFallbackDenylist: [/^\/api\//],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
@@ -88,12 +90,12 @@ export default defineConfig(() => {
         },
       }),
     ],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || ''),
-    },
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+        html2canvas: emptyStubPath,
+        canvg: emptyStubPath,
+        dompurify: emptyStubPath,
       },
     },
     server: {

@@ -4,7 +4,7 @@
     "experimentalDecorators": true,
     "useDefineForClassFields": false,
     "module": "ESNext",
-    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "types": ["node", "./node_modules/vite/client.d.ts", "./node_modules/vite-plugin-pwa/client.d.ts"],
     "lib": [
       "ES2022",
       "DOM",
@@ -19,7 +19,9 @@
     "paths": {
       "@/*": [
         "./*"
-      ]
+      ],
+      "vite/client": ["./node_modules/vite/client.d.ts"],
+      "vite-plugin-pwa/client": ["./node_modules/vite-plugin-pwa/client.d.ts"]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true

@@ -430,9 +430,16 @@
     },
     "ClinicWorkspace": {
       "title": "ClinicWorkspace",
-      "description": "Unified multi-device clinic workspace keyed by clinicId with SHA-256 password hash.",
+      "description": "Authenticated clinic workspace metadata keyed by clinicId and bound strictly to ownerId (request.auth.uid).",
       "type": "object",
       "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the authenticated clinic owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "clinicId": {
           "type": "string",
           "description": "Normalized clinic identifier.",
@@ -440,28 +447,21 @@
           "maxLength": 64,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
-        "passwordHash": {
-          "type": "string",
-          "description": "SHA-256 hex digest of the workspace password.",
-          "minLength": 64,
-          "maxLength": 64,
-          "pattern": "^[a-f0-9]{64}$"
-        },
         "settings": {
           "type": "object",
-          "description": "Clinic settings map including identity, appearance, features, and services."
+          "description": "Clinic settings map including identity, appearance, and features."
         },
-        "receipts": {
-          "type": "array",
-          "description": "Bounded list of clinic receipt records (max 500)."
+        "receiptCount": {
+          "type": "number",
+          "description": "Total number of receipts stored in the receipts collection for this clinic."
         },
-        "inventory": {
-          "type": "array",
-          "description": "Bounded list of clinic inventory items (max 500)."
+        "inventoryCount": {
+          "type": "number",
+          "description": "Total number of inventory items stored in the inventory collection for this clinic."
         },
-        "expenses": {
-          "type": "array",
-          "description": "Bounded list of clinic expense records (max 500)."
+        "expenseCount": {
+          "type": "number",
+          "description": "Total number of expenses stored in the expenses collection for this clinic."
         },
         "createdAt": {
           "type": "string",
@@ -475,12 +475,12 @@
         }
       },
       "required": [
+        "ownerId",
         "clinicId",
-        "passwordHash",
         "settings",
-        "receipts",
-        "inventory",
-        "expenses",
+        "receiptCount",
+        "inventoryCount",
+        "expenseCount",
         "createdAt",
         "updatedAt"
       ]
@@ -509,7 +509,7 @@
     },
     "/clinic_workspaces/{clinicId}": {
       "schema": { "$ref": "#/entities/ClinicWorkspace" },
-      "description": "Direct multi-phone clinic workspace synced by clinicId and SHA-256 password hash."
+      "description": "Authenticated clinic workspace metadata bound to ownerId."
     }
   }
 }
