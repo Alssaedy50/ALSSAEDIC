@@ -95,6 +95,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   text: string;
   timestamp: string;
+  modelUsed?: string;
   attachmentName?: string;
   attachmentPreview?: string;
 }

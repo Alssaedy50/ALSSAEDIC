@@ -290,20 +290,58 @@ app.post('/api/cloud/:action', (_req: Request, res: Response) => {
   });
 });
 
-// ==================== ULTRA-FAST GEMINI AI ENGINE (SERVER-ONLY CREDENTIALS) ====================
-function getGenAIClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || !apiKey.trim()) {
-    return null;
-  }
-  return new GoogleGenAI({
-    apiKey: apiKey.trim(),
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+// ==================== MULTI-MODEL LOAD BALANCER & SMART FAILOVER ENGINE ====================
+const MODEL_LABELS: Record<string, string> = {
+  'gemini-3.8-flash': 'Gemini 3.8 Flash',
+  'gemini-flash-latest': 'Gemini Flash Latest',
+  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash',
+  'local-clinical-engine': 'المحرك السريري المدمج',
+};
+
+const TEXT_MODEL_POOL = [
+  'gemini-3.8-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+] as const;
+
+const VISION_MODEL_POOL = [
+  'gemini-3.8-flash',
+  'gemini-flash-latest',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+] as const;
+
+const modelCooldownUntil = new Map<string, number>();
+let roundRobinCounter = 0;
+
+function getGenAIClientsPool(): GoogleGenAI[] {
+  const rawKeys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GOOGLE_API_KEY,
+  ];
+  const uniqueKeys = Array.from(
+    new Set(
+      rawKeys
+        .map((k) => String(k || '').trim())
+        .filter((k) => k.length > 0)
+    )
+  );
+
+  return uniqueKeys.map(
+    (apiKey) =>
+      new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      })
+  );
 }
 
 function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | undefined) {
@@ -329,31 +367,93 @@ function sanitizeClinicContextForPrompt(ctx: Record<string, unknown> | null | un
   return clone;
 }
 
-async function generateWithFastFallback(
-  ai: GoogleGenAI,
+async function generateWithMultiModelLoadBalancer(
+  clients: GoogleGenAI[],
   payload: {
     contents: unknown;
     config?: Record<string, unknown>;
+    hasAttachment?: boolean;
   }
 ) {
-  const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+  const basePool = payload.hasAttachment ? [...VISION_MODEL_POOL] : [...TEXT_MODEL_POOL];
+  const startIdx = roundRobinCounter % basePool.length;
+  roundRobinCounter = (roundRobinCounter + 1) % 10_000;
+
+  // Rotate starting model for balanced quota consumption across all models
+  const rotatedModels = [
+    ...basePool.slice(startIdx),
+    ...basePool.slice(0, startIdx),
+  ];
+
+  const now = Date.now();
+  const healthyTargets: Array<{ client: GoogleGenAI; clientIdx: number; modelName: string }> = [];
+  const cooldownTargets: Array<{ client: GoogleGenAI; clientIdx: number; modelName: string }> = [];
+
+  clients.forEach((client, clientIdx) => {
+    rotatedModels.forEach((modelName) => {
+      const slotKey = `${clientIdx}:${modelName}`;
+      const cooldownExp = modelCooldownUntil.get(slotKey) || 0;
+      if (cooldownExp <= now) {
+        healthyTargets.push({ client, clientIdx, modelName });
+      } else {
+        cooldownTargets.push({ client, clientIdx, modelName });
+      }
+    });
+  });
+
+  const orderedTargets = [...healthyTargets, ...cooldownTargets];
   let lastErr: unknown = null;
 
-  for (const modelName of candidateModels) {
+  for (const target of orderedTargets) {
+    const slotKey = `${target.clientIdx}:${target.modelName}`;
     try {
-      const response = await ai.models.generateContent({
-        model: modelName,
+      const response = await target.client.models.generateContent({
+        model: target.modelName,
         contents: payload.contents as string,
         config: {
           ...payload.config,
         },
       });
-      return { response, modelName };
-    } catch (err) {
+      modelCooldownUntil.delete(slotKey);
+      return {
+        response,
+        modelName: target.modelName,
+        modelLabel: MODEL_LABELS[target.modelName] || target.modelName,
+      };
+    } catch (err: unknown) {
       lastErr = err;
+      const errMsg = String(err instanceof Error ? err.message : err || '').toLowerCase();
+      const isNotFound = errMsg.includes('404') || errMsg.includes('not_found');
+      const isQuotaOrTransient =
+        errMsg.includes('429') ||
+        errMsg.includes('resource_exhausted') ||
+        errMsg.includes('quota') ||
+        errMsg.includes('rate') ||
+        errMsg.includes('503') ||
+        errMsg.includes('overloaded');
+
+      if (isNotFound) {
+        modelCooldownUntil.set(slotKey, Date.now() + 10 * 60_000);
+      } else if (isQuotaOrTransient) {
+        modelCooldownUntil.set(slotKey, Date.now() + 60_000);
+      } else {
+        modelCooldownUntil.set(slotKey, Date.now() + 15_000);
+      }
     }
   }
   throw lastErr;
+}
+
+function rateLimitAiEndpoint(req: Request, res: Response, next: NextFunction): void {
+  const clientIp = getClientIdentifier(req);
+  if (!checkRateLimit(`ai:${clientIp}`, 60, 60_000)) {
+    res.status(429).json({
+      ok: false,
+      error: 'تم تجاوز الحد المسموح للطلبات في الدقيقة. يرجى الانتظار قليلاً والمحاولة مجدداً.',
+    });
+    return;
+  }
+  next();
 }
 
 function parseReceiptHeuristicServer(
@@ -415,10 +515,10 @@ function parseReceiptHeuristicServer(
   };
 }
 
-// 1. Smart Receipt Natural Language Parser (Protected by Auth + Rate Limit + Validation)
+// 1. Smart Receipt Natural Language Parser (Multi-Model Load Balanced)
 app.post(
   '/api/gemini/parse-receipt',
-  requireAuthenticatedClinic,
+  rateLimitAiEndpoint,
   async (req: Request, res: Response) => {
     const { text, availableServices = [], defaultCurrency = 'ريال يمني' } = req.body || {};
     if (!text || typeof text !== 'string' || !text.trim()) {
@@ -428,10 +528,12 @@ app.post(
     const cleanText = text.trim().slice(0, 2000);
 
     try {
-      const ai = getGenAIClient();
-      if (!ai) {
+      const clients = getGenAIClientsPool();
+      if (clients.length === 0) {
         res.json({
           result: parseReceiptHeuristicServer(cleanText, availableServices, defaultCurrency),
+          model: 'local-clinical-engine',
+          modelLabel: MODEL_LABELS['local-clinical-engine'],
         });
         return;
       }
@@ -443,50 +545,55 @@ app.post(
             .join('، ')
         : '';
 
-      const { response } = await generateWithFastFallback(ai, {
-        contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
+      const { response, modelName, modelLabel } = await generateWithMultiModelLoadBalancer(
+        clients,
+        {
+          contents: `حلل النص الطبي والمحاسبي التالي واستخرج بيانات سند القبض لعيادة الأسنان بدقة عالية:
 النص المدخل: "${cleanText}"
 الخدمات المعتمدة في العيادة وأسعارها الافتراضية: ${serviceNames || 'كشف ومعاينة، حشوات وتجميل، علاج عصب وجذور، خلع وجراحة، تنظيف وتجليح لثة، تركيبات أسنان، تقويم أسنان، أشعة تشخيصية'}
 العملة الافتراضية: ${String(defaultCurrency).slice(0, 40)}`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              patientName: { type: Type.STRING, description: 'اسم المريض' },
-              patientPhone: { type: Type.STRING, description: 'رقم هاتف المريض إن وجد' },
-              services: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'قائمة الخدمات العلاجية المستخرجة',
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                patientName: { type: Type.STRING, description: 'اسم المريض' },
+                patientPhone: { type: Type.STRING, description: 'رقم هاتف المريض إن وجد' },
+                services: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'قائمة الخدمات العلاجية المستخرجة',
+                },
+                toothFDI: { type: Type.STRING, description: 'أرقام الأسنان بنظام FDI مثل 14, 21' },
+                totalAmount: { type: Type.NUMBER, description: 'إجمالي المبلغ' },
+                paidAmount: { type: Type.NUMBER, description: 'المبلغ المدفوع' },
+                currency: { type: Type.STRING, description: 'العملة' },
+                paymentMethod: { type: Type.STRING, description: 'طريقة الدفع' },
+                notes: { type: Type.STRING, description: 'ملاحظات إضافية حول الجلسة العلاجية' },
               },
-              toothFDI: { type: Type.STRING, description: 'أرقام الأسنان بنظام FDI مثل 14, 21' },
-              totalAmount: { type: Type.NUMBER, description: 'إجمالي المبلغ' },
-              paidAmount: { type: Type.NUMBER, description: 'المبلغ المدفوع' },
-              currency: { type: Type.STRING, description: 'العملة' },
-              paymentMethod: { type: Type.STRING, description: 'طريقة الدفع' },
-              notes: { type: Type.STRING, description: 'ملاحظات إضافية حول الجلسة العلاجية' },
+              required: ['patientName', 'services', 'totalAmount', 'paidAmount', 'currency'],
             },
-            required: ['patientName', 'services', 'totalAmount', 'paidAmount', 'currency'],
           },
-        },
-      });
+        }
+      );
 
       const rawJson = (response.text ?? '{}').trim();
       const parsed = JSON.parse(rawJson);
-      res.json({ result: parsed });
+      res.json({ result: parsed, model: modelName, modelLabel });
     } catch {
       res.json({
         result: parseReceiptHeuristicServer(cleanText, availableServices, defaultCurrency),
+        model: 'local-clinical-engine',
+        modelLabel: MODEL_LABELS['local-clinical-engine'],
       });
     }
   }
 );
 
-// 2. Context-Aware Clinic Assistant (Protected by Auth + Rate Limit + Validation)
+// 2. Context-Aware Clinic Assistant (Multi-Model Load Balanced)
 app.post(
   '/api/gemini/assistant',
-  requireAuthenticatedClinic,
+  rateLimitAiEndpoint,
   async (req: Request, res: Response) => {
     const {
       prompt,
@@ -503,26 +610,35 @@ app.post(
     const cleanPrompt = prompt.trim().slice(0, 4000);
 
     try {
-      const ai = getGenAIClient();
-      if (!ai) {
+      const clients = getGenAIClientsPool();
+      if (clients.length === 0) {
         res.json({
           reply: generateLocalClinicalResponse(cleanPrompt, clinicContext),
           model: 'local-clinical-engine',
+          modelLabel: MODEL_LABELS['local-clinical-engine'],
         });
         return;
       }
 
       const cleanContext = sanitizeClinicContextForPrompt(clinicContext);
+      const identity = (cleanContext.identity || {}) as {
+        clinicAr?: string;
+        doctorAr?: string;
+      };
+      const clinicName = identity.clinicAr || 'عيادة طب وجراحة الفم والأسنان';
+      const doctorName = identity.doctorAr || 'الطبيب المعالج';
 
-      const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة عيادة السعيدي لطب وجراحة الفم والأسنان (د. صلاح الدين السعيدي).
-تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة، وتعتمد حصرياً على البيانات الحقيقية للعيادة المرفقة في السياق أدناه عند الإجابة عن المرضى، السندات، الديون، المخزون، والمصروفات.
-لا تخترع أرقاماً غير موجودة في السياق، وقدم إجابات منظمة ومباشرة للطبيب أو المحاسب.
-عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة، قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
+      const systemInstruction = `أنت "DOCAI Gemini" — المساعد الطبي والمالي الذكي المدمج في نظام إدارة "${clinicName}" (${doctorName}).
+تتحدث بلغة عربية احترافية، واضحة، سريعة، ودقيقة:
+1. عند السؤال عن بيانات العيادة (المرضى، السندات، الديون، المخزون، الإيرادات، والمصروفات): اعتمد حصرياً على البيانات الحقيقية المرفقة في سياق قاعدة بيانات العيادة أدناه ولا تخترع أرقاماً غير موجودة.
+2. عند السؤال عن استشارات طب وجراحة الفم والأسنان (التشخيص، خطط العلاج، الأدوية والمضادات الحيوية، الجرعات، الجراحة، علاج العصب، التركيبات، التقويم، طب أسنان الأطفال، أو تعليمات ما بعد العلاج): قدم إجابة إكلينيكية علمية مفصلة ومنظمة تساعد طبيب الأسنان.
+3. عند تحليل صورة أشعة سنية أو تقرير طبي أو فاتورة مرفقة: قدم قراءة إكلينيكية/تشخيصية أولية منظمة ومفصلة مع تذكير مهني بأن القرار النهائي يعود للفحص السريري المباشر للطبيب المعالج.
 
 سياق قاعدة بيانات العيادة الحالية (JSON):
 ${JSON.stringify(cleanContext)}`;
 
       const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+      let hasAttachment = false;
 
       if (attachment && attachment.base64Data && attachment.mimeType) {
         const rawBase64 = String(attachment.base64Data);
@@ -537,6 +653,7 @@ ${JSON.stringify(cleanContext)}`;
               data: cleanBase64,
             },
           });
+          hasAttachment = true;
         }
       }
 
@@ -557,21 +674,27 @@ ${JSON.stringify(cleanContext)}`;
         text: `${historyText}الطلب الحالي (${String(taskType).slice(0, 20)}):\n${cleanPrompt}`,
       });
 
-      const { response, modelName } = await generateWithFastFallback(ai, {
-        contents: { parts },
-        config: {
-          systemInstruction,
-        },
-      });
+      const { response, modelName, modelLabel } = await generateWithMultiModelLoadBalancer(
+        clients,
+        {
+          contents: { parts },
+          config: {
+            systemInstruction,
+          },
+          hasAttachment,
+        }
+      );
 
       res.json({
         reply: response.text || generateLocalClinicalResponse(cleanPrompt, clinicContext),
         model: modelName,
+        modelLabel,
       });
     } catch {
       res.json({
         reply: generateLocalClinicalResponse(cleanPrompt, clinicContext),
         model: 'local-clinical-engine',
+        modelLabel: MODEL_LABELS['local-clinical-engine'],
       });
     }
   }

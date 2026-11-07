@@ -20,7 +20,7 @@ import {
   InventoryItem,
   ReceiptRecord,
 } from '../types/clinic';
-import { queryClinicAssistant } from '../utils/aiClient';
+import { queryClinicAssistantDetailed } from '../utils/aiClient';
 
 interface GeminiAssistantProps {
   settings: ClinicSettings;
@@ -39,8 +39,10 @@ const QUICK_PROMPTS = [
   'كشف ديون المرضى بالتفصيل',
   'تقرير نواقص المخزون',
   'ملخص صافي الأرباح والمصروفات',
+  'وصفة مضاد حيوي ومسكن لخراج سني',
   'تعليمات للمريض بعد خلع الضرس',
   'خطة علاج عصب للسن 16',
+  'بروتوكول تحضير وإلصاق الزيركون',
 ];
 
 export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
@@ -264,7 +266,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         recentExpenses: expenses.slice(0, 12),
       };
 
-      const replyText = await queryClinicAssistant({
+      const assistantResult = await queryClinicAssistantDetailed({
         prompt: userMsg.text,
         clinicContext,
         history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
@@ -275,8 +277,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       const assistantMsg: ChatMessage = {
         id: 'msg_a_' + Date.now(),
         role: 'assistant',
-        text: replyText || 'تمت المعالجة.',
+        text: assistantResult.reply || 'تمت المعالجة.',
         timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
+        modelUsed: assistantResult.modelLabel,
       };
       onAddMessage(assistantMsg);
     } catch (err: unknown) {
@@ -440,19 +443,34 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                   </div>
 
                   <div
-                    className={`flex items-center justify-between gap-4 pt-1.5 border-t text-[10px] ${
+                    className={`flex items-center justify-between gap-3 pt-1.5 border-t text-[10px] ${
                       msg.role === 'user'
                         ? 'border-white/20 text-white/80'
                         : 'border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'
                     }`}
                   >
-                    <span className="font-mono tabular-nums">{msg.timestamp}</span>
+                    <div className="flex items-center gap-1.5 min-w-0 truncate">
+                      <span className="font-mono tabular-nums shrink-0">{msg.timestamp}</span>
+                      {msg.role === 'assistant' && msg.modelUsed && (
+                        <>
+                          <span aria-hidden="true" className="shrink-0">
+                            ·
+                          </span>
+                          <span
+                            dir="ltr"
+                            className="font-mono font-semibold text-sky-600 dark:text-sky-400 truncate"
+                          >
+                            {msg.modelUsed}
+                          </span>
+                        </>
+                      )}
+                    </div>
                     {msg.role === 'assistant' && (
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 shrink-0">
                         <button
                           type="button"
                           onClick={() => copyMessageText(msg.text)}
-                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold"
+                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold whitespace-nowrap shrink-0"
                         >
                           <Copy className="w-3 h-3" />
                           <span>نسخ</span>
@@ -460,7 +478,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                         <button
                           type="button"
                           onClick={() => speakText(msg.text)}
-                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold"
+                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold whitespace-nowrap shrink-0"
                         >
                           <Volume2 className="w-3 h-3" />
                           <span>استماع</span>
