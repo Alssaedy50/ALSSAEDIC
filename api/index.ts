@@ -143,8 +143,8 @@ const TEXT_MODEL_POOL = [
 ] as const;
 
 const VISION_MODEL_POOL = [
-  'gemini-3.1-flash-lite',
   'gemini-3.8-flash',
+  'gemini-3.1-flash-lite',
 ] as const;
 
 const modelCooldownUntil = new Map<string, number>();
@@ -862,10 +862,10 @@ export default async function handler(req: any, res: any) {
   const url = String(req.url || '');
 
   const rawBodyStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {});
-  if (rawBodyStr.length > 1_000_000) {
+  if (rawBodyStr.length > 5_000_000) {
     return res.status(413).json({
       ok: false,
-      error: 'حجم الطلب يتجاوز الحد الأقصى المسموح به (1MB).',
+      error: 'حجم الطلب يتجاوز الحد الأقصى المسموح به (5MB).',
     });
   }
 
@@ -1081,7 +1081,7 @@ ${JSON.stringify(cleanContext)}`;
 
       if (attachment && attachment.base64Data && attachment.mimeType) {
         const rawBase64 = String(attachment.base64Data);
-        if (rawBase64.length <= 800_000) {
+        if (rawBase64.length <= 5_000_000) {
           const cleanBase64 = rawBase64.includes(',')
             ? rawBase64.slice(rawBase64.indexOf(',') + 1)
             : rawBase64;

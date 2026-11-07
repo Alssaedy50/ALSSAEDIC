@@ -568,7 +568,7 @@ export async function queryClinicAssistantDetailed(
 ): Promise<AssistantDetailedResponse> {
   // Call server endpoint (/api/gemini/assistant) so real Gemini AI answers with full clinic context
   const controller = new AbortController();
-  const timeoutMs = 25_000;
+  const timeoutMs = payload.attachment ? 45_000 : 30_000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   if (externalSignal) {
@@ -598,7 +598,7 @@ export async function queryClinicAssistantDetailed(
       error?: string;
     }>(response);
     if (parsed.ok && parsed.data?.reply && String(parsed.data.reply).trim()) {
-      const model = String(parsed.data.model || 'gemini-3.1-flash-lite').trim();
+      const model = String(parsed.data.model || 'gemini-3.8-flash').trim();
       const modelLabel =
         String(parsed.data.modelLabel || '').trim() || formatModelDisplayLabel(model);
       return {
@@ -609,10 +609,11 @@ export async function queryClinicAssistantDetailed(
     }
   } catch (err: unknown) {
     clearTimeout(timer);
-    if (externalSignal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
-      throw err;
+    // ONLY rethrow if the user actually clicked stop/aborted externally
+    if (externalSignal?.aborted) {
+      throw new DOMException('Aborted by user', 'AbortError');
     }
-    // Server route unreachable or timed out; fall back to local clinical engine
+    // Server route unreachable, rate-limited, or timed out; fall back cleanly to local clinical engine
   }
 
   if (externalSignal?.aborted) {

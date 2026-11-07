@@ -14,8 +14,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Strict payload size limit (1MB max) to prevent DoS and oversized payloads
-app.use(express.json({ limit: '1mb' }));
+// Payload size limit (10MB max) to safely support compressed dental x-rays and receipt images
+app.use(express.json({ limit: '10mb' }));
 
 // Security response headers
 app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -304,8 +304,8 @@ const TEXT_MODEL_POOL = [
 ] as const;
 
 const VISION_MODEL_POOL = [
-  'gemini-3.1-flash-lite',
   'gemini-3.8-flash',
+  'gemini-3.1-flash-lite',
 ] as const;
 
 const modelCooldownUntil = new Map<string, number>();
@@ -922,7 +922,7 @@ ${JSON.stringify(cleanContext)}`;
 
       if (attachment && attachment.base64Data && attachment.mimeType) {
         const rawBase64 = String(attachment.base64Data);
-        if (rawBase64.length <= 800_000) {
+        if (rawBase64.length <= 5_000_000) {
           const cleanBase64 = rawBase64.includes(',')
             ? rawBase64.slice(rawBase64.indexOf(',') + 1)
             : rawBase64;

@@ -72,6 +72,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   const currentSessionFinalRef = useRef<string>('');
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const userInitiatedAbortRef = useRef<boolean>(false);
 
   useEffect(() => {
     return () => {
@@ -139,20 +140,83 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
   }, [messages, isSending]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const optimizeImageFile = (
+    file: File
+  ): Promise<{ base64Data: string; mimeType: string }> => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve({
+            base64Data: String(reader.result || ''),
+            mimeType: file.type || 'application/pdf',
+          });
+        reader.onerror = () =>
+          resolve({ base64Data: '', mimeType: file.type || 'application/octet-stream' });
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const maxDim = 1200;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          const reader = new FileReader();
+          reader.onload = () =>
+            resolve({ base64Data: String(reader.result || ''), mimeType: 'image/jpeg' });
+          reader.readAsDataURL(file);
+          return;
+        }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const optimized = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({ base64Data: optimized, mimeType: 'image/jpeg' });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve({ base64Data: String(reader.result || ''), mimeType: file.type || 'image/jpeg' });
+        reader.readAsDataURL(file);
+      };
+      img.src = url;
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAttachment({
-        name: file.name,
-        mimeType: file.type || 'image/jpeg',
-        base64Data: String(reader.result || ''),
-      });
-      notify(`تم إرفاق: ${file.name}`, 'info');
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { base64Data, mimeType } = await optimizeImageFile(file);
+      if (base64Data) {
+        setAttachment({
+          name: file.name,
+          mimeType,
+          base64Data,
+        });
+      }
+    } catch {
+      notify('تعذر تحميل الملف المرفق', 'warning');
+    }
   };
 
   const speakText = (text: string) => {
@@ -306,12 +370,12 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   };
 
   const handleStopResponse = () => {
+    userInitiatedAbortRef.current = true;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
     setIsSending(false);
-    notify('تم إيقاف توليد الرد بنجاح', 'info');
   };
 
   const sendMessage = async (textOverride?: string) => {
@@ -320,6 +384,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
     const promptText = (textOverride ?? input).trim();
     if (!promptText && !attachment) return;
+
+    userInitiatedAbortRef.current = false;
 
     const userMsg: ChatMessage = {
       id: 'msg_u_' + Date.now(),
@@ -411,7 +477,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         controller.signal
       );
 
-      if (controller.signal.aborted) {
+      if (userInitiatedAbortRef.current || controller.signal.aborted) {
         return;
       }
 
@@ -424,7 +490,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       };
       onAddMessage(assistantMsg);
     } catch (err: unknown) {
-      if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+      if (userInitiatedAbortRef.current) {
         const stoppedMsg: ChatMessage = {
           id: 'msg_stopped_' + Date.now(),
           role: 'assistant',
@@ -438,7 +504,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       const errMsg: ChatMessage = {
         id: 'msg_err_' + Date.now(),
         role: 'assistant',
-        text: err instanceof Error ? `خطأ: ${err.message}` : 'تعذر الاتصال بخادم التحليل.',
+        text: err instanceof Error ? `تعذر إكمال التحليل: ${err.message}` : 'تعذر الاتصال بخادم التحليل.',
         timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
       };
       onAddMessage(errMsg);
@@ -447,6 +513,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         abortControllerRef.current = null;
       }
       setIsSending(false);
+      userInitiatedAbortRef.current = false;
     }
   };
 
@@ -648,20 +715,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           )}
 
           {isSending && (
-            <div className="flex items-center justify-between gap-2 text-xs font-bold text-sky-700 dark:text-sky-300 px-3.5 py-2.5 bg-sky-50/90 dark:bg-sky-950/60 rounded-xl border border-sky-200 dark:border-sky-900 shadow-2xs">
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-sky-500 shrink-0" />
-                <span>جاري معالجة وتوليد الرد...</span>
-              </div>
-              <button
-                type="button"
-                onClick={handleStopResponse}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-xs transition-colors shrink-0"
-                title="إيقاف توليد الرد الآن"
-              >
-                <Square className="w-3 h-3 fill-current" />
-                <span>إيقاف الرد</span>
-              </button>
+            <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 py-1.5 px-3">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
             </div>
           )}
         </div>
@@ -683,7 +738,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         </div>
       )}
 
-      {/* Bottom Composer Bar with Expanded Input & Sleek Icon-Only Send Button */}
+      {/* Bottom Composer Bar with Single Square Stop Button when Sending */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -734,12 +789,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             <button
               type="button"
               onClick={handleStopResponse}
-              aria-label="إيقاف الرد"
-              title="إيقاف توليد الرد الآن"
-              className="h-9 sm:h-10 px-3 inline-flex items-center justify-center gap-1.5 text-white bg-rose-600 hover:bg-rose-500 rounded-xl shrink-0 transition-colors shadow-xs animate-pulse"
+              aria-label="إيقاف"
+              title="إيقاف"
+              className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center text-white bg-rose-600 hover:bg-rose-500 rounded-xl shrink-0 transition-colors shadow-xs"
             >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              <span className="text-xs font-bold">إيقاف</span>
+              <Square className="w-4 h-4 fill-current" />
             </button>
           ) : (
             <button
