@@ -7,7 +7,6 @@ import {
   Mic,
   MicOff,
   Send,
-  Sparkles,
   Trash2,
   User,
   Volume2,
@@ -338,41 +337,26 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   };
 
   return (
-    <div className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-[calc(100dvh-10.5rem)] md:h-[calc(100dvh-6.5rem)] overflow-hidden shadow-xs">
-      {/* Clean Integrated Assistant Top Bar (No Truncation on Mobile) */}
-      <div className="shrink-0 px-3 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <div className="min-w-0">
-            <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">
-              المساعد
-            </h2>
-          </div>
-        </div>
-
+    <div className="w-full h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-5rem)] sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs">
+      {/* Quick Prompts Strip + Clear Chat Action */}
+      <div className="shrink-0 px-3 sm:px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {messages.length > 0 && (
           <button
             type="button"
             onClick={onClearMessages}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] sm:text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl shrink-0 transition-colors whitespace-nowrap"
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-xl transition-colors whitespace-nowrap"
           >
             <Trash2 className="w-3.5 h-3.5 shrink-0" />
-            <span>مسح المحادثة</span>
+            <span>مسح</span>
           </button>
         )}
-      </div>
-
-      {/* Quick Prompts Strip */}
-      <div className="shrink-0 px-3 sm:px-5 py-2 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {QUICK_PROMPTS.map((q) => (
           <button
             key={q}
             type="button"
             onClick={() => sendMessage(q)}
             disabled={isSending}
-            className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors whitespace-nowrap"
+            className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors whitespace-nowrap"
           >
             {q}
           </button>
@@ -380,24 +364,22 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       </div>
 
       {/* Scrollable Messages Area */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-5 py-3.5">
-        <div className="max-w-4xl mx-auto space-y-3.5">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-5 py-3">
+        <div className="max-w-4xl mx-auto h-full flex flex-col">
           {messages.length === 0 ? (
-            <div className="min-h-[42vh] flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-2.5 px-4">
+            <div className="flex-1 flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-2.5 px-4">
               <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
                 <Bot className="w-6 h-6" />
               </div>
-              <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">
-                المساعد
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
                 اختر استفساراً سريعاً من الأعلى أو اكتب سؤالك أدناه.
               </p>
             </div>
           ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.id}
+            <div className="space-y-3.5 pb-2">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
                 className={`flex items-start gap-2.5 ${
                   msg.role === 'user' ? 'justify-end' : 'justify-start'
                 }`}
@@ -487,7 +469,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                   </div>
                 </div>
               </div>
-            ))
+              ))}
+            </div>
           )}
 
           {isSending && (
@@ -523,7 +506,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           e.preventDefault();
           sendMessage();
         }}
-        className="shrink-0 p-2 sm:px-5 sm:py-2.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+        className="shrink-0 px-2.5 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:px-5 sm:py-2.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
       >
         <div className="max-w-4xl mx-auto flex items-center gap-1.5 sm:gap-2">
           <input

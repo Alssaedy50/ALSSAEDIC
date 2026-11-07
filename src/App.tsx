@@ -1239,7 +1239,13 @@ export default function App() {
       />
 
       {/* ==================== MAIN PAGE VIEWPORT ==================== */}
-      <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 pb-6">
+      <main
+        className={`flex-1 w-full max-w-4xl mx-auto ${
+          activeSection === 'assistant'
+            ? 'p-0 sm:px-6 sm:py-3 flex flex-col'
+            : 'px-3 sm:px-6 py-4 pb-6'
+        }`}
+      >
         {emailVerificationNotice && currentUser && !currentUser.emailVerified && (
           <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 flex flex-wrap items-center justify-between gap-2 no-print shadow-xs">
             <div className="flex items-center gap-2 min-w-0">
