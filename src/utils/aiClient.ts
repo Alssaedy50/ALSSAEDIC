@@ -1,29 +1,108 @@
 import {
+  AIProviderConfig,
   ClinicSettings,
   CurrencyFinancialSummary,
+  DEFAULT_AI_CONFIG,
   DentalServiceItem,
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
 } from '../types/clinic';
 
+export const AI_CONFIG_STORAGE_KEY = 'docai_ai_providers_config_v1';
+
 export const GEMINI_CANDIDATE_MODELS = [
-  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
   'gemini-3.8-flash',
-  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+] as const;
+
+export const GROQ_TEXT_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'mixtral-8x7b-32768',
+] as const;
+
+export const GROQ_VISION_MODELS = [
+  'llama-3.2-11b-vision-preview',
+  'llama-3.2-90b-vision-preview',
+] as const;
+
+export const GROQ_WHISPER_MODELS = [
+  'whisper-large-v3',
+  'whisper-large-v3-turbo',
+] as const;
+
+export const OPENROUTER_MODELS = [
+  'deepseek/deepseek-chat',
+  'google/gemini-2.5-flash',
+  'meta-llama/llama-3.3-70b-instruct',
+  'anthropic/claude-3.5-sonnet',
 ] as const;
 
 export const MODEL_DISPLAY_LABELS: Record<string, string> = {
-  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-  'gemini-3.8-flash': 'Gemini 3.8 Flash',
-  'gemini-flash-latest': 'Gemini Flash Latest',
-  'local-clinical-engine': 'المحرك السريري المدمج',
+  'gemini-2.5-flash': 'Google Gemini 2.5 Flash',
+  'gemini-3.8-flash': 'Google Gemini 3.8 Flash',
+  'gemini-3.1-flash-lite': 'Google Gemini 3.1 Flash Lite',
+  'gemini-flash-latest': 'Google Gemini Flash Latest',
+  'llama-3.3-70b-versatile': 'Groq Llama 3.3 70B',
+  'llama-3.1-8b-instant': 'Groq Llama 3.1 8B Instant',
+  'llama-3.2-11b-vision-preview': 'Groq Llama 3.2 11B Vision',
+  'llama-3.2-90b-vision-preview': 'Groq Llama 3.2 90B Vision',
+  'whisper-large-v3': 'Groq Whisper Large v3',
+  'whisper-large-v3-turbo': 'Groq Whisper Large v3 Turbo',
+  'deepseek/deepseek-chat': 'OpenRouter DeepSeek V3',
+  'google/gemini-2.5-flash': 'OpenRouter Gemini 2.5 Flash',
+  'meta-llama/llama-3.3-70b-instruct': 'OpenRouter Llama 3.3 70B',
+  'anthropic/claude-3.5-sonnet': 'OpenRouter Claude 3.5 Sonnet',
+  'local-clinical-engine': 'المحرك السريري المدمج (خادم العيادة)',
 };
 
 export function formatModelDisplayLabel(modelName?: string | null): string {
   const clean = String(modelName || '').trim();
-  if (!clean) return 'Gemini 3.8 Flash';
+  if (!clean) return 'Gemini 2.5 Flash';
   return MODEL_DISPLAY_LABELS[clean] || clean;
+}
+
+export function loadAIProviderConfig(): AIProviderConfig {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return DEFAULT_AI_CONFIG;
+    }
+    const raw = window.localStorage.getItem(AI_CONFIG_STORAGE_KEY);
+    if (!raw) return DEFAULT_AI_CONFIG;
+    const parsed = JSON.parse(raw) as Partial<AIProviderConfig>;
+    return {
+      geminiApiKey: String(parsed.geminiApiKey || '').trim(),
+      geminiModel: String(parsed.geminiModel || DEFAULT_AI_CONFIG.geminiModel).trim(),
+      enableWebGrounding: parsed.enableWebGrounding !== false,
+
+      groqApiKey: String(parsed.groqApiKey || '').trim(),
+      groqTextModel: String(parsed.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel).trim(),
+      groqVisionModel: String(parsed.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel).trim(),
+      groqWhisperModel: String(parsed.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel).trim(),
+
+      openrouterApiKey: String(parsed.openrouterApiKey || '').trim(),
+      openrouterModel: String(parsed.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel).trim(),
+
+      sttEngine: parsed.sttEngine === 'groq' ? 'groq' : 'browser',
+      customPriority: Array.isArray(parsed.customPriority) && parsed.customPriority.length > 0
+        ? parsed.customPriority
+        : DEFAULT_AI_CONFIG.customPriority,
+    };
+  } catch {
+    return DEFAULT_AI_CONFIG;
+  }
+}
+
+export function saveAIProviderConfig(config: AIProviderConfig): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
 }
 
 export interface AssistantRequestPayload {
@@ -488,85 +567,552 @@ export interface AssistantDetailedResponse {
   reply: string;
   model: string;
   modelLabel: string;
+  providerUsed?: 'gemini' | 'groq' | 'openrouter' | 'server' | 'local';
+  isFallbackApplied?: boolean;
+  webSources?: Array<{ title: string; uri: string }>;
 }
 
-export function isInstantClinicQuery(
-  prompt: string,
-  clinicContext?: Record<string, unknown> | null
-): boolean {
-  const p = String(prompt || '').trim();
-  if (!p) return false;
+export function buildClinicalSystemPrompt(
+  clinicContext?: Record<string, unknown> | null,
+  prompt?: string
+): string {
+  const ctx = (clinicContext || {}) as Record<string, unknown>;
+  const id = (ctx.identity || {}) as Record<string, unknown>;
+  const clinicName = String(id.clinicAr || 'عيادة السعيدي لطب وجراحة الفم والأسنان');
+  const doctorName = String(id.doctorAr || 'د. صلاح الدين السعيدي');
+  const specialty = String(id.specialtyAr || 'طب وجراحة الفم والأسنان');
+  const defaultCurr = String(id.defaultCurrency || 'ريال يمني');
 
-  const fastKeywords = [
-    'ديون',
-    'مديون',
-    'متبقي',
-    'آجل',
-    'اجل',
-    'ذمم',
-    'مخزون',
-    'نواقص',
-    'جرد',
-    'أصناف',
-    'اصناف',
-    'مستودع',
-    'أرباح',
-    'ارباح',
-    'مصروفات',
-    'مالي',
-    'إيراد',
-    'ايراد',
-    'تقرير',
-    'محاسب',
-    'ميزان',
-    'دخل',
-    'أسعار',
-    'اسعار',
-    'قائمة الخدمات',
-    'مضاد',
-    'مسكن',
-    'وصفة',
-    'روشيتة',
-    'خلع',
-    'قلع',
-    'ضرس',
-    'عصب',
-    'جذور',
-    'زيركون',
-    'إيماكس',
-    'ايماكس',
-    'فينير',
-    'تركيب',
-    'زراعة',
-    'تقويم',
-    'لثة',
-    'تخدير',
-    'بنج',
-  ];
-
-  if (fastKeywords.some((kw) => p.includes(kw))) {
-    return true;
+  let contextSnippet = '';
+  if (ctx.financialSummary) {
+    const fin = ctx.financialSummary as Record<string, unknown>;
+    contextSnippet += `\n- إجمالي السندات: ${fin.totalReceipts || 0} | الديون الآجلة: ${fin.totalDebtors || 0} مريض`;
+  }
+  if (Array.isArray(ctx.pendingDebtsPatients) && ctx.pendingDebtsPatients.length > 0) {
+    const topDebts = ctx.pendingDebtsPatients
+      .slice(0, 8)
+      .map((d: Record<string, unknown>) => `${d.patientName}: ${Number(d.remainingAmount).toLocaleString()} ${d.currency || defaultCurr}`)
+      .join('، ');
+    contextSnippet += `\n- أبرز حالات الذمم الآجلة: ${topDebts}`;
+  }
+  if (Array.isArray(ctx.lowStockAlerts) && ctx.lowStockAlerts.length > 0) {
+    const lowNames = ctx.lowStockAlerts
+      .slice(0, 6)
+      .map((i: Record<string, unknown>) => `${i.name} (المتبقي: ${i.qty})`)
+      .join('، ');
+    contextSnippet += `\n- نواقص المخزون: ${lowNames}`;
+  }
+  if (Array.isArray(ctx.servicesCatalog) && ctx.servicesCatalog.length > 0) {
+    const srvNames = ctx.servicesCatalog
+      .slice(0, 10)
+      .map((s: Record<string, unknown>) => `${s.name}: ${Number(s.price).toLocaleString()} ${defaultCurr}`)
+      .join(' | ');
+    contextSnippet += `\n- خدمات العيادة وأسعارها: ${srvNames}`;
   }
 
-  const recList = Array.isArray((clinicContext as Record<string, unknown>)?.recentReceipts)
-    ? ((clinicContext as Record<string, unknown>).recentReceipts as Array<Record<string, unknown>>)
-    : [];
-  return recList.some(
-    (r) =>
-      (typeof r.patientName === 'string' &&
-        r.patientName.trim().length >= 3 &&
-        p.includes(r.patientName.trim())) ||
-      (typeof r.patientPhone === 'string' &&
-        r.patientPhone.trim().length >= 6 &&
-        p.includes(r.patientPhone.trim()))
-  );
+  return `أنت المساعد الذكي المعتمد والمتخصص لعيادة "${clinicName}" — ${specialty}.
+الطبيب المعالج والمالك: ${doctorName}.
+العملة الافتراضية: ${defaultCurr}.
+
+بيانات العيادة الحالية المتاحة لديك:
+${contextSnippet || '- لا توجد بيانات إضافية محددة.'}
+
+إرشادات العمل:
+1. قدّم إجابات إكلينيكية، مالية، ومحاسبية دقيقة واحترافية باللغة العربية.
+2. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات وموانع الاستعمال.
+3. عند تحليل صور الأشعة أو الحالات السريرية المرفقة، بيّن الملاحظات التشخيصية وخطة العلاج التقديرية بدقة.
+4. حافظ على الأسلوب المباشر والمهني والمنسق بنقاط واضحة دون حشو.`;
 }
 
+function extractCleanBase64(dataUrl: string): { base64: string; mimeType: string } {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (match) {
+    return { mimeType: match[1], base64: match[2] };
+  }
+  return { mimeType: 'image/jpeg', base64: dataUrl };
+}
+
+// 1. Google Gemini Direct (BYOK with Web Search Grounding)
+async function callGeminiDirect(
+  payload: AssistantRequestPayload,
+  config: AIProviderConfig,
+  signal?: AbortSignal
+): Promise<AssistantDetailedResponse> {
+  const apiKey = config.geminiApiKey.trim();
+  if (!apiKey) throw new Error('مفتاح Gemini API غير مدخل.');
+
+  const model = config.geminiModel.trim() || 'gemini-2.5-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
+
+  const contents: Array<Record<string, unknown>> = [];
+
+  // Add history
+  if (Array.isArray(payload.history)) {
+    for (const h of payload.history.slice(-6)) {
+      if (h.text && h.text.trim()) {
+        contents.push({
+          role: h.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: h.text.trim() }],
+        });
+      }
+    }
+  }
+
+  // Current turn parts
+  const userParts: Array<Record<string, unknown>> = [];
+  if (payload.attachment && payload.attachment.base64Data) {
+    const { base64, mimeType } = extractCleanBase64(payload.attachment.base64Data);
+    userParts.push({
+      inlineData: {
+        mimeType: payload.attachment.mimeType || mimeType,
+        data: base64,
+      },
+    });
+  }
+  userParts.push({
+    text: payload.prompt || 'يرجى تقديم المشورة الطبية والمالية بناءً على سياق العيادة.',
+  });
+
+  contents.push({
+    role: 'user',
+    parts: userParts,
+  });
+
+  const requestBody: Record<string, unknown> = {
+    systemInstruction: {
+      parts: [{ text: systemPrompt }],
+    },
+    contents,
+    generationConfig: {
+      temperature: 0.3,
+    },
+  };
+
+  // Web search grounding if enabled
+  if (config.enableWebGrounding) {
+    requestBody.tools = [{ googleSearch: {} }];
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`Gemini API Error (${res.status}): ${errorText}`);
+  }
+
+  const data = await res.json();
+  const candidate = data?.candidates?.[0];
+  const replyParts = candidate?.content?.parts || [];
+  const textReply = replyParts
+    .map((p: Record<string, unknown>) => (typeof p.text === 'string' ? p.text : ''))
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+
+  if (!textReply) {
+    throw new Error('لم يتم استلام نص من نموذج Gemini.');
+  }
+
+  // Extract web search sources if grounding was active
+  const webSources: Array<{ title: string; uri: string }> = [];
+  const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
+  for (const chunk of groundingChunks) {
+    if (chunk?.web?.uri) {
+      webSources.push({
+        title: chunk.web.title || chunk.web.uri,
+        uri: chunk.web.uri,
+      });
+    }
+  }
+
+  return {
+    reply: textReply,
+    model,
+    modelLabel: formatModelDisplayLabel(model),
+    providerUsed: 'gemini',
+    webSources: webSources.length > 0 ? webSources : undefined,
+  };
+}
+
+// 2. Groq Cloud Direct (Text, Vision, & High-Speed Reasoning)
+async function callGroqDirect(
+  payload: AssistantRequestPayload,
+  config: AIProviderConfig,
+  hasImage: boolean,
+  signal?: AbortSignal
+): Promise<AssistantDetailedResponse> {
+  const apiKey = config.groqApiKey.trim();
+  if (!apiKey) throw new Error('مفتاح Groq Cloud API غير مدخل.');
+
+  const model = hasImage
+    ? config.groqVisionModel.trim() || 'llama-3.2-11b-vision-preview'
+    : config.groqTextModel.trim() || 'llama-3.3-70b-versatile';
+
+  const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
+  const messages: Array<Record<string, unknown>> = [
+    { role: 'system', content: systemPrompt },
+  ];
+
+  if (Array.isArray(payload.history)) {
+    for (const h of payload.history.slice(-6)) {
+      if (h.text && h.text.trim()) {
+        messages.push({
+          role: h.role === 'assistant' ? 'assistant' : 'user',
+          content: h.text.trim(),
+        });
+      }
+    }
+  }
+
+  if (hasImage && payload.attachment?.base64Data) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: payload.prompt || 'تحليل الصورة المرفقة' },
+        {
+          type: 'image_url',
+          image_url: { url: payload.attachment.base64Data },
+        },
+      ],
+    });
+  } else {
+    messages.push({
+      role: 'user',
+      content: payload.prompt || 'تحليل السجلات الطبية والمالية للعيادة.',
+    });
+  }
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.3,
+      max_tokens: 2048,
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`Groq API Error (${res.status}): ${errorText}`);
+  }
+
+  const data = await res.json();
+  const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!reply) {
+    throw new Error('لم يتم استلام نص من نموذج Groq.');
+  }
+
+  return {
+    reply,
+    model,
+    modelLabel: formatModelDisplayLabel(model),
+    providerUsed: 'groq',
+  };
+}
+
+// 3. OpenRouter Direct (DeepSeek, Claude, Llama, Gemini)
+async function callOpenRouterDirect(
+  payload: AssistantRequestPayload,
+  config: AIProviderConfig,
+  hasImage: boolean,
+  signal?: AbortSignal
+): Promise<AssistantDetailedResponse> {
+  const apiKey = config.openrouterApiKey.trim();
+  if (!apiKey) throw new Error('مفتاح OpenRouter API غير مدخل.');
+
+  const model = hasImage
+    ? 'google/gemini-2.5-flash'
+    : config.openrouterModel.trim() || 'deepseek/deepseek-chat';
+
+  const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
+  const messages: Array<Record<string, unknown>> = [
+    { role: 'system', content: systemPrompt },
+  ];
+
+  if (Array.isArray(payload.history)) {
+    for (const h of payload.history.slice(-6)) {
+      if (h.text && h.text.trim()) {
+        messages.push({
+          role: h.role === 'assistant' ? 'assistant' : 'user',
+          content: h.text.trim(),
+        });
+      }
+    }
+  }
+
+  if (hasImage && payload.attachment?.base64Data) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: payload.prompt || 'تحليل الصورة المرفقة' },
+        {
+          type: 'image_url',
+          image_url: { url: payload.attachment.base64Data },
+        },
+      ],
+    });
+  } else {
+    messages.push({
+      role: 'user',
+      content: payload.prompt || 'تحليل السجلات الطبية والمالية للعيادة.',
+    });
+  }
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://saedic.vercel.app',
+      'X-Title': 'ALSSAEDIC Dental Clinic ERP',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.3,
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`OpenRouter API Error (${res.status}): ${errorText}`);
+  }
+
+  const data = await res.json();
+  const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!reply) {
+    throw new Error('لم يتم استلام نص من نموذج OpenRouter.');
+  }
+
+  return {
+    reply,
+    model,
+    modelLabel: formatModelDisplayLabel(model),
+    providerUsed: 'openrouter',
+  };
+}
+
+// 4. Groq Whisper Large-v3 Speech-to-Text Dispatcher
+export async function transcribeAudioWithGroqWhisper(
+  audioBlob: Blob,
+  apiKey: string,
+  model = 'whisper-large-v3'
+): Promise<string> {
+  const cleanKey = apiKey.trim();
+  if (!cleanKey) {
+    throw new Error('مفتاح Groq Cloud API غير مدخل للنسخ الصوتي.');
+  }
+
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.webm');
+  formData.append('model', model || 'whisper-large-v3');
+  formData.append('language', 'ar');
+  formData.append(
+    'prompt',
+    'مصطلحات طب الأسنان: تقليح اللثة، زيركون، علاج العصب، إيماكس، خلع ضرس العقل، كشف ديون المرضى، جرد نواقص المخزون'
+  );
+
+  const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cleanKey}`,
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`Groq Whisper Error (${res.status}): ${errorText}`);
+  }
+
+  const data = await res.json();
+  return String(data?.text || '').trim();
+}
+
+// 5. Test Provider API Connection Ping
+export async function testAIProviderConnection(
+  provider: 'gemini' | 'groq' | 'openrouter',
+  config: AIProviderConfig
+): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+  const start = Date.now();
+  try {
+    if (provider === 'gemini') {
+      const apiKey = config.geminiApiKey.trim();
+      if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
+      const model = config.geminiModel.trim() || 'gemini-2.5-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'قل كلمة: متصل' }] }],
+          generationConfig: { maxOutputTokens: 10 },
+        }),
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { ok: false, latencyMs, error: `خطأ (${res.status}): ${text.slice(0, 100)}` };
+      }
+      return { ok: true, latencyMs };
+    }
+
+    if (provider === 'groq') {
+      const apiKey = config.groqApiKey.trim();
+      if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
+      const model = config.groqTextModel.trim() || 'llama-3.3-70b-versatile';
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'Say OK' }],
+          max_tokens: 5,
+        }),
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { ok: false, latencyMs, error: `خطأ (${res.status}): ${text.slice(0, 100)}` };
+      }
+      return { ok: true, latencyMs };
+    }
+
+    if (provider === 'openrouter') {
+      const apiKey = config.openrouterApiKey.trim();
+      if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
+      const model = config.openrouterModel.trim() || 'deepseek/deepseek-chat';
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'Say OK' }],
+          max_tokens: 5,
+        }),
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { ok: false, latencyMs, error: `خطأ (${res.status}): ${text.slice(0, 100)}` };
+      }
+      return { ok: true, latencyMs };
+    }
+  } catch (err: unknown) {
+    const latencyMs = Date.now() - start;
+    return {
+      ok: false,
+      latencyMs,
+      error: err instanceof Error ? err.message : 'تعذر الاتصال بالخادم.',
+    };
+  }
+  return { ok: false, latencyMs: 0, error: 'مزود غير معروف' };
+}
+
+// ==================== PRIMARY-TO-SECONDARY DYNAMIC FALLBACK ORCHESTRATOR ====================
 export async function queryClinicAssistantDetailed(
   payload: AssistantRequestPayload,
   externalSignal?: AbortSignal
 ): Promise<AssistantDetailedResponse> {
-  // Call server endpoint (/api/gemini/assistant) so real Gemini AI answers with full clinic context
+  const config = loadAIProviderConfig();
+  const hasImage = Boolean(
+    payload.attachment &&
+      payload.attachment.mimeType &&
+      payload.attachment.mimeType.startsWith('image/')
+  );
+
+  const priorityOrder: ('gemini' | 'groq' | 'openrouter')[] =
+    Array.isArray(config.customPriority) && config.customPriority.length > 0
+      ? config.customPriority
+      : ['gemini', 'groq', 'openrouter'];
+
+  let failoverCount = 0;
+  const failureNotes: string[] = [];
+
+  // Iterate through configured client-side BYOK providers with automatic failover
+  for (const provider of priorityOrder) {
+    if (externalSignal?.aborted) {
+      throw new DOMException('Aborted by user', 'AbortError');
+    }
+
+    if (provider === 'gemini' && config.geminiApiKey.trim()) {
+      try {
+        const res = await callGeminiDirect(payload, config, externalSignal);
+        if (failoverCount > 0) {
+          return {
+            ...res,
+            modelLabel: `${res.modelLabel} — (تم تطبيق التبديل التلقائي)`,
+            isFallbackApplied: true,
+          };
+        }
+        return res;
+      } catch (err: unknown) {
+        if (externalSignal?.aborted) throw err;
+        failoverCount++;
+        failureNotes.push(`Gemini: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
+        // Immediately try next provider in chain
+      }
+    }
+
+    if (provider === 'groq' && config.groqApiKey.trim()) {
+      try {
+        const res = await callGroqDirect(payload, config, hasImage, externalSignal);
+        if (failoverCount > 0) {
+          return {
+            ...res,
+            modelLabel: `${res.modelLabel} — (تم تطبيق التبديل التلقائي)`,
+            isFallbackApplied: true,
+          };
+        }
+        return res;
+      } catch (err: unknown) {
+        if (externalSignal?.aborted) throw err;
+        failoverCount++;
+        failureNotes.push(`Groq: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
+        // Immediately try next provider in chain
+      }
+    }
+
+    if (provider === 'openrouter' && config.openrouterApiKey.trim()) {
+      try {
+        const res = await callOpenRouterDirect(payload, config, hasImage, externalSignal);
+        if (failoverCount > 0) {
+          return {
+            ...res,
+            modelLabel: `${res.modelLabel} — (تم تطبيق التبديل التلقائي)`,
+            isFallbackApplied: true,
+          };
+        }
+        return res;
+      } catch (err: unknown) {
+        if (externalSignal?.aborted) throw err;
+        failoverCount++;
+        failureNotes.push(`OpenRouter: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
+        // Immediately try next provider in chain
+      }
+    }
+  }
+
+  // Quaternary Fallback: Server Proxy Endpoint (/api/gemini/assistant)
   const controller = new AbortController();
   const timeoutMs = payload.attachment ? 45_000 : 30_000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -599,32 +1145,39 @@ export async function queryClinicAssistantDetailed(
     }>(response);
     if (parsed.ok && parsed.data?.reply && String(parsed.data.reply).trim()) {
       const model = String(parsed.data.model || 'gemini-3.8-flash').trim();
-      const modelLabel =
+      const baseLabel =
         String(parsed.data.modelLabel || '').trim() || formatModelDisplayLabel(model);
+      const modelLabel =
+        failoverCount > 0 ? `${baseLabel} — (خادم العيادة الاحتياطي)` : baseLabel;
       return {
         reply: String(parsed.data.reply).trim(),
         model,
         modelLabel,
+        providerUsed: 'server',
+        isFallbackApplied: failoverCount > 0,
       };
     }
   } catch (err: unknown) {
     clearTimeout(timer);
-    // ONLY rethrow if the user actually clicked stop/aborted externally
     if (externalSignal?.aborted) {
       throw new DOMException('Aborted by user', 'AbortError');
     }
-    // Server route unreachable, rate-limited, or timed out; fall back cleanly to local clinical engine
   }
 
   if (externalSignal?.aborted) {
     throw new DOMException('Aborted by user', 'AbortError');
   }
 
-  // Fallback to Local Clinical Intelligence Engine only if server/network is completely unreachable
+  // Final Ultra-Safe Fallback: Local Clinical Intelligence Engine (Runs purely in browser)
   return {
     reply: generateLocalClinicalResponse(payload.prompt, payload.clinicContext),
     model: 'local-clinical-engine',
-    modelLabel: formatModelDisplayLabel('local-clinical-engine'),
+    modelLabel:
+      failoverCount > 0
+        ? `${formatModelDisplayLabel('local-clinical-engine')} — (تبديل سريري آمن)`
+        : formatModelDisplayLabel('local-clinical-engine'),
+    providerUsed: 'local',
+    isFallbackApplied: true,
   };
 }
 

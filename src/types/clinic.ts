@@ -100,12 +100,49 @@ export interface ClinicSettings {
   telegramBackup?: TelegramBackupSettings;
 }
 
+export interface AIProviderConfig {
+  geminiApiKey: string;
+  geminiModel: string;
+  enableWebGrounding: boolean;
+
+  groqApiKey: string;
+  groqTextModel: string;
+  groqVisionModel: string;
+  groqWhisperModel: string;
+
+  openrouterApiKey: string;
+  openrouterModel: string;
+
+  sttEngine: 'browser' | 'groq';
+  customPriority: ('gemini' | 'groq' | 'openrouter')[];
+}
+
+export const DEFAULT_AI_CONFIG: AIProviderConfig = {
+  geminiApiKey: '',
+  geminiModel: 'gemini-2.5-flash',
+  enableWebGrounding: true,
+
+  groqApiKey: '',
+  groqTextModel: 'llama-3.3-70b-versatile',
+  groqVisionModel: 'llama-3.2-11b-vision-preview',
+  groqWhisperModel: 'whisper-large-v3',
+
+  openrouterApiKey: '',
+  openrouterModel: 'deepseek/deepseek-chat',
+
+  sttEngine: 'browser',
+  customPriority: ['gemini', 'groq', 'openrouter'],
+};
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   timestamp: string;
   modelUsed?: string;
+  providerUsed?: 'gemini' | 'groq' | 'openrouter' | 'server' | 'local';
+  isFallbackApplied?: boolean;
+  webSources?: Array<{ title: string; uri: string }>;
   attachmentName?: string;
   attachmentPreview?: string;
 }

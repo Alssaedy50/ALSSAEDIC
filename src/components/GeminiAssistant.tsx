@@ -2,18 +2,29 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   Copy,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Globe,
   ImagePlus,
+  Key,
   Loader2,
   Mic,
   MicOff,
+  Radio,
+  RefreshCw,
   Send,
+  SlidersHorizontal,
+  Sparkles,
   Square,
   Trash2,
   User,
   Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import {
+  AIProviderConfig,
   ChatMessage,
   ClinicSettings,
   CurrencyFinancialSummary,
@@ -21,7 +32,19 @@ import {
   InventoryItem,
   ReceiptRecord,
 } from '../types/clinic';
-import { queryClinicAssistantDetailed } from '../utils/aiClient';
+import {
+  GEMINI_CANDIDATE_MODELS,
+  GROQ_TEXT_MODELS,
+  GROQ_VISION_MODELS,
+  GROQ_WHISPER_MODELS,
+  OPENROUTER_MODELS,
+  formatModelDisplayLabel,
+  loadAIProviderConfig,
+  saveAIProviderConfig,
+  queryClinicAssistantDetailed,
+  transcribeAudioWithGroqWhisper,
+  testAIProviderConnection,
+} from '../utils/aiClient';
 import {
   buildCleanSpeechTranscript,
   deduplicateSpeechText,
@@ -63,6 +86,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isRecordingGroq, setIsRecordingGroq] = useState(false);
+  const [isTranscribingGroq, setIsTranscribingGroq] = useState(false);
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [isAiSettingsModalOpen, setIsAiSettingsModalOpen] = useState(false);
+  const [aiConfig, setAiConfig] = useState<AIProviderConfig>(() => loadAIProviderConfig());
   const [attachment, setAttachment] = useState<{
     name: string;
     mimeType: string;
@@ -71,6 +99,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const activeAudioStreamRef = useRef<MediaStream | null>(null);
   const shouldKeepListeningRef = useRef<boolean>(false);
   const accumulatedTranscriptRef = useRef<string>('');
   const currentSessionFinalRef = useRef<string>('');
@@ -85,6 +116,19 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         recognitionRef.current?.stop();
       } catch {
         // Ignore
+      }
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {
+        // Ignore
+      }
+      if (activeAudioStreamRef.current) {
+        activeAudioStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -223,14 +267,23 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
   };
 
-  const speakText = (text: string) => {
+  const toggleSpeakText = (msgId: string, text: string) => {
     if (!('speechSynthesis' in window)) {
       notify('المتصفح لا يدعم القراءة الصوتية', 'warning');
       return;
     }
+    if (speakingMsgId === msgId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMsgId(null);
+      return;
+    }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_`-]/g, ' '));
+    const cleanText = text.replace(/[*#_`-]/g, ' ').replace(/\s+/g, ' ').trim();
+    const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'ar-SA';
+    utterance.onend = () => setSpeakingMsgId(null);
+    utterance.onerror = () => setSpeakingMsgId(null);
+    setSpeakingMsgId(msgId);
     window.speechSynthesis.speak(utterance);
   };
 
@@ -251,7 +304,94 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
   };
 
-  const toggleVoiceInput = () => {
+  const stopGroqRecording = () => {
+    setIsRecordingGroq(false);
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {
+      // Ignore
+    }
+    if (activeAudioStreamRef.current) {
+      activeAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+      activeAudioStreamRef.current = null;
+    }
+  };
+
+  const startGroqRecording = async () => {
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      notify('المتصفح لا يدعم تسجيل الصوت عبر المايكروفون', 'warning');
+      toggleBrowserVoiceInput();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      activeAudioStreamRef.current = stream;
+      audioChunksRef.current = [];
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+          ? 'audio/mp4'
+          : '';
+
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        if (activeAudioStreamRef.current) {
+          activeAudioStreamRef.current.getTracks().forEach((t) => t.stop());
+          activeAudioStreamRef.current = null;
+        }
+
+        const recordedBlob = new Blob(audioChunksRef.current, {
+          type: mimeType || 'audio/webm',
+        });
+
+        if (recordedBlob.size > 1500) {
+          setIsTranscribingGroq(true);
+          try {
+            const transcript = await transcribeAudioWithGroqWhisper(
+              recordedBlob,
+              aiConfig.groqApiKey,
+              aiConfig.groqWhisperModel
+            );
+            if (transcript && transcript.trim()) {
+              setInput((prev) =>
+                prev ? `${prev.trim()} ${transcript.trim()}` : transcript.trim()
+              );
+              notify('تم تفريغ الصوت بنجاح عبر Groq Whisper', 'success');
+            }
+          } catch (err: unknown) {
+            notify(
+              err instanceof Error
+                ? `تعذر تفريغ الصوت: ${err.message}`
+                : 'تعذر الاتصال بمحرك تفريغ الصوت.',
+              'warning'
+            );
+          } finally {
+            setIsTranscribingGroq(false);
+          }
+        }
+      };
+
+      recorder.start(250);
+      setIsRecordingGroq(true);
+    } catch {
+      setIsRecordingGroq(false);
+      notify('يرجى السماح بصلاحية المايكروفون في المتصفح', 'warning');
+    }
+  };
+
+  const toggleBrowserVoiceInput = () => {
     if (isListening || shouldKeepListeningRef.current) {
       stopVoiceInput();
       return;
@@ -273,7 +413,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
 
     try {
-      // Stop any previous active recognition instance before starting a new one
       try {
         recognitionRef.current?.stop();
       } catch {
@@ -305,7 +444,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
       rec.lang = 'ar-SA';
-      // Disable continuous mode on mobile browsers to prevent Android Chrome's cumulative buffer duplication bug
       rec.continuous = !isMobileBrowser;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
@@ -345,6 +483,23 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       shouldKeepListeningRef.current = false;
       setIsListening(false);
     }
+  };
+
+  const handleMicButtonClick = () => {
+    // If Groq Whisper is chosen and API key is entered, use Groq Whisper recording pipeline
+    if (aiConfig.sttEngine === 'groq' && aiConfig.groqApiKey.trim()) {
+      if (isRecordingGroq) {
+        stopGroqRecording();
+      } else {
+        if (isListening) stopVoiceInput();
+        startGroqRecording();
+      }
+      return;
+    }
+
+    // Otherwise use browser Web Speech API
+    if (isRecordingGroq) stopGroqRecording();
+    toggleBrowserVoiceInput();
   };
 
   const handleStopResponse = () => {
@@ -465,6 +620,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         text: assistantResult.reply || 'تمت المعالجة.',
         timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
         modelUsed: assistantResult.modelLabel,
+        providerUsed: assistantResult.providerUsed,
+        isFallbackApplied: assistantResult.isFallbackApplied,
+        webSources: assistantResult.webSources,
       };
       onAddMessage(assistantMsg);
     } catch (err: unknown) {
@@ -544,8 +702,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
   return (
     <div className="flex-1 min-h-0 w-full h-full sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs">
-      {/* Quick Prompts Strip + Clear Chat Action */}
+      {/* Quick Prompts Strip + Clear Chat Action + Quick AI Settings Button */}
       <div className="shrink-0 px-3 sm:px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <button
+          type="button"
+          onClick={() => setIsAiSettingsModalOpen(true)}
+          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-sky-600 dark:text-sky-400 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 rounded-xl transition-colors whitespace-nowrap"
+          title="إعدادات نماذج ومفاتيح الذكاء الاصطناعي (BYOK)"
+        >
+          <Sparkles className="w-3.5 h-3.5 shrink-0" />
+          <span>إعدادات الذكاء (BYOK)</span>
+        </button>
+
         {messages.length > 0 && (
           <button
             type="button"
@@ -589,105 +757,148 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               {messages.map((msg) => (
                 <div
                   key={msg.id}
-                className={`flex items-start gap-2.5 ${
-                  msg.role === 'user' ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                <div
-                  className={`hidden sm:flex w-8 h-8 rounded-xl items-center justify-center shrink-0 ${
-                    msg.role === 'user'
-                      ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 order-2'
-                      : 'bg-sky-600 text-white'
+                  className={`flex items-start gap-2.5 ${
+                    msg.role === 'user' ? 'justify-end' : 'justify-start'
                   }`}
                 >
-                  {msg.role === 'user' ? (
-                    <User className="w-4 h-4" />
-                  ) : (
-                    <Bot className="w-4 h-4" />
-                  )}
-                </div>
-
-                <div
-                  className={`w-full sm:w-auto sm:max-w-[84%] rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm space-y-2 break-words shadow-2xs ${
-                    msg.role === 'user'
-                      ? 'bg-sky-600 text-white'
-                      : 'bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
-                  }`}
-                >
-                  {/* Mobile compact sender header */}
                   <div
-                    className={`flex sm:hidden items-center gap-1.5 pb-1 border-b text-[11px] font-bold ${
+                    className={`hidden sm:flex w-8 h-8 rounded-xl items-center justify-center shrink-0 ${
                       msg.role === 'user'
-                        ? 'border-white/20 text-white/90'
-                        : 'border-slate-200 dark:border-slate-800 text-sky-600 dark:text-sky-400'
+                        ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 order-2'
+                        : 'bg-sky-600 text-white'
                     }`}
                   >
                     {msg.role === 'user' ? (
-                      <User className="w-3.5 h-3.5 shrink-0" />
+                      <User className="w-4 h-4" />
                     ) : (
-                      <Bot className="w-3.5 h-3.5 shrink-0" />
+                      <Bot className="w-4 h-4" />
                     )}
-                    <span>{msg.role === 'user' ? 'أنت' : 'المساعد'}</span>
-                  </div>
-
-                  {msg.attachmentPreview && (
-                    <img
-                      src={msg.attachmentPreview}
-                      alt="مرفق"
-                      className="max-h-56 rounded-xl border border-slate-300 dark:border-slate-700 object-contain"
-                    />
-                  )}
-
-                  <div className="space-y-1.5">
-                    {renderFormattedMessageText(msg.text, msg.role === 'user')}
                   </div>
 
                   <div
-                    className={`flex items-center justify-between gap-3 pt-1.5 border-t text-[10px] ${
+                    className={`w-full sm:w-auto sm:max-w-[84%] rounded-2xl p-3.5 sm:p-4 text-xs sm:text-sm space-y-2 break-words shadow-2xs ${
                       msg.role === 'user'
-                        ? 'border-white/20 text-white/80'
-                        : 'border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 min-w-0 truncate">
-                      <span className="font-mono tabular-nums shrink-0">{msg.timestamp}</span>
-                      {msg.role === 'assistant' && msg.modelUsed && (
-                        <>
-                          <span aria-hidden="true" className="shrink-0">
-                            ·
-                          </span>
-                          <span
-                            dir="ltr"
-                            className="font-mono font-semibold text-sky-600 dark:text-sky-400 truncate"
-                          >
-                            {msg.modelUsed}
-                          </span>
-                        </>
+                    {/* Mobile compact sender header */}
+                    <div
+                      className={`flex sm:hidden items-center gap-1.5 pb-1 border-b text-[11px] font-bold ${
+                        msg.role === 'user'
+                          ? 'border-white/20 text-white/90'
+                          : 'border-slate-200 dark:border-slate-800 text-sky-600 dark:text-sky-400'
+                      }`}
+                    >
+                      {msg.role === 'user' ? (
+                        <User className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
+                        <Bot className="w-3.5 h-3.5 shrink-0" />
                       )}
+                      <span>{msg.role === 'user' ? 'أنت' : 'المساعد'}</span>
                     </div>
-                    {msg.role === 'assistant' && (
-                      <div className="flex items-center gap-3 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => copyMessageText(msg.text)}
-                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold whitespace-nowrap shrink-0"
-                        >
-                          <Copy className="w-3 h-3" />
-                          <span>نسخ</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => speakText(msg.text)}
-                          className="inline-flex items-center gap-1 hover:text-sky-500 font-bold whitespace-nowrap shrink-0"
-                        >
-                          <Volume2 className="w-3 h-3" />
-                          <span>استماع</span>
-                        </button>
+
+                    {msg.attachmentPreview && (
+                      <img
+                        src={msg.attachmentPreview}
+                        alt="مرفق"
+                        className="max-h-56 rounded-xl border border-slate-300 dark:border-slate-700 object-contain"
+                      />
+                    )}
+
+                    <div className="space-y-1.5">
+                      {renderFormattedMessageText(msg.text, msg.role === 'user')}
+                    </div>
+
+                    {/* Web Search Grounding Source Citations */}
+                    {msg.webSources && msg.webSources.length > 0 && (
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
+                        <div className="text-[10px] font-bold text-sky-700 dark:text-sky-300 flex items-center gap-1">
+                          <Globe className="w-3 h-3 shrink-0" />
+                          <span>المصادر والمراجع السريرية عبر الويب:</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.webSources.map((source, sIdx) => (
+                            <a
+                              key={sIdx}
+                              href={source.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 text-[10px] font-medium border border-sky-500/20 max-w-xs truncate transition-colors"
+                              title={source.uri}
+                            >
+                              <span className="truncate">{source.title || source.uri}</span>
+                              <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                            </a>
+                          ))}
+                        </div>
                       </div>
                     )}
+
+                    <div
+                      className={`flex items-center justify-between gap-3 pt-1.5 border-t text-[10px] ${
+                        msg.role === 'user'
+                          ? 'border-white/20 text-white/80'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 truncate">
+                        <span className="font-mono tabular-nums shrink-0">{msg.timestamp}</span>
+                        {msg.role === 'assistant' && msg.modelUsed && (
+                          <>
+                            <span aria-hidden="true" className="shrink-0">
+                              ·
+                            </span>
+                            <span
+                              dir="ltr"
+                              className="font-mono font-semibold text-sky-600 dark:text-sky-400 truncate"
+                            >
+                              {msg.modelUsed}
+                            </span>
+                            {msg.isFallbackApplied && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 font-bold text-[9px] shrink-0">
+                                تبديل تلقائي
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      {msg.role === 'assistant' && (
+                        <div className="flex items-center gap-3 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => copyMessageText(msg.text)}
+                            className="inline-flex items-center gap-1 hover:text-sky-500 font-bold whitespace-nowrap shrink-0"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>نسخ</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleSpeakText(msg.id, msg.text)}
+                            className={`inline-flex items-center gap-1 font-bold whitespace-nowrap shrink-0 transition-colors ${
+                              speakingMsgId === msg.id
+                                ? 'text-rose-500 hover:text-rose-600 animate-pulse'
+                                : 'hover:text-sky-500'
+                            }`}
+                          >
+                            {speakingMsgId === msg.id ? (
+                              <>
+                                <VolumeX className="w-3 h-3" />
+                                <span>إيقاف</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-3 h-3" />
+                                <span>استماع</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
               ))}
             </div>
           )}
@@ -716,7 +927,15 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         </div>
       )}
 
-      {/* Bottom Composer Bar with Single Square Stop Button when Sending */}
+      {/* Transcribing Groq Audio Feedback Banner */}
+      {isTranscribingGroq && (
+        <div className="shrink-0 px-4 py-2 bg-amber-500/10 border-t border-amber-500/20 flex items-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+          <span>جارٍ تفريغ التسجيل الصوتي بدقة طبية عبر Groq Whisper...</span>
+        </div>
+      )}
+
+      {/* Bottom Composer Bar */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -744,22 +963,35 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
           <button
             type="button"
-            onClick={toggleVoiceInput}
+            onClick={handleMicButtonClick}
+            disabled={isTranscribingGroq}
             className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border shrink-0 transition-colors ${
-              isListening
+              isListening || isRecordingGroq
                 ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
                 : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500'
             }`}
-            title="إملاء صوتي"
+            title={
+              aiConfig.sttEngine === 'groq' && aiConfig.groqApiKey.trim()
+                ? 'تسجيل صوتي وتفريغ عبر Groq Whisper'
+                : 'إملاء صوتي مباشر'
+            }
           >
-            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isListening || isRecordingGroq ? (
+              <MicOff className="w-4 h-4" />
+            ) : (
+              <Mic className="w-4 h-4" />
+            )}
           </button>
 
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="اكتب سؤالك الطبي أو المالي..."
+            placeholder={
+              isRecordingGroq
+                ? 'جارٍ التسجيل الصوتي... اضغط المايكروفون للإيقاف'
+                : 'اكتب سؤالك الطبي أو المالي...'
+            }
             className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 focus:border-sky-500 focus:outline-none"
           />
 
@@ -786,6 +1018,229 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           )}
         </div>
       </form>
+
+      {/* QUICK AI SETTINGS MODAL */}
+      {isAiSettingsModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
+          onClick={() => setIsAiSettingsModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-2xl space-y-4"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  إعدادات مفاتيح ونماذج الذكاء الاصطناعي (BYOK)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAiSettingsModalOpen(false)}
+                className="p-1 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Quick Gemini Key & Model */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/50 dark:bg-slate-950/40">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-sky-600 dark:text-sky-400">
+                  Google Gemini (الأساسي)
+                </span>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-sky-600 hover:underline flex items-center gap-1"
+                >
+                  <span>الحصول على مفتاح</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+              <input
+                type="password"
+                dir="ltr"
+                value={aiConfig.geminiApiKey}
+                onChange={(e) =>
+                  setAiConfig((prev) => ({ ...prev, geminiApiKey: e.target.value }))
+                }
+                placeholder="AIzaSy..."
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-mono"
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <select
+                  value={aiConfig.geminiModel}
+                  onChange={(e) =>
+                    setAiConfig((prev) => ({ ...prev, geminiModel: e.target.value }))
+                  }
+                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold"
+                >
+                  {GEMINI_CANDIDATE_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {formatModelDisplayLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-[11px] text-slate-700 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={aiConfig.enableWebGrounding}
+                    onChange={(e) =>
+                      setAiConfig((prev) => ({ ...prev, enableWebGrounding: e.target.checked }))
+                    }
+                    className="rounded text-sky-600"
+                  />
+                  <span>بحث ويب حي (Web Grounding)</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Quick Groq Key & Model */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/50 dark:bg-slate-950/40">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
+                  Groq Cloud (فائق السرعة + Whisper)
+                </span>
+                <a
+                  href="https://console.groq.com/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-amber-600 hover:underline flex items-center gap-1"
+                >
+                  <span>الحصول على مفتاح</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+              <input
+                type="password"
+                dir="ltr"
+                value={aiConfig.groqApiKey}
+                onChange={(e) =>
+                  setAiConfig((prev) => ({ ...prev, groqApiKey: e.target.value }))
+                }
+                placeholder="gsk_..."
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-mono"
+              />
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <select
+                  value={aiConfig.groqTextModel}
+                  onChange={(e) =>
+                    setAiConfig((prev) => ({ ...prev, groqTextModel: e.target.value }))
+                  }
+                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-bold"
+                >
+                  {GROQ_TEXT_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {formatModelDisplayLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={aiConfig.groqWhisperModel}
+                  onChange={(e) =>
+                    setAiConfig((prev) => ({ ...prev, groqWhisperModel: e.target.value }))
+                  }
+                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-bold"
+                >
+                  {GROQ_WHISPER_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {formatModelDisplayLabel(m)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Quick OpenRouter Key & Model */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/50 dark:bg-slate-950/40">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-600 dark:text-purple-400">
+                  OpenRouter (DeepSeek / Claude)
+                </span>
+                <a
+                  href="https://openrouter.ai/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-purple-600 hover:underline flex items-center gap-1"
+                >
+                  <span>الحصول على مفتاح</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+              <input
+                type="password"
+                dir="ltr"
+                value={aiConfig.openrouterApiKey}
+                onChange={(e) =>
+                  setAiConfig((prev) => ({ ...prev, openrouterApiKey: e.target.value }))
+                }
+                placeholder="sk-or-v1-..."
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-mono"
+              />
+              <select
+                value={aiConfig.openrouterModel}
+                onChange={(e) =>
+                  setAiConfig((prev) => ({ ...prev, openrouterModel: e.target.value }))
+                }
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold"
+              >
+                {OPENROUTER_MODELS.map((m) => (
+                  <option key={m} value={m}>
+                    {formatModelDisplayLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Voice STT engine selection */}
+            <div className="space-y-1.5 text-xs">
+              <label className="font-bold text-slate-700 dark:text-slate-300">
+                محرك التسجيل والتفريغ الصوتي (STT Engine):
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 dark:border-slate-800 cursor-pointer font-bold">
+                  <input
+                    type="radio"
+                    name="modalSttEngine"
+                    checked={aiConfig.sttEngine === 'browser'}
+                    onChange={() => setAiConfig((prev) => ({ ...prev, sttEngine: 'browser' }))}
+                    className="text-sky-600"
+                  />
+                  <span>المتصفح المباشر</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 dark:border-slate-800 cursor-pointer font-bold">
+                  <input
+                    type="radio"
+                    name="modalSttEngine"
+                    checked={aiConfig.sttEngine === 'groq'}
+                    onChange={() => setAiConfig((prev) => ({ ...prev, sttEngine: 'groq' }))}
+                    className="text-amber-600"
+                  />
+                  <span>Groq Whisper</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  saveAIProviderConfig(aiConfig);
+                  setIsAiSettingsModalOpen(false);
+                  notify('تم حفظ إعدادات ومفاتيح الذكاء الاصطناعي بنجاح', 'success');
+                }}
+                className="w-full py-2.5 rounded-xl font-bold text-xs bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+              >
+                حفظ وإغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
