@@ -104,13 +104,52 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({
     setHasDrawn(false);
   };
 
+  const exportCompressedSignatureDataUrl = (sourceCanvas: HTMLCanvasElement): string => {
+    try {
+      const targetWidth = 320;
+      const aspect =
+        sourceCanvas.width > 0 && sourceCanvas.height > 0
+          ? sourceCanvas.height / sourceCanvas.width
+          : 0.38;
+      const targetHeight = Math.max(90, Math.min(140, Math.round(targetWidth * aspect)));
+
+      const offscreen = document.createElement('canvas');
+      offscreen.width = targetWidth;
+      offscreen.height = targetHeight;
+      const ctx = offscreen.getContext('2d');
+      if (!ctx) {
+        return sourceCanvas.toDataURL('image/png');
+      }
+      ctx.clearRect(0, 0, targetWidth, targetHeight);
+      ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+
+      let dataUrl = offscreen.toDataURL('image/png');
+      // If still larger than ~25KB (approx 33,000 base64 chars), step down to 240px width
+      if (dataUrl.length > 32000) {
+        const smallW = 240;
+        const smallH = Math.max(70, Math.round(smallW * aspect));
+        offscreen.width = smallW;
+        offscreen.height = smallH;
+        const smallCtx = offscreen.getContext('2d');
+        if (smallCtx) {
+          smallCtx.clearRect(0, 0, smallW, smallH);
+          smallCtx.drawImage(sourceCanvas, 0, 0, smallW, smallH);
+          dataUrl = offscreen.toDataURL('image/png');
+        }
+      }
+      return dataUrl;
+    } catch {
+      return sourceCanvas.toDataURL('image/png');
+    }
+  };
+
   const handleConfirm = () => {
     if (!hasDrawn || !canvasRef.current) {
       onSave('', makePermanent);
       onClose();
       return;
     }
-    const dataUrl = canvasRef.current.toDataURL('image/png');
+    const dataUrl = exportCompressedSignatureDataUrl(canvasRef.current);
     onSave(dataUrl, makePermanent);
     onClose();
   };

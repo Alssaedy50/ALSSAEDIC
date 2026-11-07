@@ -84,11 +84,20 @@ export interface ClinicFeatures {
   autoInventory: boolean;
 }
 
+export interface TelegramBackupSettings {
+  enabled: boolean;
+  autoBackupOnReceipt: boolean;
+  botToken: string;
+  chatId: string;
+  lastBackupAt?: string;
+}
+
 export interface ClinicSettings {
   identity: ClinicIdentity;
   appearance: ClinicAppearance;
   features: ClinicFeatures;
   services: DentalServiceItem[];
+  telegramBackup?: TelegramBackupSettings;
 }
 
 export interface ChatMessage {

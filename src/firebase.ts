@@ -43,15 +43,114 @@ import {
 import { DEFAULT_SETTINGS, SEED_DEMO_IDS } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 
-const app = initializeApp(firebaseConfig);
+export const CUSTOM_FIREBASE_CONFIG_KEY = 'docai_custom_firebase_config_v1';
+
+export interface CustomFirebaseConfig {
+  apiKey: string;
+  projectId: string;
+  authDomain?: string;
+  storageBucket?: string;
+  appId?: string;
+  messagingSenderId?: string;
+  firestoreDatabaseId?: string;
+}
+
+function resolveEffectiveFirebaseConfig(): {
+  config: CustomFirebaseConfig;
+  isCustomProject: boolean;
+  databaseId: string;
+} {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+  const envApiKey = String(env.VITE_FIREBASE_API_KEY || '').trim();
+  const envProjectId = String(env.VITE_FIREBASE_PROJECT_ID || '').trim();
+
+  if (envApiKey && envProjectId) {
+    const envDbId = String(env.VITE_FIREBASE_DATABASE_ID || '').trim();
+    return {
+      config: {
+        apiKey: envApiKey,
+        projectId: envProjectId,
+        authDomain:
+          String(env.VITE_FIREBASE_AUTH_DOMAIN || '').trim() ||
+          `${envProjectId}.firebaseapp.com`,
+        storageBucket:
+          String(env.VITE_FIREBASE_STORAGE_BUCKET || '').trim() ||
+          `${envProjectId}.firebasestorage.app`,
+        appId: String(env.VITE_FIREBASE_APP_ID || '').trim() || firebaseConfig.appId,
+        messagingSenderId:
+          String(env.VITE_FIREBASE_MESSAGING_SENDER_ID || '').trim() ||
+          firebaseConfig.messagingSenderId,
+        firestoreDatabaseId: envDbId || '(default)',
+      },
+      isCustomProject: envProjectId !== firebaseConfig.projectId,
+      databaseId: envDbId || '(default)',
+    };
+  }
+
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const rawCustom = window.localStorage.getItem(CUSTOM_FIREBASE_CONFIG_KEY);
+      if (rawCustom) {
+        const parsed = JSON.parse(rawCustom) as Partial<CustomFirebaseConfig>;
+        const customApiKey = String(parsed?.apiKey || '').trim();
+        const customProjectId = String(parsed?.projectId || '').trim();
+        if (customApiKey && customProjectId) {
+          const customDbId = String(parsed?.firestoreDatabaseId || '').trim();
+          return {
+            config: {
+              apiKey: customApiKey,
+              projectId: customProjectId,
+              authDomain:
+                String(parsed?.authDomain || '').trim() ||
+                `${customProjectId}.firebaseapp.com`,
+              storageBucket:
+                String(parsed?.storageBucket || '').trim() ||
+                `${customProjectId}.firebasestorage.app`,
+              appId: String(parsed?.appId || '').trim() || firebaseConfig.appId,
+              messagingSenderId:
+                String(parsed?.messagingSenderId || '').trim() ||
+                firebaseConfig.messagingSenderId,
+              firestoreDatabaseId: customDbId || '(default)',
+            },
+            isCustomProject: customProjectId !== firebaseConfig.projectId,
+            databaseId: customDbId || '(default)',
+          };
+        }
+      }
+    }
+  } catch {
+    // Ignore localStorage parse error and fall back to firebase-applet-config.json
+  }
+
+  const fallbackDbId = String(firebaseConfig.firestoreDatabaseId || '').trim();
+  return {
+    config: firebaseConfig,
+    isCustomProject: false,
+    databaseId: fallbackDbId || '(default)',
+  };
+}
+
+const resolvedFirebase = resolveEffectiveFirebaseConfig();
+const app = initializeApp(resolvedFirebase.config);
 setLogLevel('silent');
-export const db = initializeFirestore(
-  app,
-  {
-    experimentalForceLongPolling: true,
-  },
-  firebaseConfig.firestoreDatabaseId
+
+const shouldUseCustomDatabaseId = Boolean(
+  resolvedFirebase.databaseId &&
+    resolvedFirebase.databaseId !== '(default)' &&
+    (!resolvedFirebase.isCustomProject || resolvedFirebase.databaseId !== firebaseConfig.firestoreDatabaseId)
 );
+
+export const db = shouldUseCustomDatabaseId
+  ? initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+      },
+      resolvedFirebase.databaseId
+    )
+  : initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+    });
 export const auth = getAuth(app);
 
 // Validate connection to Firestore on boot
@@ -432,6 +531,46 @@ function applyPendingQueueToItems<T extends { id: string }>(
 const verifiedClinicParentUids = new Set<string>();
 const pendingClinicParentCreation = new Map<string, Promise<boolean>>();
 const latestSettingsCacheByUid = new Map<string, ClinicSettings>();
+
+export function getPendingSyncOperationsCount(uid?: string | null): number {
+  const targetUid = uid || auth.currentUser?.uid;
+  if (!targetUid) return 0;
+  const state = loadPendingSyncState(targetUid);
+  return (
+    (state.settings ? 1 : 0) +
+    Object.keys(state.upserts.services).length +
+    Object.keys(state.upserts.receipts).length +
+    Object.keys(state.upserts.inventory).length +
+    Object.keys(state.upserts.expenses).length +
+    state.deletes.services.length +
+    state.deletes.receipts.length +
+    state.deletes.inventory.length +
+    state.deletes.expenses.length
+  );
+}
+
+export interface ActiveCloudDiagnostics {
+  projectId: string;
+  databaseId: string;
+  isCustomProject: boolean;
+  connectedEmail: string | null;
+  ownerUid: string | null;
+  pendingSyncCount: number;
+}
+
+export function getActiveCloudDiagnostics(
+  overrideOwnerUid?: string | null
+): ActiveCloudDiagnostics {
+  const effectiveOwnerUid = overrideOwnerUid || auth.currentUser?.uid || null;
+  return {
+    projectId: resolvedFirebase.config.projectId || firebaseConfig.projectId,
+    databaseId: shouldUseCustomDatabaseId ? resolvedFirebase.databaseId : '(default)',
+    isCustomProject: resolvedFirebase.isCustomProject,
+    connectedEmail: auth.currentUser?.email || null,
+    ownerUid: effectiveOwnerUid,
+    pendingSyncCount: getPendingSyncOperationsCount(effectiveOwnerUid),
+  };
+}
 
 // ==================== SERVER SESSION TOKEN ISSUANCE ====================
 export async function issueServerSessionToken(params: {
@@ -2526,3 +2665,73 @@ export async function fetchRegisteredSystemDirectory(
     accounts: Array.from(accountMap.values()),
   };
 }
+
+// ==================== TELEGRAM CLOUD BACKUP CLIENT HELPER ====================
+export async function sendBackupToTelegramApi(params: {
+  botToken: string;
+  chatId: string;
+  settings: ClinicSettings;
+  receipts: ReceiptRecord[];
+  inventory: InventoryItem[];
+  expenses: ExpenseRecord[];
+  triggerReason: string;
+}): Promise<{
+  ok: boolean;
+  sentAt?: string;
+  messageId?: number;
+  error?: string;
+}> {
+  const backupPayload = {
+    version: 'DOCAI-ERP-v4',
+    exportedAt: new Date().toISOString(),
+    settings: params.settings,
+    receipts: params.receipts,
+    inventory: params.inventory,
+    expenses: params.expenses,
+  };
+
+  try {
+    const res = await fetch('/api/backup/telegram', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        botToken: params.botToken.trim(),
+        chatId: params.chatId.trim(),
+        backupPayload,
+        triggerReason: params.triggerReason,
+      }),
+    });
+    const rawText = await res.text();
+    if (!rawText || rawText.trim().startsWith('<')) {
+      return {
+        ok: false,
+        error: 'تعذر الوصول إلى خادم النسخ الاحتياطي لتليجرام.',
+      };
+    }
+    const parsed = JSON.parse(rawText) as {
+      ok?: boolean;
+      sentAt?: string;
+      messageId?: number;
+      error?: string;
+    };
+    if (!res.ok || !parsed.ok) {
+      return {
+        ok: false,
+        error: parsed.error || 'تعذر إرسال النسخة الاحتياطية إلى تليجرام.',
+      };
+    }
+    return {
+      ok: true,
+      sentAt: parsed.sentAt || new Date().toISOString(),
+      messageId: parsed.messageId,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: 'تعذر الاتصال بخادم النسخ الاحتياطي لتليجرام. تحقق من اتصال الإنترنت.',
+    };
+  }
+}
+

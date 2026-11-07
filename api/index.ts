@@ -929,6 +929,133 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // Telegram Cloud Backup Endpoint (/api/backup/telegram)
+    if (url.includes('/backup/telegram')) {
+      if (!checkRateLimit(`telegram_backup:${clientIp}`, 20, 60_000)) {
+        return res.status(429).json({
+          ok: false,
+          error: 'تم تجاوز الحد المسموح لإرسال النسخ الاحتياطية في الدقيقة. يرجى الانتظار قليلاً.',
+        });
+      }
+
+      const botToken = String(body.botToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+      const chatId = String(body.chatId || process.env.TELEGRAM_CHAT_ID || '').trim();
+      const backupPayload = body.backupPayload;
+      const triggerReason = String(body.triggerReason || 'نسخ احتياطي يدوي');
+
+      if (!botToken || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'رمز بوت تليجرام (Bot Token) غير صالح. يرجى التأكد من الرمز المنسوخ من @BotFather.',
+        });
+      }
+
+      if (!chatId || !/^-?\d+$|^@[A-Za-z0-9_]{4,}$/.test(chatId)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'معرّف المحادثة أو القناة (Chat ID) غير صالح. يرجى إدخال رقم المعرّف الصحيح.',
+        });
+      }
+
+      if (!backupPayload || typeof backupPayload !== 'object') {
+        return res.status(400).json({
+          ok: false,
+          error: 'بيانات النسخة الاحتياطية غير مكتملة.',
+        });
+      }
+
+      const payloadObj = backupPayload as {
+        settings?: {
+          identity?: {
+            clinicAr?: string;
+            doctorAr?: string;
+            defaultCurrency?: string;
+          };
+        };
+        receipts?: Array<{
+          paidAmount?: number;
+          remainingAmount?: number;
+        }>;
+        inventory?: unknown[];
+        expenses?: unknown[];
+      };
+
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const fileStamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+      const fileName = `DOCAI-Backup-${fileStamp}.json`;
+
+      const clinicAr = payloadObj.settings?.identity?.clinicAr || 'عيادة السعيدي لطب الأسنان';
+      const doctorAr = payloadObj.settings?.identity?.doctorAr || 'د. صلاح الدين السعيدي';
+      const defaultCurrency = payloadObj.settings?.identity?.defaultCurrency || 'ريال يمني';
+
+      const receiptsList = Array.isArray(payloadObj.receipts) ? payloadObj.receipts : [];
+      const inventoryList = Array.isArray(payloadObj.inventory) ? payloadObj.inventory : [];
+      const expensesList = Array.isArray(payloadObj.expenses) ? payloadObj.expenses : [];
+
+      const totalPaid = receiptsList.reduce((sum, r) => sum + (Number(r?.paidAmount) || 0), 0);
+      const totalRemaining = receiptsList.reduce(
+        (sum, r) => sum + (Number(r?.remainingAmount) || 0),
+        0
+      );
+
+      const formattedTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      const caption = [
+        `🏥 نسخة احتياطية مشفرة — ${clinicAr}`,
+        `👨‍⚕️ الطبيب: ${doctorAr}`,
+        `📌 السبب: ${triggerReason.slice(0, 120)}`,
+        `🕒 التاريخ والتوقيت: ${formattedTime}`,
+        `━━━━━━━━━━━━━━`,
+        `📄 إجمالي السندات: ${receiptsList.length} سند`,
+        `📦 أصناف المخزون: ${inventoryList.length} صنف`,
+        `💸 سجلات المصروفات: ${expensesList.length} سجل`,
+        `━━━━━━━━━━━━━━`,
+        `✅ إجمالي المقبوضات: ${totalPaid.toLocaleString()} ${defaultCurrency}`,
+        `⚠️ إجمالي الديون المتبقية: ${totalRemaining.toLocaleString()} ${defaultCurrency}`,
+      ]
+        .join('\n')
+        .slice(0, 1020);
+
+      const jsonContent = JSON.stringify(backupPayload, null, 2);
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      formData.append('caption', caption);
+      const fileBlob = new Blob([jsonContent], { type: 'application/json' });
+      formData.append('document', fileBlob, fileName);
+
+      const tgResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const tgJson = (await tgResponse.json().catch(() => ({}))) as {
+        ok?: boolean;
+        description?: string;
+        result?: { message_id?: number };
+      };
+
+      if (!tgResponse.ok || !tgJson.ok) {
+        const desc = String(tgJson.description || '').toLowerCase();
+        let arabicError = 'تعذر إرسال النسخة الاحتياطية إلى تليجرام. تحقق من إعدادات البوت.';
+        if (desc.includes('unauthorized') || tgResponse.status === 401) {
+          arabicError = 'رمز بوت تليجرام (Bot Token) غير صحيح أو غير مفعل.';
+        } else if (desc.includes('chat not found') || desc.includes('bad request')) {
+          arabicError =
+            'معرّف المحادثة (Chat ID) غير صحيح، أو لم تقم بالضغط على Start داخل محادثة البوت في تليجرام.';
+        }
+        return res.status(400).json({
+          ok: false,
+          error: arabicError,
+        });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        messageId: tgJson.result?.message_id || Date.now(),
+        sentAt: now.toISOString(),
+      });
+    }
+
     // Rate-limit AI endpoints
     if (!checkRateLimit(`api:${clientIp}`, 60, 60_000)) {
       return res.status(429).json({

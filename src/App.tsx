@@ -28,6 +28,7 @@ import {
   WorkspaceRole,
   WorkspacePermissions,
   DEFAULT_ROLE_PERMISSIONS,
+  TelegramBackupSettings,
 } from './types/clinic';
 import {
   DEFAULT_EXPENSES,
@@ -74,6 +75,7 @@ import {
   saveInventoryItemToCloud,
   saveReceiptToCloud,
   saveServiceToCloud,
+  sendBackupToTelegramApi,
   signInWithGoogleAccount,
   signOutAccount,
   subscribeToClinicCloudData,
@@ -691,6 +693,7 @@ export default function App() {
               partial.appearance.customLogoDataUrl || prev.appearance.customLogoDataUrl,
           },
           features: partial.features,
+          telegramBackup: prev.telegramBackup,
         }));
       },
       onServicesUpdate: (cloudServices) => {
@@ -955,6 +958,71 @@ export default function App() {
 
   const isCloudConnected = Boolean(currentUser);
 
+  const triggerAutoTelegramBackup = (
+    triggerReason: string,
+    nextReceiptsList: ReceiptRecord[],
+    nextInventoryList: InventoryItem[],
+    nextExpensesList: ExpenseRecord[],
+    currentSettingsSnapshot: ClinicSettings = settings
+  ) => {
+    let tg: TelegramBackupSettings | undefined = currentSettingsSnapshot.telegramBackup;
+    try {
+      const storedRaw = localStorage.getItem('docai_telegram_backup_v1');
+      if (storedRaw) {
+        const parsed = JSON.parse(storedRaw) as Partial<TelegramBackupSettings>;
+        tg = {
+          enabled: Boolean(tg?.enabled ?? parsed.enabled),
+          autoBackupOnReceipt: Boolean(tg?.autoBackupOnReceipt ?? parsed.autoBackupOnReceipt),
+          botToken: (tg?.botToken || parsed.botToken || '').trim(),
+          chatId: (tg?.chatId || parsed.chatId || '').trim(),
+          lastBackupAt: tg?.lastBackupAt || parsed.lastBackupAt,
+        };
+      }
+    } catch {
+      // Ignore storage error
+    }
+
+    if (!tg || !tg.autoBackupOnReceipt || !tg.botToken.trim() || !tg.chatId.trim()) {
+      return;
+    }
+
+    const exportedAt = new Date().toISOString();
+
+    // Non-blocking background execution
+    void sendBackupToTelegramApi({
+      botToken: tg.botToken.trim(),
+      chatId: tg.chatId.trim(),
+      settings: currentSettingsSnapshot,
+      receipts: nextReceiptsList,
+      inventory: nextInventoryList,
+      expenses: nextExpensesList,
+      triggerReason,
+    })
+      .then((res) => {
+        if (res.ok) {
+          const sentAt = res.sentAt || exportedAt;
+          const updatedTg: TelegramBackupSettings = {
+            ...tg!,
+            enabled: true,
+            lastBackupAt: sentAt,
+          };
+          try {
+            localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
+            localStorage.setItem('docai_last_local_backup_at_v1', sentAt);
+          } catch {
+            // Ignore
+          }
+          setSettings((prev) => ({
+            ...prev,
+            telegramBackup: updatedTg,
+          }));
+        }
+      })
+      .catch(() => {
+        // Non-blocking: ignore transient network errors on auto-backup
+      });
+  };
+
   const handleSaveReceipt = (
     payload: Omit<ReceiptRecord, 'id'> & { id?: string }
   ): ReceiptRecord => {
@@ -1032,6 +1100,16 @@ export default function App() {
       notify(`تم حفظ السند #${record.receiptNo}`, 'success');
     }
 
+    triggerAutoTelegramBackup(
+      isEdit
+        ? `تلقائي بعد تعديل السند #${record.receiptNo}`
+        : `تلقائي بعد إصدار سند جديد #${record.receiptNo}`,
+      nextReceiptsList,
+      nextInventoryList,
+      expenses,
+      settings
+    );
+
     return record;
   };
 
@@ -1079,6 +1157,17 @@ export default function App() {
         });
     } else {
       notify('تم تسديد الدفعة بنجاح', 'success');
+    }
+
+    if (settledRecord) {
+      const recNo = (settledRecord as ReceiptRecord).receiptNo;
+      triggerAutoTelegramBackup(
+        `تلقائي بعد تسديد دفعة للسند #${recNo}`,
+        nextReceiptsList,
+        inventory,
+        expenses,
+        settings
+      );
     }
   };
 

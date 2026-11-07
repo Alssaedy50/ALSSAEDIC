@@ -1,14 +1,21 @@
 import React, { useRef, useState } from 'react';
 import {
   Building2,
+  CheckCircle2,
+  Database,
   Download,
+  Eye,
+  EyeOff,
+  FileSpreadsheet,
   Image as ImageIcon,
   Plus,
+  RefreshCw,
   RotateCcw,
   Save,
+  Send,
+  ShieldCheck,
   Trash2,
   Upload,
-  Users,
   X,
 } from 'lucide-react';
 import {
@@ -18,9 +25,11 @@ import {
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
+  TelegramBackupSettings,
   WorkspaceRole,
 } from '../types/clinic';
 import { CURRENCIES, DEFAULT_CLINIC_LOGO_DATA_URI } from '../data/defaultData';
+import { getActiveCloudDiagnostics, sendBackupToTelegramApi } from '../firebase';
 import { WorkspaceTeamPanel } from './WorkspaceTeamModal';
 
 interface ClinicSettingsPanelProps {
@@ -82,6 +91,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   const [newSrvName, setNewSrvName] = useState('');
   const [newSrvPrice, setNewSrvPrice] = useState<number>(5000);
   const [newSrvKeywords, setNewSrvKeywords] = useState('');
+
+  // Telegram & Backup state
+  const [showBotToken, setShowBotToken] = useState(false);
+  const [isSendingTelegram, setIsSendingTelegram] = useState(false);
+  const [lastLocalExportAt, setLastLocalExportAt] = useState<string>(() => {
+    try {
+      return localStorage.getItem('docai_last_backup_export_v1') || '';
+    } catch {
+      return '';
+    }
+  });
 
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
@@ -230,10 +250,20 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     setConfirmDeleteId(null);
   };
 
+  const recordBackupTimestamp = (isoStr: string) => {
+    try {
+      localStorage.setItem('docai_last_backup_export_v1', isoStr);
+    } catch {
+      // Ignore
+    }
+    setLastLocalExportAt(isoStr);
+  };
+
   const handleExportBackup = () => {
+    const nowIso = new Date().toISOString();
     const backupData = {
       version: 'DOCAI-ERP-v4',
-      exportedAt: new Date().toISOString(),
+      exportedAt: nowIso,
       settings: formState,
       receipts,
       inventory,
@@ -245,10 +275,65 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `DOCAI-Backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `DOCAI-Backup-${nowIso.slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    notify('تم تصدير النسخة الاحتياطية بنجاح', 'success');
+    recordBackupTimestamp(nowIso);
+    notify('تم تصدير النسخة الاحتياطية الشاملة (JSON) بنجاح', 'success');
+  };
+
+  const handleExportCsv = () => {
+    const nowIso = new Date().toISOString();
+    const escapeCsv = (val: unknown): string => {
+      const str = String(val ?? '').replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const headers = [
+      'رقم السند',
+      'التاريخ',
+      'اسم المريض',
+      'الهاتف',
+      'الخدمات',
+      'الأسنان (FDI)',
+      'الإجمالي',
+      'المدفوع',
+      'المتبقي',
+      'العملة',
+      'طريقة الدفع',
+      'ملاحظات',
+    ];
+
+    const rows = receipts.map((r) =>
+      [
+        r.receiptNo,
+        r.date,
+        r.patientName,
+        r.patientPhone || '',
+        Array.isArray(r.services) ? r.services.join(' + ') : '',
+        r.toothFDI || '',
+        r.totalAmount,
+        r.paidAmount,
+        r.remainingAmount,
+        r.currency,
+        r.paymentMethod,
+        r.notes || '',
+      ]
+        .map(escapeCsv)
+        .join(',')
+    );
+
+    // Prepend UTF-8 BOM (\uFEFF) so Microsoft Excel opens Arabic characters cleanly
+    const csvContent = '\uFEFF' + [headers.map(escapeCsv).join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `DOCAI-Receipts-Debts-${nowIso.slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    recordBackupTimestamp(nowIso);
+    notify('تم تصدير سجل السندات والديون (CSV للـ Excel) بنجاح', 'success');
   };
 
   const handleImportBackupFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -269,6 +354,121 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     };
     reader.readAsText(file);
   };
+
+  const currentTelegramConfig: TelegramBackupSettings = formState.telegramBackup || {
+    enabled: false,
+    autoBackupOnReceipt: true,
+    botToken: '',
+    chatId: '',
+  };
+
+  const handleTelegramFieldChange = (
+    field: keyof TelegramBackupSettings,
+    value: string | boolean
+  ) => {
+    setFormState((prev) => {
+      const base: TelegramBackupSettings = prev.telegramBackup || {
+        enabled: false,
+        autoBackupOnReceipt: true,
+        botToken: '',
+        chatId: '',
+      };
+      const updatedTg: TelegramBackupSettings = {
+        ...base,
+        [field]: value,
+      };
+      if (field === 'botToken' || field === 'chatId') {
+        updatedTg.enabled = Boolean(updatedTg.botToken.trim() && updatedTg.chatId.trim());
+      }
+      return {
+        ...prev,
+        telegramBackup: updatedTg,
+      };
+    });
+  };
+
+  const handleSaveTelegramSettings = () => {
+    const updatedTg: TelegramBackupSettings = {
+      ...currentTelegramConfig,
+      botToken: currentTelegramConfig.botToken.trim(),
+      chatId: currentTelegramConfig.chatId.trim(),
+      enabled: Boolean(
+        currentTelegramConfig.botToken.trim() && currentTelegramConfig.chatId.trim()
+      ),
+    };
+    const nextSettings: ClinicSettings = {
+      ...formState,
+      telegramBackup: updatedTg,
+    };
+    setFormState(nextSettings);
+    try {
+      localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
+    } catch {
+      // Ignore
+    }
+    onSaveSettings(nextSettings);
+    notify('تم حفظ إعدادات النسخ الاحتياطي لتليجرام بنجاح', 'success');
+  };
+
+  const handleSendTelegramBackupNow = async () => {
+    const botToken = currentTelegramConfig.botToken.trim();
+    const chatId = currentTelegramConfig.chatId.trim();
+    if (!botToken || !chatId) {
+      notify('يرجى إدخال رمز البوت (Bot Token) ومعرّف المحادثة (Chat ID) أولاً.', 'warning');
+      return;
+    }
+
+    setIsSendingTelegram(true);
+    try {
+      const result = await sendBackupToTelegramApi({
+        botToken,
+        chatId,
+        settings: formState,
+        receipts,
+        inventory,
+        expenses,
+        triggerReason: 'نسخ احتياطي يدوي فوري',
+      });
+
+      if (!result.ok) {
+        notify(result.error || 'تعذر إرسال النسخة الاحتياطية إلى تليجرام.', 'error');
+        return;
+      }
+
+      const sentAt = result.sentAt || new Date().toISOString();
+      recordBackupTimestamp(sentAt);
+      const updatedTg: TelegramBackupSettings = {
+        ...currentTelegramConfig,
+        botToken,
+        chatId,
+        enabled: true,
+        lastBackupAt: sentAt,
+      };
+      const nextSettings: ClinicSettings = {
+        ...formState,
+        telegramBackup: updatedTg,
+      };
+      setFormState(nextSettings);
+      try {
+        localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
+      } catch {
+        // Ignore
+      }
+      onSaveSettings(nextSettings);
+      notify('تم إرسال النسخة الاحتياطية الشاملة إلى تليجرام بنجاح', 'success');
+    } catch {
+      notify('تعذر الاتصال بخادم النسخ الاحتياطي لتليجرام.', 'error');
+    } finally {
+      setIsSendingTelegram(false);
+    }
+  };
+
+  const cloudDiag = getActiveCloudDiagnostics(ownerUid);
+  const effectiveLastBackupAt =
+    currentTelegramConfig.lastBackupAt || lastLocalExportAt || '';
+  const formattedLastBackupAt = effectiveLastBackupAt
+    ? effectiveLastBackupAt.replace('T', ' ').slice(0, 16)
+    : 'لم يتم التصدير بعد';
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -644,43 +844,234 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         </section>
       )}
 
-      {/* TAB 4: BACKUP & RESTORE */}
+      {/* TAB 4: BACKUP & DATA SECURITY */}
       {subTab === 'backup' && (
-        <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
-          <div className="pb-3 border-b border-slate-200 dark:border-slate-800">
-            <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-              النسخ الاحتياطي
-            </h2>
-          </div>
+        <div className="space-y-4">
+          {/* SECTION 1: Cloud Data Diagnostics & Security Status Card */}
+          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  تشخيص وأمان البيانات السحابية
+                </h2>
+              </div>
+              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                {cloudDiag.pendingSyncCount > 0
+                  ? `يوجد ${cloudDiag.pendingSyncCount} عمليات بانتظار الإنترنت`
+                  : cloudDiag.connectedEmail
+                    ? 'متصل ومؤمّن'
+                    : 'حفظ محلي نشط'}
+              </span>
+            </div>
 
-          <input
-            ref={backupInputRef}
-            type="file"
-            accept="application/json"
-            onChange={handleImportBackupFile}
-            className="hidden"
-          />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-1">
+                <div className="text-slate-500 font-bold">البريد الإلكتروني المتصل حالياً</div>
+                <div
+                  className="font-mono font-bold text-slate-900 dark:text-slate-100 truncate"
+                  dir="ltr"
+                >
+                  {cloudDiag.connectedEmail ||
+                    ownerEmail ||
+                    formState.identity.ownerEmail ||
+                    'غير متصل بحساب سحابي'}
+                </div>
+              </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={handleExportBackup}
-              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors"
-            >
-              <Download className="w-4 h-4 shrink-0" />
-              <span>تصدير</span>
-            </button>
+              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-1">
+                <div className="text-slate-500 font-bold">معرّف المشروع السحابي النشط</div>
+                <div
+                  className="font-mono font-bold text-sky-600 dark:text-sky-400 truncate"
+                  dir="ltr"
+                >
+                  {cloudDiag.projectId}
+                  {cloudDiag.isCustomProject ? ' (حساب شخصي)' : ''}
+                </div>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => backupInputRef.current?.click()}
-              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
-            >
-              <Upload className="w-4 h-4 shrink-0" />
-              <span>استيراد</span>
-            </button>
-          </div>
-        </section>
+              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-1">
+                <div className="text-slate-500 font-bold">حالة المزامنة اللحظية</div>
+                <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <CheckCircle2
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      cloudDiag.pendingSyncCount > 0
+                        ? 'text-amber-500'
+                        : 'text-emerald-600 dark:text-emerald-400'
+                    }`}
+                  />
+                  <span>
+                    {cloudDiag.pendingSyncCount > 0
+                      ? `يوجد ${cloudDiag.pendingSyncCount} عمليات بانتظار الإنترنت`
+                      : 'متصل ومؤمّن — جميع السجلات متزامنة'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-1">
+                <div className="text-slate-500 font-bold">تاريخ آخر نسخة احتياطية تم تصديرها</div>
+                <div
+                  className="font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
+                  dir="ltr"
+                >
+                  {formattedLastBackupAt}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* SECTION 2: Local Backup & Restore (JSON + Excel CSV) */}
+          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  النسخ الاحتياطي المحلي (JSON + CSV)
+                </h2>
+              </div>
+              <span className="text-xs font-mono tabular-nums text-slate-500">
+                {receipts.length} سند · {inventory.length} صنف · {expenses.length} مصروف
+              </span>
+            </div>
+
+            <input
+              ref={backupInputRef}
+              type="file"
+              accept="application/json"
+              onChange={handleImportBackupFile}
+              className="hidden"
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="w-full inline-flex items-center justify-center gap-2 py-3 px-3.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors"
+              >
+                <Download className="w-4 h-4 shrink-0" />
+                <span>تصدير نسخة احتياطية شاملة (JSON)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                className="w-full inline-flex items-center justify-center gap-2 py-3 px-3.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-xl transition-colors"
+              >
+                <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                <span>تصدير سجل السندات والديون (CSV للـ Excel)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => backupInputRef.current?.click()}
+                className="w-full inline-flex items-center justify-center gap-2 py-3 px-3.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
+              >
+                <Upload className="w-4 h-4 shrink-0" />
+                <span>استيراد واستعادة نسخة احتياطية (JSON)</span>
+              </button>
+            </div>
+          </section>
+
+          {/* SECTION 3: Automatic & Instant Telegram Cloud Backup */}
+          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Send className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  النسخ الاحتياطي التلقائي إلى تليجرام (Telegram Cloud Backup)
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveTelegramSettings}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>حفظ الإعدادات</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  رمز بوت تليجرام (Telegram Bot Token)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showBotToken ? 'text' : 'password'}
+                    dir="ltr"
+                    value={currentTelegramConfig.botToken}
+                    onChange={(e) => handleTelegramFieldChange('botToken', e.target.value)}
+                    placeholder="1234567890:AAH_xxxxxxxxxxxxxxxxxxxxxxxx"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 pl-3 pr-9 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBotToken((s) => !s)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                    title={showBotToken ? 'إخفاء الرمز' : 'إظهار الرمز'}
+                  >
+                    {showBotToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  معرّف المحادثة أو القناة الخاصة (Telegram Chat ID)
+                </label>
+                <input
+                  type="text"
+                  dir="ltr"
+                  value={currentTelegramConfig.chatId}
+                  onChange={(e) => handleTelegramFieldChange('chatId', e.target.value)}
+                  placeholder="مثال: 987654321 أو -100123456789"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
+                />
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-700 dark:text-slate-300 pt-1">
+              <input
+                type="checkbox"
+                checked={Boolean(currentTelegramConfig.autoBackupOnReceipt)}
+                onChange={(e) =>
+                  handleTelegramFieldChange('autoBackupOnReceipt', e.target.checked)
+                }
+                className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+              />
+              <span>
+                إرسال نسخة احتياطية تلقائية إلى تليجرام عند حفظ أي سند جديد أو تسديد دين
+              </span>
+            </label>
+
+            <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <button
+                type="button"
+                disabled={isSendingTelegram}
+                onClick={handleSendTelegramBackupNow}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-black flex items-center justify-center gap-2 transition-colors"
+              >
+                {isSendingTelegram ? (
+                  <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+                ) : (
+                  <Send className="w-4 h-4 shrink-0" />
+                )}
+                <span>
+                  {isSendingTelegram
+                    ? 'جاري إرسال النسخة الاحتياطية إلى تليجرام...'
+                    : 'إرسال نسخة احتياطية فورية إلى تليجرام الآن'}
+                </span>
+              </button>
+
+              {currentTelegramConfig.lastBackupAt && (
+                <div className="text-[11px] font-mono tabular-nums text-slate-500 text-center sm:text-left shrink-0">
+                  آخر إرسال ناجح: {currentTelegramConfig.lastBackupAt.replace('T', ' ').slice(0, 16)}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       )}
 
       {/* Pop-up Modal: Add Service */}

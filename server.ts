@@ -290,6 +290,157 @@ app.post('/api/cloud/:action', (_req: Request, res: Response) => {
   });
 });
 
+// ==================== TELEGRAM CLOUD BACKUP ENDPOINT ====================
+app.post('/api/backup/telegram', async (req: Request, res: Response) => {
+  const clientIp = getClientIdentifier(req);
+  if (!checkRateLimit(`telegram_backup:${clientIp}`, 20, 60_000)) {
+    res.status(429).json({
+      ok: false,
+      error: 'تم تجاوز الحد المسموح لإرسال النسخ الاحتياطية في الدقيقة. يرجى الانتظار قليلاً.',
+    });
+    return;
+  }
+
+  try {
+    const {
+      botToken: rawBotToken,
+      chatId: rawChatId,
+      backupPayload,
+      triggerReason = 'نسخ احتياطي يدوي',
+    } = req.body || {};
+
+    const botToken = String(rawBotToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+    const chatId = String(rawChatId || process.env.TELEGRAM_CHAT_ID || '').trim();
+
+    if (!botToken || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
+      res.status(400).json({
+        ok: false,
+        error: 'رمز بوت تليجرام (Bot Token) غير صالح. يرجى التأكد من الرمز المنسوخ من @BotFather.',
+      });
+      return;
+    }
+
+    if (!chatId || !/^-?\d+$|^@[A-Za-z0-9_]{4,}$/.test(chatId)) {
+      res.status(400).json({
+        ok: false,
+        error: 'معرّف المحادثة أو القناة (Chat ID) غير صالح. يرجى إدخال رقم المعرّف الصحيح.',
+      });
+      return;
+    }
+
+    if (!backupPayload || typeof backupPayload !== 'object') {
+      res.status(400).json({
+        ok: false,
+        error: 'بيانات النسخة الاحتياطية غير مكتملة.',
+      });
+      return;
+    }
+
+    const payloadObj = backupPayload as {
+      version?: string;
+      exportedAt?: string;
+      settings?: {
+        identity?: {
+          clinicAr?: string;
+          doctorAr?: string;
+          defaultCurrency?: string;
+        };
+      };
+      receipts?: Array<{
+        totalAmount?: number;
+        paidAmount?: number;
+        remainingAmount?: number;
+        currency?: string;
+      }>;
+      inventory?: unknown[];
+      expenses?: Array<{
+        amount?: number;
+      }>;
+    };
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fileStamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const fileName = `DOCAI-Backup-${fileStamp}.json`;
+
+    const clinicAr = payloadObj.settings?.identity?.clinicAr || 'عيادة السعيدي لطب الأسنان';
+    const doctorAr = payloadObj.settings?.identity?.doctorAr || 'د. صلاح الدين السعيدي';
+    const defaultCurrency = payloadObj.settings?.identity?.defaultCurrency || 'ريال يمني';
+
+    const receiptsList = Array.isArray(payloadObj.receipts) ? payloadObj.receipts : [];
+    const inventoryList = Array.isArray(payloadObj.inventory) ? payloadObj.inventory : [];
+    const expensesList = Array.isArray(payloadObj.expenses) ? payloadObj.expenses : [];
+
+    const totalPaid = receiptsList.reduce((sum, r) => sum + (Number(r?.paidAmount) || 0), 0);
+    const totalRemaining = receiptsList.reduce(
+      (sum, r) => sum + (Number(r?.remainingAmount) || 0),
+      0
+    );
+
+    const formattedTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const caption = [
+      `🏥 نسخة احتياطية مشفرة — ${clinicAr}`,
+      `👨‍⚕️ الطبيب: ${doctorAr}`,
+      `📌 السبب: ${String(triggerReason).slice(0, 120)}`,
+      `🕒 التاريخ والتوقيت: ${formattedTime}`,
+      `━━━━━━━━━━━━━━`,
+      `📄 إجمالي السندات: ${receiptsList.length} سند`,
+      `📦 أصناف المخزون: ${inventoryList.length} صنف`,
+      `💸 سجلات المصروفات: ${expensesList.length} سجل`,
+      `━━━━━━━━━━━━━━`,
+      `✅ إجمالي المقبوضات: ${totalPaid.toLocaleString()} ${defaultCurrency}`,
+      `⚠️ إجمالي الديون المتبقية: ${totalRemaining.toLocaleString()} ${defaultCurrency}`,
+    ]
+      .join('\n')
+      .slice(0, 1020);
+
+    const jsonContent = JSON.stringify(backupPayload, null, 2);
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+    formData.append('caption', caption);
+    const fileBlob = new Blob([jsonContent], { type: 'application/json' });
+    formData.append('document', fileBlob, fileName);
+
+    const tgResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    const tgJson = (await tgResponse.json().catch(() => ({}))) as {
+      ok?: boolean;
+      description?: string;
+      result?: { message_id?: number };
+    };
+
+    if (!tgResponse.ok || !tgJson.ok) {
+      const desc = String(tgJson.description || '').toLowerCase();
+      let arabicError = 'تعذر إرسال النسخة الاحتياطية إلى تليجرام. تحقق من إعدادات البوت.';
+      if (desc.includes('unauthorized') || tgResponse.status === 401) {
+        arabicError = 'رمز بوت تليجرام (Bot Token) غير صحيح أو غير مفعل.';
+      } else if (desc.includes('chat not found') || desc.includes('bad request')) {
+        arabicError =
+          'معرّف المحادثة (Chat ID) غير صحيح، أو لم تقم بالضغط على Start داخل محادثة البوت في تليجرام.';
+      }
+      res.status(400).json({
+        ok: false,
+        error: arabicError,
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      messageId: tgJson.result?.message_id || Date.now(),
+      sentAt: now.toISOString(),
+    });
+  } catch {
+    res.status(500).json({
+      ok: false,
+      error: 'تعذر الاتصال بخادم تليجرام حالياً. تحقق من اتصال الإنترنت.',
+    });
+  }
+});
+
 // ==================== MULTI-MODEL LOAD BALANCER & ULTRA-FAST FAILOVER ENGINE ====================
 const MODEL_LABELS: Record<string, string> = {
   'gemini-3.8-flash': 'Gemini 3.8 Flash',

@@ -107,6 +107,12 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
       keywords: ['أشعة', 'اشعة', 'بانوراما', 'تصوير'],
     },
   ],
+  telegramBackup: {
+    enabled: false,
+    autoBackupOnReceipt: true,
+    botToken: '',
+    chatId: '',
+  },
 };
 
 export const SEED_DEMO_IDS = {
@@ -133,6 +139,9 @@ export function createInitialClinicSettingsForUser(
       appearance: { ...DEFAULT_SETTINGS.appearance },
       features: { ...DEFAULT_SETTINGS.features },
       services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
+      telegramBackup: DEFAULT_SETTINGS.telegramBackup
+        ? { ...DEFAULT_SETTINGS.telegramBackup }
+        : { enabled: false, autoBackupOnReceipt: true, botToken: '', chatId: '' },
     };
   }
 
@@ -168,6 +177,12 @@ export function createInitialClinicSettingsForUser(
       autoInventory: true,
     },
     services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
+    telegramBackup: {
+      enabled: false,
+      autoBackupOnReceipt: true,
+      botToken: '',
+      chatId: '',
+    },
   };
 }
 
