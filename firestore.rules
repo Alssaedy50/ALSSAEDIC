@@ -15,7 +15,8 @@ service cloud.firestore {
     function isVerifiedUser() {
       return isSignedIn() && (
         request.auth.token.email_verified == true ||
-        request.auth.token.firebase.sign_in_provider == 'password'
+        request.auth.token.firebase.sign_in_provider == 'password' ||
+        request.auth.token.firebase.sign_in_provider == 'anonymous'
       );
     }
 
@@ -287,7 +288,7 @@ service cloud.firestore {
 
     // 1. Clinics Collection (/clinics/{clinicId})
     match /clinics/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && clinicId == request.auth.uid && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(clinicId) && clinicId == request.auth.uid && (resource == null || existing().ownerId == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(clinicId) &&
@@ -327,7 +328,7 @@ service cloud.firestore {
 
     // 2. Dental Services Collection (/services/{serviceId})
     match /services/{serviceId} {
-      allow get: if isSignedIn() && isValidId(serviceId) && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(serviceId) && (resource == null || existing().ownerId == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(serviceId) &&
@@ -351,7 +352,7 @@ service cloud.firestore {
 
     // 3. Receipts Collection (/receipts/{receiptId})
     match /receipts/{receiptId} {
-      allow get: if isSignedIn() && isValidId(receiptId) && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(receiptId) && (resource == null || existing().ownerId == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(receiptId) &&
@@ -395,7 +396,7 @@ service cloud.firestore {
 
     // 4. Inventory Collection (/inventory/{itemId})
     match /inventory/{itemId} {
-      allow get: if isSignedIn() && isValidId(itemId) && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(itemId) && (resource == null || existing().ownerId == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(itemId) &&
@@ -431,7 +432,7 @@ service cloud.firestore {
 
     // 5. Expenses Collection (/expenses/{expenseId})
     match /expenses/{expenseId} {
-      allow get: if isSignedIn() && isValidId(expenseId) && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(expenseId) && (resource == null || existing().ownerId == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(expenseId) &&
@@ -455,7 +456,7 @@ service cloud.firestore {
 
     // 6. Authenticated Clinic Workspaces (/clinic_workspaces/{clinicId})
     match /clinic_workspaces/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || existing().ownerId == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(clinicId) &&

@@ -94,9 +94,11 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   if (!isOpen) return null;
 
   const isConnected = Boolean(user || directSession);
-  const activeAccountLabel = directSession
-    ? `معرّف العيادة: ${directSession.clinicId}`
-    : user?.email || '';
+  const derivedClinicId =
+    directSession?.clinicId ||
+    (user?.email?.endsWith('@clinic.alssaedic.local')
+      ? user.email.replace('@clinic.alssaedic.local', '')
+      : null);
 
   const handleDirectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,8 +129,8 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       } else {
         setAuthError(
           authTab === 'register'
-            ? 'تعذر إنشاء الحساب بهذا المعرّف. إذا كان مسجلاً مسبقاً، اختر "تسجيل الدخول".'
-            : 'تأكد من صحة معرّف العيادة وكلمة المرور.'
+            ? 'تعذر إنشاء الحساب بهذا المعرّف. إذا كان مسجلاً مسبقاً بكلمة مرور أخرى، اختر "تسجيل الدخول".'
+            : 'معرّف العيادة أو كلمة المرور غير صحيحة.'
         );
       }
     } finally {
@@ -143,6 +145,10 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       const ok = await onSignInGoogle();
       if (ok) {
         onClose();
+      } else {
+        setAuthError(
+          'تعذر الدخول عبر Google على هذا النطاق. يمكنك الدخول مباشرة بمعرّف العيادة وكلمة المرور أعلاه.'
+        );
       }
     } finally {
       setAuthLoading(false);
@@ -194,8 +200,19 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     متصل
                   </span>
                 </div>
-                <div className="text-xs font-bold text-slate-800 dark:text-slate-200 break-all">
-                  {activeAccountLabel}
+                <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 flex-wrap">
+                  {derivedClinicId ? (
+                    <>
+                      <span>معرّف العيادة:</span>
+                      <span dir="ltr" className="font-mono text-emerald-700 dark:text-emerald-300">
+                        {derivedClinicId}
+                      </span>
+                    </>
+                  ) : (
+                    <span dir="ltr" className="font-mono break-all">
+                      {user?.email || ''}
+                    </span>
+                  )}
                 </div>
               </div>
 

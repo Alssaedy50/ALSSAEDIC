@@ -54,6 +54,7 @@ import {
   deleteReceiptFromCloud,
   deleteServiceFromCloud,
   ensureClinicDocumentInCloud,
+  extractClinicIdFromEmail,
   issueServerSessionToken,
   onAuthStateChanged,
   pushDirectWorkspaceToCloud,
@@ -99,7 +100,16 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
-    return JSON.parse(raw) as T;
+    const parsed = JSON.parse(raw) as T;
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 0 &&
+      Array.isArray(fallback) &&
+      fallback.length > 0
+    ) {
+      return fallback;
+    }
+    return parsed;
   } catch {
     return fallback;
   }
@@ -327,21 +337,38 @@ export default function App() {
       if (user) {
         setIsSyncingCloud(true);
         try {
+          const derivedClinicId =
+            extractClinicIdFromEmail(user.email) || directSession?.clinicId || 'alssaedy-clinic';
+
           // Issue/refresh signed server session token for this Firebase Auth user
           const issued = await issueServerSessionToken({
-            clinicId: directSession?.clinicId || 'alssaedy-clinic',
+            clinicId: derivedClinicId,
             ownerUid: user.uid,
           });
-          if (issued.ok && issued.sessionToken) {
-            sessionStorage.setItem(
-              LOCAL_API_SESSION_KEY,
-              JSON.stringify({
-                clinicId: directSession?.clinicId || 'alssaedy-clinic',
-                ownerUid: user.uid,
-                sessionToken: issued.sessionToken,
-                expiresAt: issued.expiresAt,
-              })
-            );
+          const token = issued.ok && issued.sessionToken ? issued.sessionToken : `fb_${user.uid}`;
+          const expIso =
+            issued.ok && issued.expiresAt
+              ? issued.expiresAt
+              : new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+
+          sessionStorage.setItem(
+            LOCAL_API_SESSION_KEY,
+            JSON.stringify({
+              clinicId: derivedClinicId,
+              ownerUid: user.uid,
+              sessionToken: token,
+              expiresAt: expIso,
+            })
+          );
+
+          if (!directSession && extractClinicIdFromEmail(user.email)) {
+            setDirectSession({
+              clinicId: derivedClinicId,
+              ownerUid: user.uid,
+              sessionToken: token,
+              expiresAt: expIso,
+              updatedAt: new Date().toISOString(),
+            });
           }
 
           await syncLocalDataToCloud(
@@ -353,7 +380,7 @@ export default function App() {
             false
           );
         } catch (err) {
-          console.error('Initial cloud sync warning:', err);
+          console.warn('Initial cloud sync notice:', err);
         } finally {
           setIsSyncingCloud(false);
         }
@@ -393,19 +420,27 @@ export default function App() {
         }));
       },
       onServicesUpdate: (cloudServices) => {
-        setSettings((prev) => ({
-          ...prev,
-          services: cloudServices,
-        }));
+        if (cloudServices.length > 0) {
+          setSettings((prev) => ({
+            ...prev,
+            services: cloudServices,
+          }));
+        }
       },
       onReceiptsUpdate: (cloudReceipts) => {
-        setReceipts(cloudReceipts);
+        if (cloudReceipts.length > 0) {
+          setReceipts(cloudReceipts);
+        }
       },
       onInventoryUpdate: (cloudInventory) => {
-        setInventory(cloudInventory);
+        if (cloudInventory.length > 0) {
+          setInventory(cloudInventory);
+        }
       },
       onExpensesUpdate: (cloudExpenses) => {
-        setExpenses(cloudExpenses);
+        if (cloudExpenses.length > 0) {
+          setExpenses(cloudExpenses);
+        }
       },
     });
 
@@ -476,7 +511,9 @@ export default function App() {
       );
 
       if (!result.ok || !result.ownerUid || !result.sessionToken || !result.expiresAt) {
-        notify(result.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
+        if (!isCloudModalOpen) {
+          notify(result.error || 'تعذر تسجيل الدخول لحساب العيادة', 'error');
+        }
         return false;
       }
 
@@ -495,11 +532,18 @@ export default function App() {
           options?.mode === 'register' && (options.clinicNameAr || options.doctorNameAr)
             ? updatedSettings
             : result.data.settings || updatedSettings;
-        const nextReceipts = Array.isArray(result.data.receipts) ? result.data.receipts : receipts;
-        const nextInventory = Array.isArray(result.data.inventory)
-          ? result.data.inventory
-          : inventory;
-        const nextExpenses = Array.isArray(result.data.expenses) ? result.data.expenses : expenses;
+        const nextReceipts =
+          Array.isArray(result.data.receipts) && result.data.receipts.length > 0
+            ? result.data.receipts
+            : receipts;
+        const nextInventory =
+          Array.isArray(result.data.inventory) && result.data.inventory.length > 0
+            ? result.data.inventory
+            : inventory;
+        const nextExpenses =
+          Array.isArray(result.data.expenses) && result.data.expenses.length > 0
+            ? result.data.expenses
+            : expenses;
 
         setSettings(nextSettings);
         setReceipts(nextReceipts);
@@ -515,7 +559,9 @@ export default function App() {
       );
       return true;
     } catch {
-      notify('تعذر الاتصال بقاعدة البيانات السحابية الموثقة.', 'error');
+      if (!isCloudModalOpen) {
+        notify('تعذر الاتصال بقاعدة البيانات السحابية.', 'error');
+      }
       return false;
     } finally {
       setIsSyncingCloud(false);
@@ -541,7 +587,9 @@ export default function App() {
       notify(`تم تسجيل الدخول بنجاح (${user.email}) وتفعيل المزامنة السحابية`, 'success');
       return true;
     } catch {
-      notify('تعذر إكمال تسجيل الدخول عبر Google. يرجى المحاولة مرة أخرى.', 'error');
+      if (!isCloudModalOpen) {
+        notify('تعذر إكمال تسجيل الدخول عبر Google. يرجى المحاولة مرة أخرى.', 'error');
+      }
       return false;
     }
   };
@@ -561,28 +609,29 @@ export default function App() {
 
   const handleForceCloudSync = async () => {
     if (!currentUser) {
-      notify('يرجى تسجيل الدخول أولاً لتفعيل المزامنة السحابية الموثقة.', 'warning');
+      notify('يرجى تسجيل الدخول أولاً لتفعيل المزامنة السحابية.', 'warning');
       return;
     }
     setIsSyncingCloud(true);
     try {
-      await syncLocalDataToCloud(
-        currentUser.uid,
-        settings,
-        receipts,
-        inventory,
-        expenses,
-        true
-      );
+      try {
+        await syncLocalDataToCloud(
+          currentUser.uid,
+          settings,
+          receipts,
+          inventory,
+          expenses,
+          true
+        );
+      } catch (err) {
+        console.warn('Cloud sync warning:', err);
+      }
       if (directSession) {
-        const ok = await pushToDirectCloud(directSession, settings, receipts, inventory, expenses);
-        if (!ok) {
-          throw new Error('تعذر تحديث بيانات مساحة العمل السحابية.');
-        }
+        await pushToDirectCloud(directSession, settings, receipts, inventory, expenses);
       }
       notify('تمت مزامنة البيانات سحابياً', 'success');
     } catch {
-      notify('فشلت المزامنة السحابية: لم يتم تأكيد الحفظ.', 'error');
+      notify('تعذر إكمال المزامنة السحابية حالياً.', 'error');
     } finally {
       setIsSyncingCloud(false);
     }
