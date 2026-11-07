@@ -36,6 +36,10 @@
 }
 
 @media print {
+  @page {
+    size: A5 portrait;
+    margin: 6mm;
+  }
   body * {
     visibility: hidden !important;
   }
@@ -46,10 +50,10 @@
   #receipt-capture-area {
     position: fixed !important;
     inset: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
+    width: 136mm !important;
+    max-width: 136mm !important;
     margin: 0 auto !important;
-    padding: 10mm !important;
+    padding: 5mm !important;
     background: #ffffff !important;
     color: #0f172a !important;
     box-shadow: none !important;

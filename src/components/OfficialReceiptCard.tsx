@@ -64,16 +64,15 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
   }, [data.services, data.notes]);
 
   const amountWordsFormatted = useMemo(() => {
-    const raw = String(data.amountWords || '').trim();
+    let raw = String(data.amountWords || '').trim();
+    if (!raw || raw === '—') return '—';
+    // Strip any trailing duplicate 'فقط لا غير' or 'لا غير' or 'فقط' to prevent repetition
+    raw = raw.replace(/(?:\s*فقط\s*لا\s*غير|\s*لا\s*غير|\s*فقط)+\s*$/g, '').trim();
     if (!raw) return '—';
-    if (raw.endsWith('فقط لا غير') || raw.endsWith('فقط')) {
-      return raw;
-    }
-    return `${raw} فقط لا غير`;
+    return raw.startsWith('فقط') ? `${raw} لا غير` : `فقط ${raw} لا غير`;
   }, [data.amountWords]);
 
   const hasRemaining = (Number(data.remainingAmount) || 0) > 0;
-  const isFullyPaid = (Number(data.remainingAmount) || 0) <= 0 && (Number(data.totalAmount) || 0) > 0;
 
   useEffect(() => {
     if (!settings.features.showQrCode) {
@@ -160,7 +159,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       .filter(Boolean);
   }, [settings.identity.phones]);
 
-  // Ultra-High-Resolution (3x) Canvas Generator with refined dynamic mathematical layout
+  // Ultra-High-Resolution (3x) Canvas Generator with A5 Portrait & Thermal 80mm support
   const generateHighResReceiptCanvas = async (scale = 3): Promise<HTMLCanvasElement> => {
     if (document.fonts && document.fonts.ready) {
       try {
@@ -453,24 +452,43 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       return canvas;
     }
 
-    // ==================== STANDARD A5 LANDSCAPE RECEIPT (EXECUTIVE LUXURY) ====================
-    const W = 840;
-    measureCtx.font = '800 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    const serviceLines = wrapCanvasText(measureCtx, servicesText, W - 260);
-    const wordsLines = wrapCanvasText(measureCtx, amountWordsFormatted, W - 220);
-    measureCtx.font = '700 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    const notesLines = wrapCanvasText(
-      measureCtx,
-      data.notes || 'مع تمنياتنا لكم بدوام الصحة والعافية والابتسامة المشرقة',
-      250
-    );
+    // ==================== OFFICIAL A5 PORTRAIT RECEIPT (عمودي A5 متناسق بدون فراغات) ====================
+    const W = 560; // Standard A5 Portrait Width (148mm : 210mm ratio -> ~560 x 792)
+    const padX = 20;
+    const innerW = W - padX * 2; // 520px
+    const labelColW = 148;
+    const valColW = innerW - labelColW; // 372px
+    const textMaxW = valColW - 24; // 348px
 
-    const extraServiceH = Math.max(0, serviceLines.length - 1) * 22;
-    const extraWordsH = Math.max(0, wordsLines.length - 1) * 22;
-    const extraNotesH = Math.max(0, notesLines.length - 1) * 16;
-    const fdiExtraH = data.toothFDI ? 36 : 0;
+    // Measure wrapped lines for dynamic table rows
+    measureCtx.font = '900 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    const patientFullText = `${data.patientName || '....................'} المحترم/ة`;
+    const patientLines = wrapCanvasText(measureCtx, patientFullText, textMaxW);
 
-    const H = 600 + extraServiceH + extraWordsH + extraNotesH + fdiExtraH;
+    measureCtx.font = '800 13.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    const serviceLines = wrapCanvasText(measureCtx, servicesText, textMaxW);
+    const wordsLines = wrapCanvasText(measureCtx, amountWordsFormatted, textMaxW);
+
+    measureCtx.font = '800 13px "JetBrains Mono", monospace';
+    const fdiLines = data.toothFDI ? wrapCanvasText(measureCtx, data.toothFDI, textMaxW - 16) : [];
+
+    measureCtx.font = '700 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    const noteText = data.notes || 'مع تمنياتنا لكم بدوام الصحة والعافية والابتسامة المشرقة';
+    const notesLines = wrapCanvasText(measureCtx, noteText, innerW - 32);
+
+    // Compute exact heights of each structured table row
+    const rowPatientH = Math.max(38, patientLines.length * 22 + 16);
+    const rowPhoneH = 36;
+    const rowServicesH = Math.max(40, serviceLines.length * 22 + 16);
+    const rowFdiH = data.toothFDI ? Math.max(38, fdiLines.length * 20 + 16) : 0;
+    const rowWordsH = Math.max(40, wordsLines.length * 22 + 16);
+
+    const tableTotalH = rowPatientH + rowPhoneH + rowServicesH + rowFdiH + rowWordsH;
+    const noteBoxH = Math.max(32, notesLines.length * 18 + 14);
+
+    // Header (112) + Meta (52) + Gap (12) + Table (tableTotalH) + Gap (14) + Cards (68) + Gap (14) + Signatures/QR (96) + Gap (10) + NoteBanner (noteBoxH) + Gap (14) + Footer (54)
+    const calculatedH = 112 + 52 + 12 + tableTotalH + 14 + 68 + 14 + 96 + 10 + noteBoxH + 14 + 54;
+    const H = Math.max(780, calculatedH);
 
     canvas.width = W * scale;
     canvas.height = H * scale;
@@ -478,272 +496,335 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     ctx.scale(scale, scale);
     ctx.direction = 'rtl';
 
-    // 1. Premium Paper Background & Double Security Frame
+    // 1. Crisp White Paper Background & Double Official Security Frame
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, W, H);
 
-    // Primary Outer Border
     ctx.strokeStyle = settings.appearance.primaryColor || '#0B2545';
     ctx.lineWidth = 3.5;
     ctx.strokeRect(3, 3, W - 6, H - 6);
 
-    // Elegant Inner Inset Border
-    ctx.strokeStyle = '#E2E8F0';
+    ctx.strokeStyle = '#CBD5E1';
     ctx.lineWidth = 1;
     ctx.strokeRect(8, 8, W - 16, H - 16);
 
-    // 2. Subtle Watermark centered cleanly in the upper body area without covering text
+    // 2. Subtle Centered Watermark inside the Table Area
     if (logoImg) {
       ctx.save();
       ctx.globalAlpha = Math.min(settings.appearance.watermarkOpacity || 4, 4.5) / 100;
-      ctx.drawImage(logoImg, (W - 140) / 2, 160, 140, 140);
+      ctx.drawImage(logoImg, (W - 150) / 2, 220, 150, 150);
       ctx.restore();
     }
 
-    // 3. Official Tri-zone Header
-    // Right Zone: Arabic Clinic & Doctor Info
+    // 3. Official Header (Right: Arabic Info, Center: Logo, Left: English Info + Centered Title Pill)
     ctx.textAlign = 'right';
     ctx.fillStyle = '#0F172A';
-    ctx.font = '900 18px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(settings.identity.doctorAr, W - 28, 38);
-    ctx.fillStyle = '#075985';
-    ctx.font = '800 13px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(settings.identity.specialtyAr, W - 28, 59);
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(settings.identity.clinicAr, W - 28, 78);
+    ctx.font = '900 16.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(settings.identity.doctorAr, W - padX, 34);
 
-    // Center Zone: Clinic Logo & Official Title Ribbon
+    ctx.fillStyle = '#075985';
+    ctx.font = '800 12.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(settings.identity.specialtyAr, W - padX, 53);
+
+    ctx.fillStyle = '#475569';
+    ctx.font = '700 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(settings.identity.clinicAr, W - padX, 71);
+
+    // Center Logo
     if (logoImg) {
-      ctx.drawImage(logoImg, (W - 48) / 2, 14, 48, 48);
+      ctx.save();
+      ctx.fillStyle = '#F8FAFC';
+      ctx.strokeStyle = '#E2E8F0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect((W - 52) / 2, 14, 52, 52, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.drawImage(logoImg, (W - 44) / 2, 18, 44, 44);
+      ctx.restore();
     }
-    ctx.fillStyle = '#0B2545';
+
+    // Left: English Clinic & Doctor Info
+    ctx.save();
+    ctx.direction = 'ltr';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0F172A';
+    ctx.font = '900 12px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(settings.identity.clinicEn, padX, 36);
+    ctx.fillStyle = '#075985';
+    ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(settings.identity.doctorEn, padX, 54);
+    ctx.restore();
+
+    // Header Line + Centered Voucher Title Badge on the Line
+    const headerLineY = 90;
+    ctx.strokeStyle = '#1E293B';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.roundRect((W - 250) / 2, 68, 250, 26, 13);
+    ctx.moveTo(padX, headerLineY);
+    ctx.lineTo(W - padX, headerLineY);
+    ctx.stroke();
+
+    const badgeW = 246;
+    const badgeH = 26;
+    ctx.fillStyle = settings.appearance.primaryColor || '#0B2545';
+    ctx.beginPath();
+    ctx.roundRect((W - badgeW) / 2, headerLineY - badgeH / 2, badgeW, badgeH, 13);
     ctx.fill();
 
     ctx.fillStyle = '#FFFFFF';
     ctx.textAlign = 'center';
-    ctx.font = '900 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText('سند قبض مالي معتمد | RECEIPT VOUCHER', W / 2, 85);
+    ctx.font = '900 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('سند قبض مالي معتمد | RECEIPT VOUCHER', W / 2, headerLineY + 4);
 
-    // Left Zone: English Identity
-    ctx.save();
-    ctx.direction = 'ltr';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#0F172A';
-    ctx.font = '900 13px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText(settings.identity.clinicEn, 28, 40);
-    ctx.fillStyle = '#075985';
-    ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText(settings.identity.doctorEn, 28, 60);
-    ctx.restore();
-
-    // Header Separator Line
-    ctx.strokeStyle = '#1E293B';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(24, 104);
-    ctx.lineTo(W - 24, 104);
-    ctx.stroke();
-
-    // 4. Metadata Strip (Receipt No, Date, Payment Method)
+    // 4. 3-Column Divided Metadata Bar (Receipt No | Date | Payment Method)
+    let y = 112;
+    const metaH = 48;
     ctx.fillStyle = '#F8FAFC';
     ctx.strokeStyle = '#CBD5E1';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(24, 114, W - 48, 38, 10);
+    ctx.roundRect(padX, y, innerW, metaH, 10);
     ctx.fill();
     ctx.stroke();
 
-    // Right: Receipt Number
-    ctx.textAlign = 'right';
-    ctx.font = '800 13px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    const colW = innerW / 3;
+    // Vertical dividers between the 3 metadata columns
+    ctx.beginPath();
+    ctx.moveTo(padX + colW, y + 6);
+    ctx.lineTo(padX + colW, y + metaH - 6);
+    ctx.moveTo(padX + colW * 2, y + 6);
+    ctx.lineTo(padX + colW * 2, y + metaH - 6);
+    ctx.strokeStyle = '#CBD5E1';
+    ctx.stroke();
+
+    // Column 1 (Right): Receipt No
+    const col1Center = W - padX - colW / 2;
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#64748B';
-    const noLabel = 'رقم السند:';
-    ctx.fillText(noLabel, W - 40, 138);
-    const noLabelW = ctx.measureText(noLabel).width;
+    ctx.font = '800 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('رقم السند', col1Center, y + 18);
     ctx.save();
     ctx.direction = 'ltr';
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#BE123C';
     ctx.font = '900 14px "JetBrains Mono", monospace';
-    ctx.fillText(`#${data.receiptNo}`, W - 40 - noLabelW - 8, 138);
+    ctx.fillText(`#${data.receiptNo}`, col1Center, y + 38);
     ctx.restore();
 
-    // Center: Date
-    ctx.font = '800 13px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    const dateLabel = 'تاريخ التحرير:';
-    const dateLabelW = ctx.measureText(dateLabel).width;
-    ctx.font = '800 13px "JetBrains Mono", monospace';
-    const dateValW = ctx.measureText(data.date).width;
-    const totalDateW = dateLabelW + 8 + dateValW;
-    const dateRight = W / 2 + totalDateW / 2;
-
-    ctx.textAlign = 'right';
+    // Column 2 (Center): Date
+    const col2Center = W / 2;
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#64748B';
-    ctx.font = '800 13px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(dateLabel, dateRight, 138);
-
+    ctx.font = '800 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('تاريخ التحرير', col2Center, y + 18);
     ctx.save();
     ctx.direction = 'ltr';
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#0F172A';
     ctx.font = '800 13px "JetBrains Mono", monospace';
-    ctx.fillText(data.date, dateRight - dateLabelW - 8, 138);
+    ctx.fillText(data.date, col2Center, y + 38);
     ctx.restore();
 
-    // Left: Payment Method
-    ctx.textAlign = 'left';
+    // Column 3 (Left): Payment Method
+    const col3Center = padX + colW / 2;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#64748B';
+    ctx.font = '800 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('طريقة السداد', col3Center, y + 18);
     ctx.fillStyle = '#0F172A';
-    ctx.font = '800 13px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(`طريقة السداد: ${data.paymentMethod}`, 40, 138);
+    ctx.font = '900 12.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(data.paymentMethod, col3Center, y + 38);
 
-    // 5. Patient Information & Medical Services Rows
-    let y = 182;
-    const drawRowDivider = (lineY: number) => {
-      ctx.save();
-      ctx.strokeStyle = '#E2E8F0';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(24, lineY);
-      ctx.lineTo(W - 24, lineY);
-      ctx.stroke();
-      ctx.restore();
+    // 5. Structured Patient & Clinical Details Table (Eliminates all dead spaces & overlaps)
+    y += metaH + 12;
+    const tableTopY = y;
+    const labelColRightX = W - padX;
+    const dividerX = W - padX - labelColW; // X coordinate separating right label column from left value column
+
+    // Outer table container background & border
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.roundRect(padX, tableTopY, innerW, tableTotalH, 10);
+    ctx.fill();
+
+    // Right label column tint
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(padX, tableTopY, innerW, tableTotalH, 10);
+    ctx.clip();
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(dividerX, tableTopY, labelColW, tableTotalH);
+    ctx.restore();
+
+    const drawTableRow = (
+      rowHeight: number,
+      label: string,
+      renderValue: (rowTop: number, valueRightX: number) => void,
+      isLast = false
+    ) => {
+      // Label text in the right column
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#334155';
+      ctx.font = '800 12.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+      ctx.fillText(label, labelColRightX - 12, y + 24);
+
+      // Value content in the left column (aligned flush right next to dividerX)
+      renderValue(y, dividerX - 12);
+
+      y += rowHeight;
+      if (!isLast) {
+        ctx.strokeStyle = '#E2E8F0';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padX, y);
+        ctx.lineTo(W - padX, y);
+        ctx.stroke();
+      }
     };
 
-    // Patient Name + Phone
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    const pLabel = 'وصلنا من الأخ/ت:';
-    ctx.fillText(pLabel, W - 24, y);
-    const pLabelW = ctx.measureText(pLabel).width;
-    ctx.fillStyle = '#020617';
-    ctx.font = '900 15px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(`${data.patientName || '....................'} المحترم/ة`, W - 24 - pLabelW - 10, y);
-
-    // Phone on Left
-    const phoneVal = data.patientPhone || '—';
-    ctx.save();
-    ctx.direction = 'ltr';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#0F172A';
-    ctx.font = '800 13px "JetBrains Mono", monospace';
-    ctx.fillText(phoneVal, 24, y);
-    const phoneValW = ctx.measureText(phoneVal).width;
-    ctx.restore();
-
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 13px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText('رقم التواصل:', 24 + phoneValW + 10, y);
-
-    drawRowDivider(y + 12);
-
-    // Medical Services
-    y += 36;
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    const sLabel = 'وذلك عن (الخدمات الطبية والعلاجية):';
-    ctx.fillText(sLabel, W - 24, y);
-    const sLabelW = ctx.measureText(sLabel).width;
-    ctx.fillStyle = '#0C4A6E';
-    ctx.font = '800 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    serviceLines.forEach((line, idx) => {
-      ctx.fillText(line, W - 24 - sLabelW - 10, y + idx * 22);
-    });
-    y += extraServiceH;
-    drawRowDivider(y + 12);
-
-    // Optional Tooth FDI
-    if (data.toothFDI) {
-      y += 36;
+    // Row 1: Patient Name
+    drawTableRow(rowPatientH, 'وصلنا من الأخ/ت:', (rowTop, valRightX) => {
       ctx.textAlign = 'right';
-      ctx.fillStyle = '#475569';
-      ctx.font = '700 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-      const fLabel = 'أرقام الأسنان المعالجة (FDI):';
-      ctx.fillText(fLabel, W - 24, y);
-      const fLabelW = ctx.measureText(fLabel).width;
+      ctx.fillStyle = '#020617';
+      ctx.font = '900 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+      patientLines.forEach((line, idx) => {
+        ctx.fillText(line, valRightX, rowTop + 24 + idx * 22);
+      });
+    });
+
+    // Row 2: Patient Contact Phone + Currency Badge
+    drawTableRow(rowPhoneH, 'رقم التواصل:', (rowTop, valRightX) => {
       ctx.save();
       ctx.direction = 'ltr';
       ctx.textAlign = 'right';
-      ctx.fillStyle = '#0C4A6E';
+      ctx.fillStyle = '#0F172A';
       ctx.font = '800 13px "JetBrains Mono", monospace';
-      ctx.fillText(data.toothFDI, W - 24 - fLabelW - 10, y);
+      ctx.fillText(data.patientPhone || '—', valRightX, rowTop + 23);
       ctx.restore();
-      drawRowDivider(y + 12);
+
+      // Currency tag neatly on the far left of the phone row
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#475569';
+      ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+      ctx.fillText(`عملة السند: ${data.currency}`, padX + 14, rowTop + 23);
+    });
+
+    // Row 3: Medical Services
+    drawTableRow(rowServicesH, 'الخدمات العلاجية:', (rowTop, valRightX) => {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#0C4A6E';
+      ctx.font = '800 13.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+      serviceLines.forEach((line, idx) => {
+        ctx.fillText(line, valRightX, rowTop + 24 + idx * 22);
+      });
+    });
+
+    // Row 4: Tooth FDI Numbers (if any)
+    if (data.toothFDI) {
+      drawTableRow(rowFdiH, 'أرقام الأسنان (FDI):', (rowTop, valRightX) => {
+        ctx.save();
+        ctx.direction = 'ltr';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#0369A1';
+        ctx.font = '800 13px "JetBrains Mono", monospace';
+        fdiLines.forEach((line, idx) => {
+          ctx.fillText(line, valRightX, rowTop + 24 + idx * 20);
+        });
+        ctx.restore();
+      });
     }
 
-    // Amount in Words
-    y += 36;
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    const wLabel = 'المبلغ بالحروف وقدره:';
-    ctx.fillText(wLabel, W - 24, y);
-    const wLabelW = ctx.measureText(wLabel).width;
-    ctx.fillStyle = '#0F172A';
-    ctx.font = '800 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    wordsLines.forEach((line, idx) => {
-      ctx.fillText(line, W - 24 - wLabelW - 10, y + idx * 22);
-    });
-    y += extraWordsH;
-    drawRowDivider(y + 12);
+    // Row 5: Amount in Words (Tafqeet)
+    drawTableRow(
+      rowWordsH,
+      'المبلغ بالحروف:',
+      (rowTop, valRightX) => {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#0F172A';
+        ctx.font = '800 13.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+        wordsLines.forEach((line, idx) => {
+          ctx.fillText(line, valRightX, rowTop + 24 + idx * 22);
+        });
+      },
+      true
+    );
 
-    // 6. Three Financial Highlight Cards
-    y += 24;
-    const boxGap = 12;
-    const boxW = (W - 48 - boxGap * 2) / 3;
-    const boxH = 64;
+    // Draw vertical column divider & outer table border
+    ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(dividerX, tableTopY);
+    ctx.lineTo(dividerX, tableTopY + tableTotalH);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(padX, tableTopY, innerW, tableTotalH, 10);
+    ctx.stroke();
+
+    // 6. Three Financial Highlight Cards (Equal Widths across 520px)
+    y += 14;
+    const boxGap = 10;
+    const boxW = (innerW - boxGap * 2) / 3; // 166.67px
+    const boxH = 66;
 
     // Card 1 (Right): Total
-    const b1X = W - 24 - boxW;
+    const b1X = W - padX - boxW;
     ctx.fillStyle = '#F8FAFC';
     ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.roundRect(b1X, y, boxW, boxH, 12);
+    ctx.roundRect(b1X, y, boxW, boxH, 10);
     ctx.fill();
     ctx.stroke();
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#475569';
-    ctx.font = '700 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText('إجمالي الحساب / العلاج', b1X + boxW / 2, y + 22);
+    ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('إجمالي الحساب / العلاج', b1X + boxW / 2, y + 23);
     ctx.fillStyle = '#0F172A';
-    ctx.font = '900 16px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(`${Number(data.totalAmount).toLocaleString()} ${data.currency}`, b1X + boxW / 2, y + 48);
+    ctx.font = '900 14.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(
+      `${Number(data.totalAmount).toLocaleString()} ${data.currency}`,
+      b1X + boxW / 2,
+      y + 48
+    );
 
-    // Card 2 (Middle): Paid
+    // Card 2 (Center): Paid
     const b2X = b1X - boxGap - boxW;
     ctx.fillStyle = '#ECFDF5';
     ctx.strokeStyle = '#6EE7B7';
     ctx.beginPath();
-    ctx.roundRect(b2X, y, boxW, boxH, 12);
+    ctx.roundRect(b2X, y, boxW, boxH, 10);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#047857';
-    ctx.font = '700 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText('المبلغ المدفوع (المقبوض)', b2X + boxW / 2, y + 22);
+    ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('المبلغ المدفوع (المقبوض)', b2X + boxW / 2, y + 23);
     ctx.fillStyle = '#065F46';
-    ctx.font = '900 16px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(`${Number(data.paidAmount).toLocaleString()} ${data.currency}`, b2X + boxW / 2, y + 48);
+    ctx.font = '900 14.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(
+      `${Number(data.paidAmount).toLocaleString()} ${data.currency}`,
+      b2X + boxW / 2,
+      y + 48
+    );
 
     // Card 3 (Left): Remaining Balance
-    const b3X = 24;
+    const b3X = padX;
     ctx.fillStyle = hasRemaining ? '#FFF1F2' : '#ECFDF5';
     ctx.strokeStyle = hasRemaining ? '#FDA4AF' : '#6EE7B7';
     ctx.beginPath();
-    ctx.roundRect(b3X, y, boxW, boxH, 12);
+    ctx.roundRect(b3X, y, boxW, boxH, 10);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = hasRemaining ? '#9F1239' : '#047857';
-    ctx.font = '700 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(hasRemaining ? 'المتبقي (رصيد آجل)' : 'حالة الحساب', b3X + boxW / 2, y + 22);
-    ctx.font = '900 16px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(hasRemaining ? 'المتبقي (رصيد آجل)' : 'حالة الحساب', b3X + boxW / 2, y + 23);
+    ctx.font = '900 14px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
     ctx.fillText(
       hasRemaining
         ? `${Number(data.remainingAmount).toLocaleString()} ${data.currency}`
@@ -752,88 +833,112 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       y + 48
     );
 
-    // 7. Signatures & Digital Verification Row
-    y += boxH + 18;
-    ctx.strokeStyle = '#CBD5E1';
-    ctx.beginPath();
-    ctx.moveTo(24, y);
-    ctx.lineTo(W - 24, y);
-    ctx.stroke();
+    // 7. Signatures & Digital QR Verification Row
+    y += boxH + 14;
+    const sigBoxW = 192;
+    const sigBoxH = 68;
 
-    y += 12;
-    // Right signature: Accountant
+    // Right Signature: Doctor / Accountant
+    const rightSigX = W - padX - sigBoxW;
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#334155';
-    ctx.font = '800 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText('توقيع المحاسب / الطبيب المعالج', b1X + boxW / 2, y + 10);
+    ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('توقيع المحاسب / الطبيب المعالج', rightSigX + sigBoxW / 2, y + 12);
+
     ctx.fillStyle = '#F8FAFC';
     ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(b1X, y + 18, boxW, 58, 8);
+    ctx.roundRect(rightSigX, y + 20, sigBoxW, sigBoxH, 10);
     ctx.fill();
     ctx.stroke();
+
     if (accSigImg) {
-      ctx.drawImage(accSigImg, b1X + 20, y + 22, boxW - 40, 50);
+      ctx.drawImage(accSigImg, rightSigX + 16, y + 25, sigBoxW - 32, sigBoxH - 10);
     } else {
       ctx.fillStyle = '#94A3B8';
-      ctx.font = '600 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-      ctx.fillText('التوقيع والختم المعتمد', b1X + boxW / 2, y + 50);
+      ctx.font = '700 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+      ctx.fillText('التوقيع والختم المعتمد', rightSigX + sigBoxW / 2, y + 58);
     }
 
-    // Center QR & Notes
+    // Center QR Code Frame
     if (qrImg) {
+      const qrBoxSize = 78;
+      const qrBoxX = (W - qrBoxSize) / 2;
+      const qrBoxY = y + 10;
       ctx.fillStyle = '#FFFFFF';
-      ctx.strokeStyle = '#E2E8F0';
+      ctx.strokeStyle = '#CBD5E1';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(W / 2 - 36, y + 6, 72, 70, 8);
+      ctx.roundRect(qrBoxX, qrBoxY, qrBoxSize, qrBoxSize, 10);
       ctx.fill();
       ctx.stroke();
-      ctx.drawImage(qrImg, W / 2 - 31, y + 9, 62, 62);
+      ctx.drawImage(qrImg, qrBoxX + 5, qrBoxY + 5, qrBoxSize - 10, qrBoxSize - 10);
     }
-    ctx.fillStyle = '#475569';
-    ctx.font = '700 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    notesLines.forEach((line, idx) => {
-      ctx.fillText(line, W / 2, y + 90 + idx * 16);
-    });
 
-    // Left signature: Receiver
+    // Left Signature: Patient / Receiver
+    const leftSigX = padX;
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#334155';
-    ctx.font = '800 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText('توقيع المريض / المستلم', b3X + boxW / 2, y + 10);
+    ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText('توقيع المريض / المستلم', leftSigX + sigBoxW / 2, y + 12);
+
     ctx.fillStyle = '#F8FAFC';
     ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(b3X, y + 18, boxW, 58, 8);
+    ctx.roundRect(leftSigX, y + 20, sigBoxW, sigBoxH, 10);
     ctx.fill();
     ctx.stroke();
+
     if (recSigImg) {
-      ctx.drawImage(recSigImg, b3X + 20, y + 22, boxW - 40, 50);
+      ctx.drawImage(recSigImg, leftSigX + 16, y + 25, sigBoxW - 32, sigBoxH - 10);
     } else {
       ctx.fillStyle = '#94A3B8';
-      ctx.font = '600 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-      ctx.fillText('توقيع المستلم', b3X + boxW / 2, y + 50);
+      ctx.font = '700 11px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+      ctx.fillText('توقيع المستلم', leftSigX + sigBoxW / 2, y + 58);
     }
 
-    // 8. Footer Address & Phones
-    const footerY = H - 32;
+    // 8. Dedicated Full-Width Note / Clinic Wish Banner (Prevents cramped text under QR)
+    y += 96;
+    ctx.fillStyle = '#F8FAFC';
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(padX, y, innerW, noteBoxH, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#475569';
+    ctx.font = '700 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    notesLines.forEach((line, idx) => {
+      ctx.fillText(line, W / 2, y + 20 + idx * 18);
+    });
+
+    // 9. Balanced 2-Line Official Footer (Address on Line 1, LTR Phones on Line 2 — Zero Overlap)
+    const footerTopY = H - 52;
     ctx.strokeStyle = '#1E293B';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(24, footerY);
-    ctx.lineTo(W - 24, footerY);
+    ctx.moveTo(padX, footerTopY);
+    ctx.lineTo(W - padX, footerTopY);
     ctx.stroke();
 
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#334155';
-    ctx.font = '700 12px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
-    ctx.fillText(`العنوان: ${settings.identity.address}`, W - 24, footerY + 18);
+    ctx.font = '800 11.5px "Tajawal", "IBM Plex Sans Arabic", sans-serif';
+    ctx.fillText(`العنوان: ${settings.identity.address || '—'}`, W / 2, footerTopY + 18);
 
-    ctx.save();
-    ctx.direction = 'ltr';
-    ctx.textAlign = 'left';
-    ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText(phoneItems.join(' | '), 24, footerY + 18);
-    ctx.restore();
+    if (phoneItems.length > 0) {
+      ctx.save();
+      ctx.direction = 'ltr';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#0F172A';
+      ctx.font = '800 11.5px "JetBrains Mono", monospace';
+      ctx.fillText(phoneItems.join('   |   '), W / 2, footerTopY + 37);
+      ctx.restore();
+    }
 
     return canvas;
   };
@@ -867,15 +972,24 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       pdf.addImage(imgDataUrl, 'PNG', 0, 0, pdfW, pdfH, undefined, 'FAST');
       return pdf.output('blob');
     } else {
-      // Standard A5 Landscape (210mm x 148mm)
+      // Standard A5 Portrait (148mm x 210mm) preserving exact proportions
       const pdf = new jsPDF({
-        orientation: 'landscape',
+        orientation: 'portrait',
         unit: 'mm',
         format: 'a5',
       });
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
-      pdf.addImage(imgDataUrl, 'PNG', 0, 0, pageW, pageH, undefined, 'FAST');
+      const imgRatio = canvas.height / canvas.width;
+      let renderW = pageW;
+      let renderH = pageW * imgRatio;
+      if (renderH > pageH) {
+        renderH = pageH;
+        renderW = pageH / imgRatio;
+      }
+      const offsetX = (pageW - renderW) / 2;
+      const offsetY = (pageH - renderH) / 2;
+      pdf.addImage(imgDataUrl, 'PNG', offsetX, offsetY, renderW, renderH, undefined, 'FAST');
       return pdf.output('blob');
     }
   };
@@ -906,7 +1020,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       const blob = await canvasToBlob(canvas);
       const fileName = `${getCleanBaseFileName()}.png`;
       triggerBlobDownload(blob, fileName);
-      notify(`تم حفظ صورة السند #${data.receiptNo} بدقة عالية`, 'success');
+      notify(`تم حفظ صورة السند #${data.receiptNo} (A5 عمودي) بدقة عالية`, 'success');
     } catch {
       notify('تعذر إنشاء صورة السند، يرجى المحاولة مرة أخرى', 'error');
     } finally {
@@ -921,7 +1035,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       const pdfBlob = await generatePDFBlob();
       const fileName = `${getCleanBaseFileName()}.pdf`;
       triggerBlobDownload(pdfBlob, fileName);
-      notify(`تم حفظ ملف PDF للسند #${data.receiptNo}`, 'success');
+      notify(`تم حفظ ملف PDF للسند #${data.receiptNo} (A5 عمودي)`, 'success');
     } catch {
       notify('تعذر إنشاء ملف PDF للسند', 'error');
     } finally {
@@ -1044,7 +1158,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     <div className="w-full max-w-full space-y-3">
       {/* High-Resolution Download & Client Share Toolbar */}
       {showToolbar && (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 sm:p-3 shadow-xs no-print">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 sm:p-3 shadow-xs no-print max-w-[560px] mx-auto">
           <div className="flex flex-wrap items-center justify-between gap-2">
             {/* Paper Format Selector */}
             <div className="flex items-center gap-1.5">
@@ -1056,7 +1170,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 onChange={(e) => onPaperFormatChange?.(e.target.value as PaperFormat)}
                 className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               >
-                <option value="a5">A5 أفقي معتمد (قياسي)</option>
+                <option value="a5">A5 عمودي معتمد (قياسي)</option>
                 <option value="thermal80">حراري 80mm (طابعة إيصالات)</option>
               </select>
             </div>
@@ -1069,7 +1183,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 disabled={busyAction !== null}
                 onClick={handleDownloadHDImage}
                 className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/60 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-xs font-bold transition-colors disabled:opacity-50 shadow-2xs"
-                title="حفظ السند كصورة PNG عالية الدقة (300 DPI)"
+                title="حفظ السند كصورة PNG عمودية عالية الدقة (300 DPI)"
               >
                 {busyAction === 'png' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1085,7 +1199,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 disabled={busyAction !== null}
                 onClick={handleDownloadPDFFile}
                 className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-2xs"
-                title="حفظ السند كملف PDF رسمي قابل للطباعة والمشاركة"
+                title="حفظ السند كملف PDF عمودي A5 قابل للطباعة والمشاركة"
               >
                 {busyAction === 'pdf' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1163,189 +1277,222 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
         </div>
       )}
 
-      {/* ==================== THE REDESIGNED LUXURY MEDICAL RECEIPT CARD ==================== */}
+      {/* ==================== OFFICIAL A5 PORTRAIT MEDICAL RECEIPT CARD ==================== */}
       <div
         id="receipt-capture-area"
         style={{ borderColor: settings.appearance.primaryColor || '#0B2545' }}
-        className={`receipt-paper rounded-2xl p-4 sm:p-6 shadow-xl relative overflow-hidden border-[3px] mx-auto bg-white transition-all ${
-          data.paperFormat === 'thermal80' ? 'max-w-[360px]' : 'w-full'
+        className={`receipt-paper rounded-2xl p-3.5 sm:p-5 shadow-xl relative overflow-hidden border-[3px] mx-auto bg-white transition-all ${
+          data.paperFormat === 'thermal80' ? 'max-w-[360px]' : 'max-w-[560px]'
         }`}
       >
-        {/* Subtle Watermark placed cleanly in the upper center background with low opacity */}
+        {/* Inner Subtle Security Frame */}
+        <div className="pointer-events-none absolute inset-1.5 rounded-xl border border-slate-200/90" />
+
+        {/* Subtle Watermark centered cleanly inside the body area */}
         <img
           src={logoSrc}
           alt=""
           aria-hidden="true"
           referrerPolicy="no-referrer"
-          className="pointer-events-none select-none absolute top-32 left-1/2 -translate-x-1/2 w-40 h-40 sm:w-48 sm:h-48 object-contain"
+          className="pointer-events-none select-none absolute top-44 left-1/2 -translate-x-1/2 w-36 h-36 sm:w-40 sm:h-40 object-contain"
           style={{ opacity: Math.min(settings.appearance.watermarkOpacity || 4, 4.5) / 100 }}
         />
 
-        {/* 1. Tri-Zone Official Header */}
-        <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between border-b-2 border-slate-800 pb-3 mb-3.5 gap-2 text-center sm:text-right">
-          {/* Right: Arabic Clinic & Doctor Info */}
-          <div className="space-y-0.5 sm:text-right min-w-0">
-            <div className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
-              {settings.identity.doctorAr}
+        {/* 1. Official Header (3-Column Top + Centered Title Badge on Divider Line) */}
+        <div className="relative z-10 pb-3.5 mb-3">
+          <div className="grid grid-cols-12 items-center gap-2">
+            {/* Right: Arabic Clinic & Doctor Info */}
+            <div className="col-span-5 text-right space-y-0.5 min-w-0">
+              <div className="text-sm sm:text-base font-black text-slate-900 leading-tight truncate">
+                {settings.identity.doctorAr}
+              </div>
+              <div className="text-[11px] sm:text-xs font-extrabold text-sky-800 leading-tight truncate">
+                {settings.identity.specialtyAr}
+              </div>
+              <div className="text-[10px] sm:text-[11px] font-bold text-slate-600 leading-tight truncate">
+                {settings.identity.clinicAr}
+              </div>
             </div>
-            <div className="text-xs font-extrabold text-sky-800">
-              {settings.identity.specialtyAr}
+
+            {/* Center: Clinic Logo */}
+            <div className="col-span-2 flex justify-center">
+              <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center p-1 shadow-2xs">
+                <img
+                  src={logoSrc}
+                  alt="Clinic Logo"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-contain"
+                />
+              </div>
             </div>
-            <div className="text-[11px] font-bold text-slate-600">
-              {settings.identity.clinicAr}
+
+            {/* Left: English Clinic & Doctor Info */}
+            <div className="col-span-5 text-left space-y-0.5 min-w-0" dir="ltr">
+              <div className="text-[11px] sm:text-xs font-black text-slate-900 leading-tight truncate">
+                {settings.identity.clinicEn}
+              </div>
+              <div className="text-[10px] sm:text-[11px] font-bold text-sky-800 leading-tight truncate">
+                {settings.identity.doctorEn}
+              </div>
             </div>
           </div>
 
-          {/* Center: Official Clinic Logo & Title Ribbon */}
-          <div className="flex flex-col items-center shrink-0 my-1 sm:my-0">
-            <img
-              src={logoSrc}
-              alt="Clinic Logo"
-              referrerPolicy="no-referrer"
-              className="w-12 h-12 sm:w-13 sm:h-13 object-contain mb-1 rounded-xl shadow-2xs border border-slate-100"
-            />
-            <div className="px-3.5 py-1 rounded-full bg-slate-900 text-white text-[10px] sm:text-xs font-black tracking-wide shadow-2xs">
+          {/* Divider Line with Centered Official Title Badge */}
+          <div className="relative mt-3 flex items-center justify-center">
+            <div className="w-full border-t-2 border-slate-800" />
+            <div
+              style={{ backgroundColor: settings.appearance.primaryColor || '#0B2545' }}
+              className="absolute px-3.5 py-1 rounded-full text-white text-[10px] sm:text-[11px] font-black tracking-wide whitespace-nowrap shadow-2xs"
+            >
               سند قبض مالي معتمد | RECEIPT VOUCHER
             </div>
           </div>
-
-          {/* Left: English Clinic & Doctor Info */}
-          <div className="sm:text-left space-y-0.5 min-w-0" dir="ltr">
-            <div className="text-xs sm:text-sm font-black text-slate-900 tracking-tight">
-              {settings.identity.clinicEn}
-            </div>
-            <div className="text-xs font-bold text-sky-800">
-              {settings.identity.doctorEn}
-            </div>
-          </div>
         </div>
 
-        {/* 2. Structured Metadata Bar */}
-        <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 mb-3.5 text-xs">
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-slate-500 font-bold">رقم السند:</span>
-            <span
+        {/* 2. 3-Column Divided Metadata Strip */}
+        <div className="relative z-10 grid grid-cols-3 divide-x divide-x-reverse divide-slate-200 bg-slate-50 border border-slate-300 rounded-xl py-2 mb-3 text-center">
+          <div className="px-2">
+            <div className="text-[10px] font-bold text-slate-500">رقم السند</div>
+            <div
               dir="ltr"
-              className="inline-block font-black text-rose-700 font-mono tabular-nums whitespace-nowrap text-sm"
+              className="text-xs sm:text-sm font-black text-rose-700 font-mono tabular-nums mt-0.5"
             >
               #{data.receiptNo}
-            </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-slate-500 font-bold">تاريخ التحرير:</span>
-            <span
+          <div className="px-2">
+            <div className="text-[10px] font-bold text-slate-500">تاريخ التحرير</div>
+            <div
               dir="ltr"
-              className="inline-block font-extrabold text-slate-900 font-mono tabular-nums whitespace-nowrap"
+              className="text-xs sm:text-sm font-extrabold text-slate-900 font-mono tabular-nums mt-0.5"
             >
               {data.date}
-            </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-slate-500 font-bold">طريقة السداد:</span>
-            <span className="font-extrabold text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+          <div className="px-2">
+            <div className="text-[10px] font-bold text-slate-500">طريقة السداد</div>
+            <div className="text-xs sm:text-sm font-black text-slate-900 mt-0.5 truncate">
               {data.paymentMethod}
-            </span>
+            </div>
           </div>
         </div>
 
-        {/* 3. Patient & Treatment Information Statement */}
-        <div className="relative z-10 space-y-2.5 text-xs sm:text-sm mb-3.5">
-          {/* Patient Name & Phone Row */}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
-            <div className="min-w-0">
-              <span className="font-bold text-slate-500">وصلنا من الأخ/ت:</span>
-              <span className="font-black text-slate-950 mr-1.5 text-sm sm:text-base break-words">
-                {data.patientName || '....................'}
-              </span>
-              <span className="font-bold text-slate-500 mr-1">المحترم/ة</span>
+        {/* 3. Structured Bordered Details Table (Zero Empty Gaps or Overlaps) */}
+        <div className="relative z-10 rounded-xl border border-slate-300 overflow-hidden divide-y divide-slate-200 mb-3 text-xs sm:text-sm bg-white">
+          {/* Row 1: Patient Name */}
+          <div className="flex items-stretch">
+            <div className="w-28 sm:w-36 shrink-0 bg-slate-50 px-2.5 sm:px-3 py-2 font-extrabold text-slate-700 border-l border-slate-200 flex items-center text-[11px] sm:text-xs">
+              وصلنا من الأخ/ت:
             </div>
+            <div className="flex-1 px-2.5 sm:px-3 py-2 font-black text-slate-950 break-words flex items-center justify-between gap-2">
+              <span>
+                {data.patientName || '....................'}{' '}
+                <span className="font-bold text-slate-500 text-xs">المحترم/ة</span>
+              </span>
+            </div>
+          </div>
 
-            <div className="shrink-0 flex items-center gap-1.5">
-              <span className="font-bold text-slate-500">رقم التواصل:</span>
+          {/* Row 2: Contact Phone & Currency */}
+          <div className="flex items-stretch">
+            <div className="w-28 sm:w-36 shrink-0 bg-slate-50 px-2.5 sm:px-3 py-2 font-extrabold text-slate-700 border-l border-slate-200 flex items-center text-[11px] sm:text-xs">
+              رقم التواصل:
+            </div>
+            <div className="flex-1 px-2.5 sm:px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
               <span
                 dir="ltr"
-                className="inline-block whitespace-nowrap font-bold text-slate-900 font-mono tabular-nums"
+                className="font-mono font-extrabold text-slate-900 tabular-nums text-xs sm:text-sm"
               >
                 {data.patientPhone || '—'}
               </span>
+              <span className="text-[10px] sm:text-[11px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                العملة: {data.currency}
+              </span>
             </div>
           </div>
 
-          {/* Medical Services Rendered */}
-          <div className="border-b border-slate-200 pb-2 flex flex-col sm:flex-row sm:items-start gap-1">
-            <span className="font-bold text-slate-500 shrink-0">
-              وذلك عن (الخدمات الطبية والعلاجية):
-            </span>
-            <span className="font-extrabold text-sky-950 break-words leading-relaxed sm:mr-1">
+          {/* Row 3: Medical Services Rendered */}
+          <div className="flex items-stretch">
+            <div className="w-28 sm:w-36 shrink-0 bg-slate-50 px-2.5 sm:px-3 py-2 font-extrabold text-slate-700 border-l border-slate-200 flex items-center text-[11px] sm:text-xs">
+              الخدمات العلاجية:
+            </div>
+            <div className="flex-1 px-2.5 sm:px-3 py-2 font-extrabold text-sky-950 break-words leading-relaxed flex items-center">
               {servicesText}
-            </span>
+            </div>
           </div>
 
-          {/* FDI Teeth (if dental teeth specified) */}
+          {/* Row 4: FDI Teeth (if specified) */}
           {data.toothFDI && (
-            <div className="border-b border-slate-200 pb-2 flex items-center gap-2">
-              <span className="font-bold text-slate-500 shrink-0">
-                أرقام الأسنان المعالجة (FDI):
-              </span>
-              <span
-                dir="ltr"
-                className="inline-flex items-center gap-1 font-mono font-extrabold text-sky-800 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-lg text-xs"
-              >
-                {data.toothFDI}
-              </span>
+            <div className="flex items-stretch">
+              <div className="w-28 sm:w-36 shrink-0 bg-slate-50 px-2.5 sm:px-3 py-2 font-extrabold text-slate-700 border-l border-slate-200 flex items-center text-[11px] sm:text-xs">
+                أرقام الأسنان (FDI):
+              </div>
+              <div className="flex-1 px-2.5 sm:px-3 py-2 flex items-center">
+                <span
+                  dir="ltr"
+                  className="inline-flex items-center font-mono font-extrabold text-sky-800 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-lg text-xs tabular-nums"
+                >
+                  {data.toothFDI}
+                </span>
+              </div>
             </div>
           )}
 
-          {/* Amount in Formal Arabic Words (Tafqeet) */}
-          <div className="border-b border-slate-200 pb-2 flex flex-col sm:flex-row sm:items-baseline gap-1">
-            <span className="font-bold text-slate-500 shrink-0">المبلغ بالحروف وقدره:</span>
-            <span className="font-extrabold text-slate-900 sm:mr-1 break-words leading-relaxed">
+          {/* Row 5: Amount in Words (Tafqeet) */}
+          <div className="flex items-stretch">
+            <div className="w-28 sm:w-36 shrink-0 bg-slate-50 px-2.5 sm:px-3 py-2 font-extrabold text-slate-700 border-l border-slate-200 flex items-center text-[11px] sm:text-xs">
+              المبلغ بالحروف:
+            </div>
+            <div className="flex-1 px-2.5 sm:px-3 py-2 font-extrabold text-slate-900 break-words leading-relaxed flex items-center">
               {amountWordsFormatted}
-            </span>
+            </div>
           </div>
         </div>
 
         {/* 4. Three Crisp Financial Highlight Cards */}
         <div
-          className={`relative z-10 grid gap-2.5 sm:gap-3 mb-3.5 text-center ${
+          className={`relative z-10 grid gap-2 mb-3 text-center ${
             data.paperFormat === 'thermal80' ? 'grid-cols-1' : 'grid-cols-3'
           }`}
         >
           {/* Box 1: Total Amount */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 sm:p-3">
-            <div className="text-[11px] font-bold text-slate-500">إجمالي الحساب / العلاج</div>
-            <div className="text-sm sm:text-base font-black text-slate-900 mt-0.5 font-mono tabular-nums">
+          <div className="bg-slate-50 border border-slate-300 rounded-xl p-2 sm:p-2.5 flex flex-col justify-center">
+            <div className="text-[10px] sm:text-[11px] font-extrabold text-slate-600">
+              إجمالي الحساب / العلاج
+            </div>
+            <div className="text-xs sm:text-sm font-black text-slate-900 mt-1 font-mono tabular-nums">
               {Number(data.totalAmount).toLocaleString()} {data.currency}
             </div>
           </div>
 
           {/* Box 2: Paid Amount */}
-          <div className="bg-emerald-50/80 border border-emerald-300 rounded-xl p-2.5 sm:p-3">
-            <div className="text-[11px] font-bold text-emerald-700">المبلغ المدفوع (المقبوض)</div>
-            <div className="text-sm sm:text-base font-black text-emerald-900 mt-0.5 font-mono tabular-nums">
+          <div className="bg-emerald-50/90 border border-emerald-300 rounded-xl p-2 sm:p-2.5 flex flex-col justify-center">
+            <div className="text-[10px] sm:text-[11px] font-extrabold text-emerald-700">
+              المبلغ المدفوع (المقبوض)
+            </div>
+            <div className="text-xs sm:text-sm font-black text-emerald-900 mt-1 font-mono tabular-nums">
               {Number(data.paidAmount).toLocaleString()} {data.currency}
             </div>
           </div>
 
           {/* Box 3: Remaining Balance with Status Badge */}
           <div
-            className={`rounded-xl p-2.5 sm:p-3 border ${
+            className={`rounded-xl p-2 sm:p-2.5 border flex flex-col justify-center ${
               hasRemaining
-                ? 'bg-rose-50/80 border-rose-300 text-rose-900'
-                : 'bg-emerald-50/80 border-emerald-300 text-emerald-900'
+                ? 'bg-rose-50/90 border-rose-300 text-rose-900'
+                : 'bg-emerald-50/90 border-emerald-300 text-emerald-900'
             }`}
           >
-            <div className="text-[11px] font-bold flex items-center justify-center gap-1">
-              <span>{hasRemaining ? 'المتبقي (رصيد آجل)' : 'حالة الحساب'}</span>
+            <div className="text-[10px] sm:text-[11px] font-extrabold">
+              {hasRemaining ? 'المتبقي (رصيد آجل)' : 'حالة الحساب'}
             </div>
-            <div className="text-sm sm:text-base font-black mt-0.5 font-mono tabular-nums">
+            <div className="text-xs sm:text-sm font-black mt-1 font-mono tabular-nums">
               {hasRemaining ? (
                 `${Number(data.remainingAmount).toLocaleString()} ${data.currency}`
               ) : (
-                <span className="inline-flex items-center gap-1 text-emerald-800 text-xs sm:text-sm font-black">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span className="inline-flex items-center justify-center gap-1 text-emerald-800 text-[11px] sm:text-xs font-black">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <span>خالص ومسدد بالكامل</span>
                 </span>
               )}
@@ -1353,20 +1500,20 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
           </div>
         </div>
 
-        {/* 5. Signatures, Digital QR Verification & Warm Wish */}
-        <div className="relative z-10 grid grid-cols-12 gap-2 sm:gap-3 items-center pt-2 border-t border-slate-200">
+        {/* 5. Signatures & Digital QR Verification Row */}
+        <div className="relative z-10 grid grid-cols-12 gap-2 items-center mb-2.5">
           {/* Doctor / Accountant Signature */}
           <div
             className={
               data.paperFormat === 'thermal80'
                 ? 'col-span-6 text-center'
-                : 'col-span-4 text-center'
+                : 'col-span-5 text-center'
             }
           >
             <div className="text-[10px] sm:text-[11px] font-extrabold text-slate-700 mb-1">
               توقيع المحاسب / الطبيب المعالج
             </div>
-            <div className="h-14 sm:h-16 border border-slate-300 rounded-xl flex items-center justify-center bg-slate-50/80 overflow-hidden">
+            <div className="h-14 sm:h-16 border border-slate-300 rounded-xl flex items-center justify-center bg-slate-50/80 overflow-hidden p-1">
               {data.accountantSig ? (
                 <img
                   src={data.accountantSig}
@@ -1374,21 +1521,21 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                   alt="Doctor / Accountant Signature"
                 />
               ) : (
-                <span className="text-[10px] text-slate-400 font-medium">التوقيع والختم المعتمد</span>
+                <span className="text-[10px] text-slate-400 font-bold">التوقيع والختم المعتمد</span>
               )}
             </div>
           </div>
 
-          {/* Center: Digital QR & Warm Clinic Wish */}
+          {/* Center: Digital QR Code */}
           <div
             className={
               data.paperFormat === 'thermal80'
                 ? 'col-span-12 order-last flex flex-col items-center justify-center pt-1'
-                : 'col-span-4 flex flex-col items-center justify-center'
+                : 'col-span-2 flex flex-col items-center justify-center'
             }
           >
             {settings.features.showQrCode && qrDataUrl && (
-              <div className="p-1 bg-white border border-slate-200 rounded-xl shadow-2xs flex items-center justify-center">
+              <div className="p-1 bg-white border border-slate-300 rounded-xl shadow-2xs flex items-center justify-center">
                 <img
                   src={qrDataUrl}
                   alt="Official Verification QR Code"
@@ -1396,12 +1543,6 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 />
               </div>
             )}
-            <div className="text-[9px] sm:text-[10px] font-bold text-slate-600 text-center mt-1.5 leading-snug break-words">
-              {data.notes || 'مع تمنياتنا لكم بدوام الصحة والعافية والابتسامة المشرقة'}
-            </div>
-            <div className="text-[8px] sm:text-[9px] font-medium text-slate-400 text-center mt-0.5">
-              سند رسمي صادر إلكترونياً وموثق
-            </div>
           </div>
 
           {/* Patient / Recipient Signature */}
@@ -1409,13 +1550,13 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
             className={
               data.paperFormat === 'thermal80'
                 ? 'col-span-6 text-center'
-                : 'col-span-4 text-center'
+                : 'col-span-5 text-center'
             }
           >
             <div className="text-[10px] sm:text-[11px] font-extrabold text-slate-700 mb-1">
               توقيع المريض / المستلم
             </div>
-            <div className="h-14 sm:h-16 border border-slate-300 rounded-xl flex items-center justify-center bg-slate-50/80 overflow-hidden">
+            <div className="h-14 sm:h-16 border border-slate-300 rounded-xl flex items-center justify-center bg-slate-50/80 overflow-hidden p-1">
               {data.receiverSig ? (
                 <img
                   src={data.receiverSig}
@@ -1423,32 +1564,41 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                   alt="Patient Signature"
                 />
               ) : (
-                <span className="text-[10px] text-slate-400 font-medium">توقيع المستلم</span>
+                <span className="text-[10px] text-slate-400 font-bold">توقيع المستلم</span>
               )}
             </div>
           </div>
         </div>
 
-        {/* 6. Footer: Clinic Address & Verified Contact Phones */}
-        <div className="relative z-10 mt-3 pt-2.5 border-t-2 border-slate-800 flex flex-col sm:flex-row items-center justify-between text-[10px] sm:text-[11px] font-bold text-slate-600 gap-1.5 text-center sm:text-right">
+        {/* 6. Dedicated Full-Width Note / Warm Clinic Wish Bar */}
+        <div className="relative z-10 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-center mb-2.5">
+          <div className="text-[10px] sm:text-[11px] font-bold text-slate-700 leading-snug break-words">
+            {data.notes || 'مع تمنياتنا لكم بدوام الصحة والعافية والابتسامة المشرقة'}
+          </div>
+        </div>
+
+        {/* 7. Balanced 2-Row Official Footer (Address + LTR Phones without overlap) */}
+        <div className="relative z-10 pt-2 border-t-2 border-slate-800 flex flex-col items-center justify-center text-[10px] sm:text-[11px] font-bold text-slate-700 gap-1 text-center">
           <div>
-            <span>العنوان:</span>{' '}
-            <span className="text-slate-900">{settings.identity.address || '—'}</span>
+            <span className="text-slate-500">العنوان:</span>{' '}
+            <span className="font-extrabold text-slate-900">{settings.identity.address || '—'}</span>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-y-1">
-            {phoneItems.map((phone, idx) => (
-              <React.Fragment key={idx}>
-                {idx > 0 && <span className="mx-1.5 text-slate-300">|</span>}
-                <span
-                  dir="ltr"
-                  className="inline-block whitespace-nowrap font-mono tabular-nums text-slate-900"
-                >
-                  {phone}
-                </span>
-              </React.Fragment>
-            ))}
-          </div>
+          {phoneItems.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-y-0.5">
+              {phoneItems.map((phone, idx) => (
+                <React.Fragment key={idx}>
+                  {idx > 0 && <span className="mx-1.5 text-slate-300">|</span>}
+                  <span
+                    dir="ltr"
+                    className="inline-block whitespace-nowrap font-mono font-extrabold tabular-nums text-slate-900"
+                  >
+                    {phone}
+                  </span>
+                </React.Fragment>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
