@@ -94,6 +94,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   const [authError, setAuthError] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [isOpNotAllowed, setIsOpNotAllowed] = useState(false);
 
   const [registeredIdentifier, setRegisteredIdentifier] = useState<string | null>(null);
   const [customRegisterIdentifier, setCustomRegisterIdentifier] = useState('');
@@ -102,6 +103,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     if (!isOpen) return;
     setAuthError(null);
     setAuthInfo(null);
+    setIsOpNotAllowed(false);
     setRegisteredIdentifier(null);
     if (user?.email) {
       setIdentifier(user.email);
@@ -126,6 +128,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     e.preventDefault();
     setAuthError(null);
     setAuthInfo(null);
+    setIsOpNotAllowed(false);
 
     const cleanIdentifier = identifier.trim();
     const cleanPassword = password.trim();
@@ -207,8 +210,12 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
         }
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code || '';
+        const rawErr = err instanceof Error ? err.message : String(err);
         let msg = 'حدث خطأ أثناء إنشاء الحساب.';
-        if (code === 'auth/email-already-in-use') {
+        if (code === 'auth/operation-not-allowed' || rawErr.includes('operation-not-allowed')) {
+          setIsOpNotAllowed(true);
+          msg = 'تسجيل الحساب بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام زر الدخول الفوري عبر Google.';
+        } else if (code === 'auth/email-already-in-use') {
           msg = 'هذا المعرّف أو البريد مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".';
         } else if (code === 'auth/invalid-email') {
           msg = 'صيغة البريد أو المعرّف غير صالحة.';
@@ -257,8 +264,12 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
+      const rawErr = err instanceof Error ? err.message : String(err);
       let msg = 'البريد أو المعرّف أو كلمة المرور غير صحيحة.';
-      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+      if (code === 'auth/operation-not-allowed' || rawErr.includes('operation-not-allowed')) {
+        setIsOpNotAllowed(true);
+        msg = 'تسجيل الدخول بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام الدخول الفوري عبر Google أدناه لمزامنة بياناتك فوراً.';
+      } else if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
         msg = 'بيانات الدخول غير صحيحة أو الحساب غير مسجل بعد.';
       } else if (code === 'auth/wrong-password') {
         msg = 'كلمة المرور غير صحيحة.';
@@ -412,6 +423,30 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
             </div>
           ) : (
             <div className="space-y-3.5">
+              {/* Primary Instant Google Login Button */}
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={handleGoogleLogin}
+                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm hover:shadow transition-all"
+                >
+                  <Cloud className="w-4 h-4 shrink-0 text-white" />
+                  <span>تسجيل الدخول الفوري عبر Google</span>
+                </button>
+                <div className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400">
+                  مفعل تلقائياً لمزامنة البيانات السحابية بضغطة زر
+                </div>
+              </div>
+
+              <div className="relative flex items-center justify-center my-1">
+                <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+                <span className="bg-white dark:bg-slate-900 px-2.5 text-[10px] font-bold text-slate-400 shrink-0">
+                  أو بالبريد / المعرّف
+                </span>
+                <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+              </div>
+
               {/* Segmented Switcher: دخول vs حساب جديد */}
               {authMode !== 'forgot' && (
                 <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
@@ -543,34 +578,48 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                 )}
 
                 {authError && (
-                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-300 space-y-1.5">
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-[11px] font-bold text-rose-600 dark:text-rose-300 space-y-2">
                     <div className="flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                      <span>{authError}</span>
+                      <span className="leading-relaxed">{authError}</span>
                     </div>
-                    {authMode === 'register' && (
+
+                    {isOpNotAllowed ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          setAuthMode('login');
-                          setAuthError(null);
-                        }}
-                        className="text-sky-600 dark:text-sky-400 underline font-black block pr-6 text-xs hover:text-sky-500"
+                        onClick={handleGoogleLogin}
+                        className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
                       >
-                        اضغط هنا لتسجيل الدخول بهذا المعرّف ←
+                        <Cloud className="w-4 h-4 shrink-0" />
+                        <span>متابعة الدخول الفوري عبر Google الآن ←</span>
                       </button>
-                    )}
-                    {authMode === 'login' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAuthMode('register');
-                          setAuthError(null);
-                        }}
-                        className="text-emerald-600 dark:text-emerald-400 underline font-black block pr-6 text-xs hover:text-emerald-500"
-                      >
-                        حساب جديد؟ اضغط هنا لإنشاء حساب الآن ←
-                      </button>
+                    ) : (
+                      <>
+                        {authMode === 'register' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthMode('login');
+                              setAuthError(null);
+                            }}
+                            className="text-sky-600 dark:text-sky-400 underline font-black block pr-6 text-xs hover:text-sky-500"
+                          >
+                            اضغط هنا لتسجيل الدخول بهذا المعرّف ←
+                          </button>
+                        )}
+                        {authMode === 'login' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthMode('register');
+                              setAuthError(null);
+                            }}
+                            className="text-emerald-600 dark:text-emerald-400 underline font-black block pr-6 text-xs hover:text-emerald-500"
+                          >
+                            حساب جديد؟ اضغط هنا لإنشاء حساب الآن ←
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
@@ -610,18 +659,6 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                           : 'دخول'}
                   </span>
                 </button>
-
-                {authMode !== 'forgot' && (
-                  <button
-                    type="button"
-                    disabled={authLoading}
-                    onClick={handleGoogleLogin}
-                    className="w-full py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <Cloud className="w-4 h-4 text-sky-500 shrink-0" />
-                    <span>Google</span>
-                  </button>
-                )}
 
                 {authMode === 'forgot' && (
                   <div className="text-center pt-1">

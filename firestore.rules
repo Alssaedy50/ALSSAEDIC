@@ -545,5 +545,12 @@ service cloud.firestore {
         isValidId(identifier) &&
         existing().uid == request.auth.uid;
     }
+
+    // 9. Health Check Connection (/test/connection)
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
   }
 }
+
