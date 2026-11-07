@@ -69,6 +69,7 @@ import {
   signInWithEmailAccount,
   registerWithEmailAccount,
   resendEmailVerification,
+  refreshEmailVerificationStatus,
   signOutAccount,
   subscribeToClinicCloudData,
   syncLocalDataToCloud,
@@ -161,7 +162,9 @@ export default function App() {
     return saved ? saved === 'dark' : true;
   });
 
-  const [activeSection, setActiveSection] = useState<MainSectionId>('receipt');
+  const [activeSection, setActiveSection] = useState<MainSectionId>(() =>
+    new URLSearchParams(window.location.search).has('invite') ? 'settings' : 'receipt'
+  );
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState<boolean>(false);
 
@@ -394,7 +397,7 @@ export default function App() {
         } finally {
           setIsSyncingCloud(false);
         }
-      }      } else {
+      } else {
         setActiveWorkspaceOwnerUid(null);
         if (directSession) setDirectSession(null);
       }
@@ -592,6 +595,19 @@ export default function App() {
 
   const handleResendVerification = async () => {
     await resendEmailVerification();
+  };
+
+  const handleRefreshVerification = async () => {
+    const user = await refreshEmailVerificationStatus();
+    setCurrentUser(user);
+    if (user.emailVerified) {
+      await ensureOwnerWorkspaceMembership(user);
+      setActiveWorkspaceOwnerUid(user.uid);
+      await syncLocalDataToCloud(user.uid, settings, receipts, inventory, expenses, false);
+      notify('تم تأكيد البريد وتفعيل مساحة العمل والمزامنة.', 'success');
+    } else {
+      notify('لم يتم تأكيد البريد بعد. افتح رابط التحقق ثم أعد المحاولة.', 'warning');
+    }
   };
 
   const handleSignInWithGoogle = async (): Promise<boolean> => {
