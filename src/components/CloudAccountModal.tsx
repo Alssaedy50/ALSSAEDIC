@@ -295,6 +295,21 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       } else {
         setAuthError('تعذر الدخول عبر Google. يمكنك الدخول بالبريد أو المعرّف.');
       }
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      const rawErr = err instanceof Error ? err.message : String(err);
+      if (code === 'auth/unauthorized-domain' || rawErr.includes('unauthorized-domain')) {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'الموقع الحالي';
+        setAuthError(
+          `النطاق (${host}) غير مضاف بعد في قائمة النطاقات المصرح بها (Authorized domains) داخل إعدادات Firebase Authentication.`
+        );
+      } else if (code === 'auth/popup-blocked' || rawErr.includes('popup-blocked')) {
+        setAuthError('قام المتصفح بحظر نافذة Google المنبثقة. يرجى السماح بالنوافذ المنبثقة.');
+      } else if (code === 'auth/popup-closed-by-user' || rawErr.includes('popup-closed-by-user')) {
+        setAuthError('تم إغلاق نافذة تسجيل الدخول عبر Google قبل إكمال العملية.');
+      } else {
+        setAuthError('تعذر الدخول عبر Google. يرجى التحقق من الاتصال والمحاولة مرة أخرى.');
+      }
     } finally {
       setAuthLoading(false);
     }

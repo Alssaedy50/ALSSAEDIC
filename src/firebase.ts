@@ -1518,6 +1518,8 @@ export async function pushDirectWorkspaceToCloud(
 
 // ==================== WORKSPACE TEAM & MEMBERSHIP (MULTI-USER RBAC) ====================
 
+const LOCAL_WORKSPACE_MEMBERS_KEY = 'docai_workspace_members_v1';
+
 export function normalizeEmailKey(email: string): string {
   return String(email || '')
     .trim()
@@ -1525,59 +1527,148 @@ export function normalizeEmailKey(email: string): string {
     .slice(0, 128);
 }
 
+export function formatMemberIdentifierToEmail(rawInput: string): {
+  emailKey: string;
+  displayIdentifier: string;
+} {
+  const trimmed = String(rawInput || '').trim().toLowerCase();
+  if (!trimmed) {
+    return { emailKey: '', displayIdentifier: '' };
+  }
+  if (trimmed.includes('@')) {
+    return {
+      emailKey: normalizeEmailKey(trimmed),
+      displayIdentifier: trimmed,
+    };
+  }
+  const safeId = trimmed
+    .replace(/[^a-z0-9_\-.]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  const finalId = safeId.length >= 2 ? safeId : `user-${Date.now().toString().slice(-5)}`;
+  return {
+    emailKey: `${finalId}@clinic.alssaedic.local`,
+    displayIdentifier: trimmed,
+  };
+}
+
+export function loadLocalWorkspaceMembers(workspaceId: string): WorkspaceMember[] {
+  try {
+    const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+    const raw = localStorage.getItem(`${LOCAL_WORKSPACE_MEMBERS_KEY}_${safeWsId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((m) => m && typeof m.email === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalWorkspaceMembers(workspaceId: string, members: WorkspaceMember[]): void {
+  try {
+    const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+    localStorage.setItem(`${LOCAL_WORKSPACE_MEMBERS_KEY}_${safeWsId}`, JSON.stringify(members));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export async function addWorkspaceMemberInCloud(
   workspaceId: string,
   ownerUid: string,
-  memberEmail: string,
+  memberEmailOrId: string,
   role: WorkspaceRole,
-  permissions?: WorkspacePermissions
+  permissions?: WorkspacePermissions,
+  displayName?: string
 ): Promise<WorkspaceMember> {
   const safeWsId = normalizeClinicWorkspaceId(workspaceId);
-  const cleanEmail = String(memberEmail || '').trim().toLowerCase();
-  if (!cleanEmail || !cleanEmail.includes('@')) {
-    throw new Error('يرجى إدخال بريد إلكتروني صالح للعضو الجديد.');
+  const rawInput = String(memberEmailOrId || '').trim();
+  if (!rawInput) {
+    throw new Error('يرجى إدخال البريد الإلكتروني أو معرّف الحساب للعضو الجديد.');
+  }
+
+  let cleanEmail = rawInput.toLowerCase();
+  if (!cleanEmail.includes('@')) {
+    try {
+      const resolved = await resolveEmailFromIdentifier(cleanEmail);
+      if (resolved) {
+        cleanEmail = resolved.toLowerCase();
+      } else {
+        cleanEmail = formatMemberIdentifierToEmail(cleanEmail).emailKey;
+      }
+    } catch {
+      cleanEmail = formatMemberIdentifierToEmail(cleanEmail).emailKey;
+    }
   }
 
   const effectivePermissions = permissions || DEFAULT_ROLE_PERMISSIONS[role];
   const memberKey = normalizeEmailKey(cleanEmail);
+  const effectiveOwnerUid = auth.currentUser?.uid || ownerUid || 'local_owner';
   const nowIso = new Date().toISOString();
+  const cleanDisplayName = displayName?.trim() || (!rawInput.includes('@') ? rawInput : undefined);
 
   const memberData: WorkspaceMember = {
     uid: memberKey,
     email: cleanEmail,
+    displayName: cleanDisplayName,
     role,
     permissions: effectivePermissions,
-    addedBy: ownerUid,
+    addedBy: effectiveOwnerUid,
     joinedAt: nowIso,
     status: 'active',
   };
 
-  const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
-  const indexRef = doc(db, 'user_workspaces', memberKey);
+  // 1. Always save locally first so adding/upgrading works immediately even offline
+  const existingLocal = loadLocalWorkspaceMembers(safeWsId);
+  const updatedLocal = [
+    memberData,
+    ...existingLocal.filter((m) => normalizeEmailKey(m.email) !== memberKey),
+  ];
+  saveLocalWorkspaceMembers(safeWsId, updatedLocal);
 
-  await withCloudRetry(async () => {
-    // 1. Add to workspace subcollection
-    await setDoc(memberRef, {
-      uid: memberKey,
-      email: cleanEmail,
-      role,
-      permissions: effectivePermissions,
-      addedBy: ownerUid,
-      joinedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      status: 'active',
-    });
+  // 2. Sync to Firestore if signed in
+  if (auth.currentUser) {
+    const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
+    const indexRef = doc(db, 'user_workspaces', memberKey);
 
-    // 2. Add to user's fast workspace lookup index
-    await setDoc(indexRef, {
-      workspaceId: safeWsId,
-      email: cleanEmail,
-      role,
-      permissions: effectivePermissions,
-      addedBy: ownerUid,
-      updatedAt: serverTimestamp(),
-    });
-  });
+    try {
+      await withCloudRetry(async () => {
+        await setDoc(
+          memberRef,
+          {
+            uid: memberKey,
+            email: cleanEmail,
+            ...(cleanDisplayName ? { displayName: cleanDisplayName } : {}),
+            role,
+            permissions: effectivePermissions,
+            addedBy: auth.currentUser!.uid,
+            joinedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            status: 'active',
+          },
+          { merge: true }
+        );
+
+        await setDoc(
+          indexRef,
+          {
+            workspaceId: safeWsId,
+            email: cleanEmail,
+            ...(cleanDisplayName ? { displayName: cleanDisplayName } : {}),
+            role,
+            permissions: effectivePermissions,
+            addedBy: auth.currentUser!.uid,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+    } catch (err) {
+      console.warn('Cloud member add sync notice:', err);
+    }
+  }
 
   return memberData;
 }
@@ -1586,28 +1677,75 @@ export async function updateWorkspaceMemberRoleInCloud(
   workspaceId: string,
   memberEmail: string,
   newRole: WorkspaceRole,
-  permissions?: WorkspacePermissions
-): Promise<void> {
+  permissions?: WorkspacePermissions,
+  displayName?: string
+): Promise<WorkspaceMember> {
   const safeWsId = normalizeClinicWorkspaceId(workspaceId);
   const cleanEmail = String(memberEmail || '').trim().toLowerCase();
   const memberKey = normalizeEmailKey(cleanEmail);
   const effectivePermissions = permissions || DEFAULT_ROLE_PERMISSIONS[newRole];
+  const effectiveOwnerUid = auth.currentUser?.uid || 'local_owner';
 
-  const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
-  const indexRef = doc(db, 'user_workspaces', memberKey);
+  // 1. Update local storage immediately
+  const existingLocal = loadLocalWorkspaceMembers(safeWsId);
+  const existingMember = existingLocal.find((m) => normalizeEmailKey(m.email) === memberKey);
+  const updatedMember: WorkspaceMember = {
+    uid: memberKey,
+    email: cleanEmail,
+    displayName: displayName?.trim() || existingMember?.displayName,
+    role: newRole,
+    permissions: effectivePermissions,
+    addedBy: existingMember?.addedBy || effectiveOwnerUid,
+    joinedAt: existingMember?.joinedAt || new Date().toISOString(),
+    status: 'active',
+  };
 
-  await withCloudRetry(async () => {
-    await updateDoc(memberRef, {
-      role: newRole,
-      permissions: effectivePermissions,
-      updatedAt: serverTimestamp(),
-    });
-    await updateDoc(indexRef, {
-      role: newRole,
-      permissions: effectivePermissions,
-      updatedAt: serverTimestamp(),
-    });
-  });
+  const nextLocal = existingLocal.some((m) => normalizeEmailKey(m.email) === memberKey)
+    ? existingLocal.map((m) => (normalizeEmailKey(m.email) === memberKey ? updatedMember : m))
+    : [updatedMember, ...existingLocal];
+  saveLocalWorkspaceMembers(safeWsId, nextLocal);
+
+  // 2. Sync to Firestore if signed in (using setDoc with merge: true so it never fails if doc was missing)
+  if (auth.currentUser) {
+    const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
+    const indexRef = doc(db, 'user_workspaces', memberKey);
+
+    try {
+      await withCloudRetry(async () => {
+        await setDoc(
+          memberRef,
+          {
+            uid: memberKey,
+            email: cleanEmail,
+            ...(updatedMember.displayName ? { displayName: updatedMember.displayName } : {}),
+            role: newRole,
+            permissions: effectivePermissions,
+            addedBy: auth.currentUser!.uid,
+            status: 'active',
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        await setDoc(
+          indexRef,
+          {
+            workspaceId: safeWsId,
+            email: cleanEmail,
+            ...(updatedMember.displayName ? { displayName: updatedMember.displayName } : {}),
+            role: newRole,
+            permissions: effectivePermissions,
+            addedBy: auth.currentUser!.uid,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+    } catch (err) {
+      console.warn('Cloud member role update notice:', err);
+    }
+  }
+
+  return updatedMember;
 }
 
 export async function removeWorkspaceMemberFromCloud(
@@ -1618,13 +1756,27 @@ export async function removeWorkspaceMemberFromCloud(
   const cleanEmail = String(memberEmail || '').trim().toLowerCase();
   const memberKey = normalizeEmailKey(cleanEmail);
 
-  const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
-  const indexRef = doc(db, 'user_workspaces', memberKey);
+  // 1. Remove from local storage immediately
+  const existingLocal = loadLocalWorkspaceMembers(safeWsId);
+  saveLocalWorkspaceMembers(
+    safeWsId,
+    existingLocal.filter((m) => normalizeEmailKey(m.email) !== memberKey)
+  );
 
-  await withCloudRetry(async () => {
-    await deleteDoc(memberRef);
-    await deleteDoc(indexRef);
-  });
+  // 2. Remove from Firestore if signed in
+  if (auth.currentUser) {
+    const memberRef = doc(db, 'clinic_workspaces', safeWsId, 'members', memberKey);
+    const indexRef = doc(db, 'user_workspaces', memberKey);
+
+    try {
+      await withCloudRetry(async () => {
+        await deleteDoc(memberRef);
+        await deleteDoc(indexRef);
+      });
+    } catch (err) {
+      console.warn('Cloud member delete notice:', err);
+    }
+  }
 }
 
 export function subscribeToWorkspaceMembers(
@@ -1632,18 +1784,25 @@ export function subscribeToWorkspaceMembers(
   onMembersUpdate: (members: WorkspaceMember[]) => void
 ): () => void {
   const safeWsId = normalizeClinicWorkspaceId(workspaceId);
+  const localInitial = loadLocalWorkspaceMembers(safeWsId);
+  onMembersUpdate(localInitial);
+
+  if (!auth.currentUser) {
+    return () => {};
+  }
+
   const membersCol = collection(db, 'clinic_workspaces', safeWsId, 'members');
 
   return onSnapshot(
     membersCol,
     (snap) => {
-      const items: WorkspaceMember[] = snap.docs.map((docSnap) => {
+      const cloudItems: WorkspaceMember[] = snap.docs.map((docSnap) => {
         const d = docSnap.data();
         const role = (d.role || 'viewer') as WorkspaceRole;
         const perms = d.permissions || DEFAULT_ROLE_PERMISSIONS[role];
         return {
           uid: docSnap.id,
-          email: String(d.email || ''),
+          email: String(d.email || docSnap.id),
           displayName: d.displayName ? String(d.displayName) : undefined,
           role,
           permissions: perms,
@@ -1652,10 +1811,28 @@ export function subscribeToWorkspaceMembers(
           status: (d.status === 'invited' ? 'invited' : 'active') as 'active' | 'invited',
         };
       });
-      onMembersUpdate(items);
+
+      // Merge cloud items with any local items that haven't been synced yet
+      const currentLocal = loadLocalWorkspaceMembers(safeWsId);
+      const cloudKeySet = new Set(cloudItems.map((c) => normalizeEmailKey(c.email)));
+      const unsyncedLocal = currentLocal.filter((l) => !cloudKeySet.has(normalizeEmailKey(l.email)));
+
+      // Push unsynced local members to cloud in background
+      if (auth.currentUser && unsyncedLocal.length > 0) {
+        unsyncedLocal.forEach((m) => {
+          addWorkspaceMemberInCloud(safeWsId, auth.currentUser!.uid, m.email, m.role, m.permissions, m.displayName).catch(
+            () => {}
+          );
+        });
+      }
+
+      const merged = [...cloudItems, ...unsyncedLocal];
+      saveLocalWorkspaceMembers(safeWsId, merged);
+      onMembersUpdate(merged);
     },
     (err) => {
       console.warn('Workspace members listener notice:', err);
+      onMembersUpdate(loadLocalWorkspaceMembers(safeWsId));
     }
   );
 }

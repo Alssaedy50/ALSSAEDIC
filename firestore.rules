@@ -508,9 +508,21 @@ service cloud.firestore {
       // 6.1 Workspace Members Subcollection
       match /members/{memberKey} {
         allow get, list: if isSignedIn();
-        allow create, update, delete: if isStrictlyVerified() && (
-          get(/databases/$(database)/documents/clinic_workspaces/$(clinicId)).data.ownerId == request.auth.uid ||
-          request.auth.uid == clinicId
+        allow create, update: if isSignedIn() && (
+          incoming().addedBy == request.auth.uid ||
+          request.auth.uid == clinicId ||
+          (
+            exists(/databases/$(database)/documents/clinic_workspaces/$(clinicId)) &&
+            get(/databases/$(database)/documents/clinic_workspaces/$(clinicId)).data.ownerId == request.auth.uid
+          )
+        );
+        allow delete: if isSignedIn() && (
+          (resource != null && existing().addedBy == request.auth.uid) ||
+          request.auth.uid == clinicId ||
+          (
+            exists(/databases/$(database)/documents/clinic_workspaces/$(clinicId)) &&
+            get(/databases/$(database)/documents/clinic_workspaces/$(clinicId)).data.ownerId == request.auth.uid
+          )
         );
       }
     }
@@ -518,14 +530,16 @@ service cloud.firestore {
     // 7. Fast User-to-Workspace Lookup Index (/user_workspaces/{memberKey})
     match /user_workspaces/{memberKey} {
       allow get: if isSignedIn() && (
+        resource == null ||
         request.auth.token.email == memberKey ||
-        (resource != null && resource.data.addedBy == request.auth.uid)
+        resource.data.addedBy == request.auth.uid
       );
       allow list: if isSignedIn() && resource.data.addedBy == request.auth.uid;
-      allow create, update, delete: if isStrictlyVerified() && (
-        incoming().addedBy == request.auth.uid ||
-        (resource != null && existing().addedBy == request.auth.uid)
-      );
+      allow create, update: if isSignedIn() &&
+        incoming().addedBy == request.auth.uid &&
+        (resource == null || existing().addedBy == request.auth.uid);
+      allow delete: if isSignedIn() &&
+        (resource == null || existing().addedBy == request.auth.uid);
     }
 
     // 8. Unique Account Identifier Lookup Index (/account_identifiers/{identifier})

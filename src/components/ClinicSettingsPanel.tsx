@@ -30,6 +30,7 @@ interface ClinicSettingsPanelProps {
   expenses: ExpenseRecord[];
   workspaceId?: string;
   ownerUid?: string;
+  isOwner?: boolean;
   currentRole?: WorkspaceRole;
   onDeleteService?: (serviceId: string) => void;
   onSaveSettings: (nextSettings: ClinicSettings) => void;
@@ -50,6 +51,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   expenses,
   workspaceId,
   ownerUid,
+  isOwner,
   currentRole,
   onDeleteService,
   onSaveSettings,
@@ -578,8 +580,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       {subTab === 'team' && (
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5">
           <WorkspaceTeamPanel
-            workspaceId={workspaceId || ''}
-            ownerUid={ownerUid || ''}
+            workspaceId={workspaceId || 'alssaedy-clinic'}
+            ownerUid={ownerUid || 'local_owner'}
+            isOwner={isOwner}
             currentRole={currentRole}
             notify={notify}
           />

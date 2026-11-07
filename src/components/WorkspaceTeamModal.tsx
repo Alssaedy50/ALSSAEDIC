@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ArrowUpCircle,
   Check,
   Crown,
   KeyRound,
@@ -20,6 +21,7 @@ import {
 } from '../types/clinic';
 import {
   addWorkspaceMemberInCloud,
+  loadLocalWorkspaceMembers,
   removeWorkspaceMemberFromCloud,
   subscribeToWorkspaceMembers,
   updateWorkspaceMemberRoleInCloud,
@@ -44,7 +46,7 @@ export const ROLES_INFO: Record<
   { label: string; icon: React.ComponentType<{ className?: string }> }
 > = {
   owner: {
-    label: 'مالك العيادة',
+    label: 'مالك / مدير',
     icon: Crown,
   },
   doctor: {
@@ -65,8 +67,10 @@ export const ROLES_INFO: Record<
   },
 };
 
+const ALL_ROLES: WorkspaceRole[] = ['accountant', 'doctor', 'receptionist', 'viewer', 'owner'];
+
 export const PERMISSION_LABELS: Record<keyof WorkspacePermissions, string> = {
-  canCreateReceipt: 'إصدار سند',
+  canCreateReceipt: 'سند جديد',
   canEditReceipt: 'تعديل السندات',
   canDeleteReceipt: 'حذف السندات',
   canSettleDebt: 'تسوية الديون',
@@ -76,7 +80,7 @@ export const PERMISSION_LABELS: Record<keyof WorkspacePermissions, string> = {
   canViewFinances: 'التقارير المالية',
   canManageSettings: 'الإعدادات والأسعار',
   canManageTeam: 'إدارة الفريق',
-  canUseAiAssistant: 'المساعد الذكي',
+  canUseAiAssistant: 'المساعد',
 };
 
 export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
@@ -87,49 +91,82 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   members,
   notify,
 }) => {
-  const [cloudMembers, setCloudMembers] = useState<WorkspaceMember[]>([]);
-  const [newEmail, setNewEmail] = useState('');
-  const [selectedRole, setSelectedRole] = useState<WorkspaceRole>('doctor');
+  const effectiveWsId = workspaceId || 'alssaedy-clinic';
+  const [cloudMembers, setCloudMembers] = useState<WorkspaceMember[]>(() =>
+    loadLocalWorkspaceMembers(effectiveWsId)
+  );
+  const [newEmailOrId, setNewEmailOrId] = useState('');
+  const [newDisplayName, setNewDisplayName] = useState('');
+  const [selectedRole, setSelectedRole] = useState<WorkspaceRole>('accountant');
   const [editingMember, setEditingMember] = useState<WorkspaceMember | null>(null);
+  const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
   const [customPermissions, setCustomPermissions] = useState<WorkspacePermissions>(
-    DEFAULT_ROLE_PERMISSIONS.doctor
+    DEFAULT_ROLE_PERMISSIONS.accountant
   );
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!workspaceId) return;
-    const unsub = subscribeToWorkspaceMembers(workspaceId, (list) => {
+    const unsub = subscribeToWorkspaceMembers(effectiveWsId, (list) => {
       setCloudMembers(list);
     });
     return () => {
       unsub();
     };
-  }, [workspaceId]);
+  }, [effectiveWsId]);
 
-  const effectiveIsOwner = isOwner !== undefined ? isOwner : currentRole === 'owner';
+  const effectiveIsOwner = isOwner !== undefined ? isOwner : !currentRole || currentRole === 'owner';
   const displayMembers = members && members.length > 0 ? members : cloudMembers;
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanEmail = newEmail.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      notify('يرجى إدخال بريد إلكتروني صالح', 'warning');
+    const rawIdentifier = newEmailOrId.trim();
+    if (!rawIdentifier) {
+      notify('يرجى إدخال البريد الإلكتروني أو معرّف الحساب / رقم الهاتف', 'warning');
       return;
     }
 
     setLoading(true);
     try {
-      await addWorkspaceMemberInCloud(
-        workspaceId,
+      const added = await addWorkspaceMemberInCloud(
+        effectiveWsId,
         ownerUid,
-        cleanEmail,
+        rawIdentifier,
         selectedRole,
-        DEFAULT_ROLE_PERMISSIONS[selectedRole]
+        DEFAULT_ROLE_PERMISSIONS[selectedRole],
+        newDisplayName.trim() || undefined
       );
-      notify(`تمت إضافة (${cleanEmail}) كـ ${ROLES_INFO[selectedRole].label}`, 'success');
-      setNewEmail('');
+      setCloudMembers(loadLocalWorkspaceMembers(effectiveWsId));
+      notify(
+        `تمت إضافة (${added.displayName || added.email}) بصفة ${ROLES_INFO[selectedRole].label}`,
+        'success'
+      );
+      setNewEmailOrId('');
+      setNewDisplayName('');
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'تعذر إضافة العضو', 'error');
+      notify(err instanceof Error ? err.message : 'تعذر إضافة الحساب', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickRoleUpgrade = async (member: WorkspaceMember, nextRole: WorkspaceRole) => {
+    if (member.role === nextRole) return;
+    setLoading(true);
+    try {
+      await updateWorkspaceMemberRoleInCloud(
+        effectiveWsId,
+        member.email,
+        nextRole,
+        DEFAULT_ROLE_PERMISSIONS[nextRole],
+        member.displayName
+      );
+      setCloudMembers(loadLocalWorkspaceMembers(effectiveWsId));
+      notify(
+        `تمت ترقية وتحديث حساب (${member.displayName || member.email}) إلى: ${ROLES_INFO[nextRole].label}`,
+        'success'
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر ترقية الحساب', 'error');
     } finally {
       setLoading(false);
     }
@@ -140,12 +177,17 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     setLoading(true);
     try {
       await updateWorkspaceMemberRoleInCloud(
-        workspaceId,
+        effectiveWsId,
         editingMember.email,
         editingMember.role,
-        customPermissions
+        customPermissions,
+        editingMember.displayName
       );
-      notify(`تم تحديث صلاحيات (${editingMember.email}) بنجاح`, 'success');
+      setCloudMembers(loadLocalWorkspaceMembers(effectiveWsId));
+      notify(
+        `تم حفظ ترقية وصلاحيات (${editingMember.displayName || editingMember.email}) بنجاح`,
+        'success'
+      );
       setEditingMember(null);
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'تعذر تحديث الصلاحيات', 'error');
@@ -155,89 +197,128 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   };
 
   const handleRemoveMember = async (memberEmail: string) => {
-    if (!window.confirm(`هل أنت متأكد من إزالة العضو (${memberEmail}) من مساحة العمل؟`)) {
-      return;
-    }
     setLoading(true);
     try {
-      await removeWorkspaceMemberFromCloud(workspaceId, memberEmail);
-      notify(`تمت إزالة العضو (${memberEmail})`, 'info');
+      await removeWorkspaceMemberFromCloud(effectiveWsId, memberEmail);
+      setCloudMembers(loadLocalWorkspaceMembers(effectiveWsId));
+      setConfirmRemoveEmail(null);
+      notify(`تمت إزالة الحساب (${memberEmail})`, 'info');
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'تعذر إزالة العضو', 'error');
+      notify(err instanceof Error ? err.message : 'تعذر إزالة الحساب', 'error');
     } finally {
       setLoading(false);
     }
   };
 
+  const formatVisibleEmail = (email: string) => {
+    if (email.endsWith('@clinic.alssaedic.local')) {
+      return email.replace('@clinic.alssaedic.local', '');
+    }
+    return email;
+  };
+
   return (
     <div className="space-y-4">
-      {/* Add Member Form (Only for Owner) */}
+      {/* Add Member Form */}
       {effectiveIsOwner ? (
         <section className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 space-y-3">
-          <div className="flex items-center gap-2">
-            <UserPlus className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-            <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
-              إضافة عضو
-            </h4>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <UserPlus className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
+                إضافة حساب جديد (محاسب / طبيب / موظف)
+              </h4>
+            </div>
           </div>
 
           <form onSubmit={handleAddMember} className="space-y-2.5">
-            <div className="relative">
-              <input
-                type="email"
-                required
-                dir="ltr"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="doctor@domain.com"
-                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 pl-3 pr-9 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
-              />
-              <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                  البريد الإلكتروني أو المعرّف / الهاتف
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    dir="ltr"
+                    value={newEmailOrId}
+                    onChange={(e) => setNewEmailOrId(e.target.value)}
+                    placeholder="accountant@gmail.com أو 777123456"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 pl-3 pr-9 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                  <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                  اسم الموظف / الصفة (اختياري)
+                </label>
+                <input
+                  type="text"
+                  value={newDisplayName}
+                  onChange={(e) => setNewDisplayName(e.target.value)}
+                  placeholder="مثال: أحمد (محاسب العيادة)"
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                />
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-              {(['doctor', 'accountant', 'receptionist', 'viewer'] as WorkspaceRole[]).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setSelectedRole(r)}
-                  className={`p-2 rounded-lg border text-center transition-all ${
-                    selectedRole === r
-                      ? 'bg-sky-600 border-sky-500 text-white shadow-xs'
-                      : 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <div className="text-xs font-bold">{ROLES_INFO[r].label}</div>
-                </button>
-              ))}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                اختر نوع الحساب (الدور والصلاحيات):
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                {ALL_ROLES.map((r) => {
+                  const Icon = ROLES_INFO[r].icon;
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setSelectedRole(r)}
+                      className={`p-2 rounded-lg border text-center transition-all flex items-center justify-center gap-1.5 ${
+                        selectedRole === r
+                          ? 'bg-sky-600 border-sky-500 text-white shadow-xs'
+                          : 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-sky-500/40'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5 shrink-0" />
+                      <span className="text-xs font-bold">{ROLES_INFO[r].label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading || !newEmail.trim()}
-              className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 transition-colors"
+              disabled={loading || !newEmailOrId.trim()}
+              className="w-full py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              <span>إضافة</span>
+              <span>إضافة وتفعيل حساب ({ROLES_INFO[selectedRole].label})</span>
             </button>
           </form>
         </section>
       ) : (
         <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-400 font-bold">
-          أنت عضو في مساحة العمل هذه. المالك فقط يمكنه إضافة أو حذف الأعضاء.
+          أنت عضو في مساحة العمل هذه. المالك فقط يمكنه إضافة أو ترقية الأعضاء.
         </div>
       )}
 
       {/* Members List */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs font-black text-slate-700 dark:text-slate-300 px-1">
-          <span>أعضاء الفريق ({displayMembers.length})</span>
-          <span className="text-[10px] text-slate-400">مزامنة فورية</span>
+          <span>الحسابات المضافة ({displayMembers.length})</span>
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
+            حفظ محلي وسحابي فوري
+          </span>
         </div>
 
         {displayMembers.length === 0 ? (
           <div className="p-6 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-            لا يوجد أعضاء مضافون حتى الآن.
+            لا توجد حسابات مضافة بعد. أضف حساب محاسب أو طبيب من النموذج أعلاه.
           </div>
         ) : (
           displayMembers.map((m) => {
@@ -245,44 +326,101 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             return (
               <div
                 key={m.uid || m.email}
-                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex items-center justify-between gap-2"
+                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
+                  <div className="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
                     <RoleIcon className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs font-bold text-slate-900 dark:text-slate-100 font-mono truncate" dir="ltr">
-                      {m.email}
+                    {m.displayName && (
+                      <div className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
+                        {m.displayName}
+                      </div>
+                    )}
+                    <div
+                      className="text-xs font-bold text-slate-700 dark:text-slate-300 font-mono truncate"
+                      dir="ltr"
+                    >
+                      {formatVisibleEmail(m.email)}
                     </div>
-                    <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1.5">
-                      <span>{ROLES_INFO[m.role]?.label || m.role}</span>
+                    <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1.5 mt-0.5">
+                      <span>الرتبة الحالية: {ROLES_INFO[m.role]?.label || m.role}</span>
                       <span className="text-slate-400">·</span>
-                      <span className="text-emerald-600 dark:text-emerald-400">نشط</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">مفعّل</span>
                     </div>
                   </div>
                 </div>
 
                 {effectiveIsOwner && (
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                    {/* Direct 1-Click Role Promotion / Upgrade Selector */}
+                    <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-sky-500/40 rounded-lg px-2 py-1">
+                      <ArrowUpCircle className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                      <span className="text-[10px] font-bold text-slate-500">ترقية:</span>
+                      <select
+                        value={m.role}
+                        disabled={loading}
+                        onChange={(e) =>
+                          handleQuickRoleUpgrade(m, e.target.value as WorkspaceRole)
+                        }
+                        className="bg-transparent text-[11px] font-black text-sky-600 dark:text-sky-400 focus:outline-none cursor-pointer"
+                        aria-label="ترقية أو تغيير الدور"
+                      >
+                        {ALL_ROLES.map((r) => (
+                          <option
+                            key={r}
+                            value={r}
+                            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+                          >
+                            {ROLES_INFO[r].label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => {
                         setEditingMember(m);
-                        setCustomPermissions({ ...m.permissions });
+                        setCustomPermissions({
+                          ...(DEFAULT_ROLE_PERMISSIONS[m.role] || DEFAULT_ROLE_PERMISSIONS.viewer),
+                          ...m.permissions,
+                        });
                       }}
-                      className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-500 text-slate-700 dark:text-slate-300"
+                      className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-500 text-slate-700 dark:text-slate-300"
                     >
                       الصلاحيات
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMember(m.email)}
-                      className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10"
-                      title="إزالة"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+
+                    {confirmRemoveEmail === m.email ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => handleRemoveMember(m.email)}
+                          className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
+                        >
+                          تأكيد
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRemoveEmail(null)}
+                          className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold"
+                        >
+                          إلغاء
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRemoveEmail(m.email)}
+                        className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10"
+                        title="إزالة"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -291,17 +429,17 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
         )}
       </div>
 
-      {/* Permissions Editor Sub-Modal */}
+      {/* Permissions & Role Upgrade Editor Sub-Modal */}
       {editingMember && (
         <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md p-4 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
               <div className="min-w-0">
                 <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 truncate">
-                  صلاحيات: {editingMember.email}
+                  ترقية وصلاحيات: {editingMember.displayName || formatVisibleEmail(editingMember.email)}
                 </h4>
                 <div className="text-[11px] text-sky-600 font-bold mt-0.5">
-                  الدور: {ROLES_INFO[editingMember.role]?.label}
+                  الدور المحدد: {ROLES_INFO[editingMember.role]?.label}
                 </div>
               </div>
               <button
@@ -313,9 +451,9 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
               </button>
             </div>
 
-            {/* Quick Role Switch */}
-            <div className="grid grid-cols-4 gap-1">
-              {(['doctor', 'accountant', 'receptionist', 'viewer'] as WorkspaceRole[]).map((r) => (
+            {/* Quick Role Switch (Includes all 5 roles) */}
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1">
+              {ALL_ROLES.map((r) => (
                 <button
                   key={r}
                   type="button"
@@ -323,7 +461,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                     setEditingMember((prev) => (prev ? { ...prev, role: r } : null));
                     setCustomPermissions(DEFAULT_ROLE_PERMISSIONS[r]);
                   }}
-                  className={`p-1.5 text-xs font-bold rounded-lg border text-center ${
+                  className={`p-1.5 text-[11px] font-bold rounded-lg border text-center ${
                     editingMember.role === r
                       ? 'bg-sky-600 text-white border-sky-500'
                       : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
@@ -367,7 +505,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                 className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-1.5"
               >
                 <Check className="w-3.5 h-3.5" />
-                <span>حفظ</span>
+                <span>حفظ الترقية والصلاحيات</span>
               </button>
             </div>
           </div>

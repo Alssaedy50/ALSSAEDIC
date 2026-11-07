@@ -461,11 +461,12 @@ export default function App() {
   }, [authReady, currentUser, directSession]);
 
   const activeOwnerUid = activeClinicOwnerUid || currentUser?.uid || directSession?.ownerUid || null;
+  const cloudTargetUid = currentUser ? (activeClinicOwnerUid || currentUser.uid) : null;
 
   useEffect(() => {
-    if (!authReady || !activeOwnerUid || !currentUser) return;
+    if (!authReady || !cloudTargetUid || !currentUser) return;
 
-    const unsubCloud = subscribeToClinicCloudData(activeOwnerUid, {
+    const unsubCloud = subscribeToClinicCloudData(cloudTargetUid, {
       onSettingsUpdate: (partial) => {
         setSettings((prev) => ({
           ...prev,
@@ -504,7 +505,7 @@ export default function App() {
     });
 
     return () => unsubCloud();
-  }, [authReady, activeOwnerUid, currentUser]);
+  }, [authReady, cloudTargetUid, currentUser]);
 
   // Support Android/Browser Back Button so the user can always return to the main screen
   useEffect(() => {
@@ -645,11 +646,12 @@ export default function App() {
       }
       notify(`تم تسجيل الدخول بنجاح (${user.email}) وتفعيل المزامنة السحابية`, 'success');
       return true;
-    } catch {
+    } catch (err) {
       if (!isCloudModalOpen) {
         notify('تعذر إكمال تسجيل الدخول عبر Google. يرجى المحاولة مرة أخرى.', 'error');
+        return false;
       }
-      return false;
+      throw err;
     }
   };
 
@@ -667,7 +669,7 @@ export default function App() {
   };
 
   const handleForceCloudSync = async () => {
-    if (!currentUser) {
+    if (!currentUser || !cloudTargetUid) {
       notify('يرجى تسجيل الدخول أولاً لتفعيل المزامنة السحابية.', 'warning');
       return;
     }
@@ -675,7 +677,7 @@ export default function App() {
     try {
       try {
         await syncLocalDataToCloud(
-          currentUser.uid,
+          cloudTargetUid,
           settings,
           receipts,
           inventory,
@@ -753,7 +755,7 @@ export default function App() {
 
     setReceipts(nextReceiptsList);
 
-    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    const targetClinicUid = cloudTargetUid;
 
     let nextInventoryList = inventory;
     if (!isEdit && settings.features.autoInventory && record.services.length > 0) {
@@ -830,7 +832,7 @@ export default function App() {
 
     setReceipts(nextReceiptsList);
 
-    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid && settledRecord) {
       saveReceiptToCloud(targetClinicUid, settledRecord)
         .then(() => {
@@ -854,7 +856,7 @@ export default function App() {
     const nextReceiptsList = receipts.filter((r) => r.id !== receiptId);
     setReceipts(nextReceiptsList);
 
-    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    const targetClinicUid = cloudTargetUid;
 
     let nextInventoryList = inventory;
     if (
@@ -937,7 +939,7 @@ export default function App() {
       setExpenses([exp, ...expenses]);
     }
 
-    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid) {
       ensureClinicDocumentInCloud(targetClinicUid, settings)
         .then(async () => {
@@ -978,7 +980,7 @@ export default function App() {
     });
     setInventory(nextInventoryList);
 
-    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid && updatedTarget) {
       saveInventoryItemToCloud(targetClinicUid, updatedTarget).catch(() => {
         notify('تم خصم الاستهلاك محلياً فقط — تعذر المزامنة السحابية', 'warning');
@@ -1025,7 +1027,7 @@ export default function App() {
     });
     setInventory(nextInventoryList);
 
-    const targetClinicUid = activeOwnerUid || currentUser?.uid;
+    const targetClinicUid = cloudTargetUid;
     if (targetClinicUid && updatedTarget) {
       saveInventoryItemToCloud(targetClinicUid, updatedTarget)
         .then(async () => {
@@ -1069,19 +1071,19 @@ export default function App() {
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs no-print">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           {/* Right: Menu Button + Clear Page Title */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               type="button"
               onClick={() => setIsDrawerOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 hover:border-sky-500 text-xs font-bold transition-colors shrink-0"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 hover:border-sky-500 text-xs font-bold transition-colors shrink-0"
               aria-label="القائمة"
             >
               <Menu className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
               <span>القائمة</span>
             </button>
 
-            <div className="min-w-0">
-              <div className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100 truncate">
                 {currentSectionObj.title}
               </div>
               <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 truncate hidden sm:block">
@@ -1090,15 +1092,13 @@ export default function App() {
             </div>
           </div>
 
-          {/* Left: Back Button (Desktop or Settings) + Cloud Button + Theme Toggle */}
+          {/* Left: Back Button (Tablet/Desktop) + Cloud Button + Theme Toggle */}
           <div className="flex items-center gap-1.5 shrink-0">
             {activeSection !== 'receipt' && (
               <button
                 type="button"
                 onClick={() => navigateToSection('receipt')}
-                className={`${
-                  activeSection === 'settings' ? 'inline-flex' : 'hidden md:inline-flex'
-                } items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0`}
+                className="hidden sm:inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0"
               >
                 <ArrowRight className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                 <span>رجوع</span>
@@ -1108,7 +1108,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsCloudModalOpen(true)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition-colors shrink-0 ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 sm:py-2 rounded-xl border text-xs font-bold transition-colors shrink-0 ${
                 isCloudConnected
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
@@ -1282,8 +1282,8 @@ export default function App() {
                 appearance: { ...settings.appearance, permanentAccountantSig: sig },
               };
               setSettings(nextSettings);
-              if (currentUser) {
-                saveClinicSettingsToCloud(currentUser.uid, nextSettings).catch(() => {
+              if (cloudTargetUid) {
+                saveClinicSettingsToCloud(cloudTargetUid, nextSettings).catch(() => {
                   notify('تم حفظ التوقيع محلياً فقط — تعذر المزامنة السحابية', 'warning');
                 });
               }
@@ -1325,8 +1325,8 @@ export default function App() {
             onDeleteItem={(id) => {
               const nextInventoryList = inventory.filter((i) => i.id !== id);
               setInventory(nextInventoryList);
-              if (currentUser) {
-                deleteInventoryItemFromCloud(currentUser.uid, id)
+              if (cloudTargetUid) {
+                deleteInventoryItemFromCloud(cloudTargetUid, id)
                   .then(() => notify('تم حذف الصنف ومزامنة الحذف سحابياً', 'info'))
                   .catch(() => notify('تم حذف الصنف محلياً — تعذر المزامنة السحابية', 'warning'));
               } else {
@@ -1359,7 +1359,7 @@ export default function App() {
                 });
                 const nextExpensesList = [newExp, ...expenses];
                 setExpenses(nextExpensesList);
-                const targetClinicUid = activeOwnerUid || currentUser?.uid;
+                const targetClinicUid = cloudTargetUid;
                 if (targetClinicUid) {
                   ensureClinicDocumentInCloud(targetClinicUid, settings)
                     .then(() => saveExpenseToCloud(targetClinicUid, newExp))
@@ -1378,7 +1378,7 @@ export default function App() {
                 }
                 const nextExpensesList = expenses.filter((e) => e.id !== id);
                 setExpenses(nextExpensesList);
-                const targetClinicUid = activeOwnerUid || currentUser?.uid;
+                const targetClinicUid = cloudTargetUid;
                 if (targetClinicUid) {
                   deleteExpenseFromCloud(targetClinicUid, id)
                     .then(() => notify('تم حذف المصروف ومزامنة الحذف سحابياً', 'info'))
@@ -1437,13 +1437,19 @@ export default function App() {
             expenses={expenses}
             workspaceId={activeWorkspaceId}
             ownerUid={activeClinicOwnerUid || currentUser?.uid || 'local_owner'}
+            isOwner={
+              currentRole === 'owner' ||
+              currentPermissions.canManageTeam ||
+              !activeClinicOwnerUid ||
+              activeClinicOwnerUid === currentUser?.uid
+            }
             currentRole={currentRole}
             onDeleteService={(serviceId) => {
               if (!currentPermissions.canManageSettings && currentRole !== 'owner') {
                 notify('غير مصرح لك بحذف خدمات العيادة (خاص بالمالك).', 'error');
                 return;
               }
-              const targetClinicUid = activeOwnerUid || currentUser?.uid;
+              const targetClinicUid = cloudTargetUid;
               if (targetClinicUid) {
                 deleteServiceFromCloud(targetClinicUid, serviceId).catch(() => {});
               }
@@ -1454,7 +1460,7 @@ export default function App() {
                 return;
               }
               setSettings(next);
-              const targetClinicUid = activeOwnerUid || currentUser?.uid;
+              const targetClinicUid = cloudTargetUid;
               if (targetClinicUid) {
                 Promise.all([
                   saveClinicSettingsToCloud(targetClinicUid, next),
@@ -1491,7 +1497,7 @@ export default function App() {
               if (Array.isArray(payload.inventory)) setInventory(nextInventory);
               if (Array.isArray(payload.expenses)) setExpenses(nextExpenses);
 
-              const targetUid = activeOwnerUid || currentUser?.uid;
+              const targetUid = cloudTargetUid;
               if (targetUid) {
                 syncLocalDataToCloud(
                   targetUid,
