@@ -61,6 +61,7 @@ import {
   deleteServiceFromCloud,
   ensureClinicDocumentInCloud,
   extractClinicIdFromEmail,
+  flushPendingSyncQueue,
   initializeOrLoadUserClinicInCloud,
   issueServerSessionToken,
   lookupUserWorkspaceByEmail,
@@ -214,6 +215,7 @@ export default function App() {
   );
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('alssaedy-clinic');
   const [activeClinicOwnerUid, setActiveClinicOwnerUid] = useState<string | null>(null);
+  const [cloudHydratedUid, setCloudHydratedUid] = useState<string | null>(null);
   const [emailVerificationNotice, setEmailVerificationNotice] = useState<boolean>(false);
   const [isNewAccountSetup, setIsNewAccountSetup] = useState<boolean>(false);
   const pendingNewAccountRedirectRef = useRef<boolean>(false);
@@ -283,24 +285,36 @@ export default function App() {
   }, [activeSection]);
 
   useEffect(() => {
+    if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
+      return;
+    }
     const scopedKey = getScopedStorageKey(STORAGE_KEYS.SETTINGS, activeClinicOwnerUid);
     localStorage.setItem(scopedKey, JSON.stringify(settings));
-  }, [settings, activeClinicOwnerUid]);
+  }, [settings, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
+    if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
+      return;
+    }
     const scopedKey = getScopedStorageKey(STORAGE_KEYS.RECEIPTS, activeClinicOwnerUid);
     localStorage.setItem(scopedKey, JSON.stringify(receipts));
-  }, [receipts, activeClinicOwnerUid]);
+  }, [receipts, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
+    if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
+      return;
+    }
     const scopedKey = getScopedStorageKey(STORAGE_KEYS.INVENTORY, activeClinicOwnerUid);
     localStorage.setItem(scopedKey, JSON.stringify(inventory));
-  }, [inventory, activeClinicOwnerUid]);
+  }, [inventory, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
+    if (currentUser && (!activeClinicOwnerUid || cloudHydratedUid !== activeClinicOwnerUid)) {
+      return;
+    }
     const scopedKey = getScopedStorageKey(STORAGE_KEYS.EXPENSES, activeClinicOwnerUid);
     localStorage.setItem(scopedKey, JSON.stringify(expenses));
-  }, [expenses, activeClinicOwnerUid]);
+  }, [expenses, activeClinicOwnerUid, currentUser, cloudHydratedUid]);
 
   useEffect(() => {
     if (directSession) {
@@ -443,21 +457,50 @@ export default function App() {
             setCurrentPermissions(workspaceLookup.permissions);
             effectiveWorkspaceId = workspaceLookup.workspaceId;
             effectiveOwnerUid = workspaceLookup.addedBy || user.uid;
-            setActiveWorkspaceId(effectiveWorkspaceId);
-            setActiveClinicOwnerUid(effectiveOwnerUid);
 
             const memberFallbackSettings = createInitialClinicSettingsForUser(
               user.email,
               user.displayName
             );
-            const { data } = await initializeOrLoadUserClinicInCloud(
-              effectiveOwnerUid,
+            const memberScopedSettings = loadFromStorage<ClinicSettings>(
+              getScopedStorageKey(STORAGE_KEYS.SETTINGS, effectiveOwnerUid),
               memberFallbackSettings
             );
-            setSettings(data.settings);
-            setReceipts(data.receipts);
-            setInventory(data.inventory);
-            setExpenses(data.expenses);
+            const memberScopedReceipts = loadFromStorage<ReceiptRecord[]>(
+              getScopedStorageKey(STORAGE_KEYS.RECEIPTS, effectiveOwnerUid),
+              []
+            ).filter((r) => r && !SEED_DEMO_IDS.receipts.has(r.id));
+            const memberScopedInventory = loadFromStorage<InventoryItem[]>(
+              getScopedStorageKey(STORAGE_KEYS.INVENTORY, effectiveOwnerUid),
+              []
+            ).filter((i) => i && !SEED_DEMO_IDS.inventory.has(i.id));
+            const memberScopedExpenses = loadFromStorage<ExpenseRecord[]>(
+              getScopedStorageKey(STORAGE_KEYS.EXPENSES, effectiveOwnerUid),
+              []
+            ).filter((e) => e && !SEED_DEMO_IDS.expenses.has(e.id));
+
+            setSettings(memberScopedSettings);
+            setReceipts(memberScopedReceipts);
+            setInventory(memberScopedInventory);
+            setExpenses(memberScopedExpenses);
+            setActiveWorkspaceId(effectiveWorkspaceId);
+            setActiveClinicOwnerUid(effectiveOwnerUid);
+
+            try {
+              const { data } = await initializeOrLoadUserClinicInCloud(
+                effectiveOwnerUid,
+                memberScopedSettings,
+                memberScopedReceipts,
+                memberScopedInventory,
+                memberScopedExpenses
+              );
+              setSettings(data.settings);
+              setReceipts(data.receipts);
+              setInventory(data.inventory);
+              setExpenses(data.expenses);
+            } finally {
+              setCloudHydratedUid(effectiveOwnerUid);
+            }
 
             const roleLabels: Record<WorkspaceRole, string> = {
               owner: 'مالك العيادة',
@@ -473,8 +516,6 @@ export default function App() {
           } else {
             setCurrentRole('owner');
             setCurrentPermissions(DEFAULT_ROLE_PERMISSIONS.owner);
-            setActiveWorkspaceId(effectiveWorkspaceId);
-            setActiveClinicOwnerUid(user.uid);
 
             // Load user-scoped local cache (if any) or clean per-user initial settings
             const userDefaultSettings = createInitialClinicSettingsForUser(
@@ -485,42 +526,78 @@ export default function App() {
               getScopedStorageKey(STORAGE_KEYS.SETTINGS, user.uid),
               userDefaultSettings
             );
-            const scopedReceipts = loadFromStorage<ReceiptRecord[]>(
+
+            // Also rescue any unscoped records created while offline/logged-out
+            const unscopedReceipts = loadFromStorage<ReceiptRecord[]>(STORAGE_KEYS.RECEIPTS, []).filter(
+              (r) => r && !SEED_DEMO_IDS.receipts.has(r.id)
+            );
+            const unscopedInventory = loadFromStorage<InventoryItem[]>(
+              STORAGE_KEYS.INVENTORY,
+              []
+            ).filter((i) => i && !SEED_DEMO_IDS.inventory.has(i.id));
+            const unscopedExpenses = loadFromStorage<ExpenseRecord[]>(
+              STORAGE_KEYS.EXPENSES,
+              []
+            ).filter((e) => e && !SEED_DEMO_IDS.expenses.has(e.id));
+
+            const rawScopedReceipts = loadFromStorage<ReceiptRecord[]>(
               getScopedStorageKey(STORAGE_KEYS.RECEIPTS, user.uid),
               []
             ).filter((r) => r && !SEED_DEMO_IDS.receipts.has(r.id));
-            const scopedInventory = loadFromStorage<InventoryItem[]>(
+            const rawScopedInventory = loadFromStorage<InventoryItem[]>(
               getScopedStorageKey(STORAGE_KEYS.INVENTORY, user.uid),
               []
             ).filter((i) => i && !SEED_DEMO_IDS.inventory.has(i.id));
-            const scopedExpenses = loadFromStorage<ExpenseRecord[]>(
+            const rawScopedExpenses = loadFromStorage<ExpenseRecord[]>(
               getScopedStorageKey(STORAGE_KEYS.EXPENSES, user.uid),
               []
             ).filter((e) => e && !SEED_DEMO_IDS.expenses.has(e.id));
+
+            const mergeLocalArrays = <T extends { id: string }>(a: T[], b: T[]): T[] => {
+              const m = new Map<string, T>();
+              for (const x of b) if (x?.id) m.set(x.id, x);
+              for (const x of a) if (x?.id) m.set(x.id, x);
+              return Array.from(m.values());
+            };
+
+            const scopedReceipts = mergeLocalArrays(rawScopedReceipts, unscopedReceipts);
+            const scopedInventory = mergeLocalArrays(rawScopedInventory, unscopedInventory);
+            const scopedExpenses = mergeLocalArrays(rawScopedExpenses, unscopedExpenses);
+
+            // Clear unscoped records once merged into owner's clinic so they never leak to other accounts
+            if (unscopedReceipts.length > 0) localStorage.removeItem(STORAGE_KEYS.RECEIPTS);
+            if (unscopedInventory.length > 0) localStorage.removeItem(STORAGE_KEYS.INVENTORY);
+            if (unscopedExpenses.length > 0) localStorage.removeItem(STORAGE_KEYS.EXPENSES);
 
             setSettings(scopedSettings);
             setReceipts(scopedReceipts);
             setInventory(scopedInventory);
             setExpenses(scopedExpenses);
+            setActiveWorkspaceId(effectiveWorkspaceId);
+            setActiveClinicOwnerUid(user.uid);
 
-            const { isNewClinic, data } = await initializeOrLoadUserClinicInCloud(
-              user.uid,
-              scopedSettings,
-              scopedReceipts,
-              scopedInventory,
-              scopedExpenses
-            );
+            try {
+              const { isNewClinic, data } = await initializeOrLoadUserClinicInCloud(
+                user.uid,
+                scopedSettings,
+                scopedReceipts,
+                scopedInventory,
+                scopedExpenses
+              );
 
-            setSettings(data.settings);
-            setReceipts(data.receipts);
-            setInventory(data.inventory);
-            setExpenses(data.expenses);
+              setSettings(data.settings);
+              setReceipts(data.receipts);
+              setInventory(data.inventory);
+              setExpenses(data.expenses);
 
-            if (isNewClinic || pendingNewAccountRedirectRef.current) {
-              pendingNewAccountRedirectRef.current = false;
-              setIsNewAccountSetup(true);
-              setActiveSection('settings');
-              window.history.pushState({ section: 'settings' }, '', '#settings');
+              if (isNewClinic || pendingNewAccountRedirectRef.current) {
+                pendingNewAccountRedirectRef.current = false;
+                setIsNewAccountSetup(true);
+                setActiveSection('settings');
+                window.history.pushState({ section: 'settings' }, '', '#settings');
+              }
+            } finally {
+              setCloudHydratedUid(user.uid);
             }
           }
 
@@ -556,10 +633,12 @@ export default function App() {
           }
         } catch (err) {
           console.warn('Initial cloud sync notice:', err);
+          setCloudHydratedUid(user.uid);
         } finally {
           setIsSyncingCloud(false);
         }
       } else {
+        setCloudHydratedUid(null);
         setActiveClinicOwnerUid(null);
         setCurrentRole('owner');
         setCurrentPermissions(DEFAULT_ROLE_PERMISSIONS.owner);
@@ -588,8 +667,18 @@ export default function App() {
   const activeOwnerUid = activeClinicOwnerUid || currentUser?.uid || directSession?.ownerUid || null;
   const cloudTargetUid = currentUser ? (activeClinicOwnerUid || currentUser.uid) : null;
 
+  // Automatically flush any pending offline changes when internet connection returns
   useEffect(() => {
-    if (!authReady || !cloudTargetUid || !currentUser) return;
+    if (!cloudTargetUid || !currentUser) return;
+    const handleOnline = () => {
+      flushPendingSyncQueue(cloudTargetUid).catch(() => {});
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [cloudTargetUid, currentUser]);
+
+  useEffect(() => {
+    if (!authReady || !cloudTargetUid || !currentUser || cloudHydratedUid !== cloudTargetUid) return;
 
     const unsubCloud = subscribeToClinicCloudData(cloudTargetUid, {
       onSettingsUpdate: (partial) => {
@@ -624,7 +713,7 @@ export default function App() {
     });
 
     return () => unsubCloud();
-  }, [authReady, cloudTargetUid, currentUser]);
+  }, [authReady, cloudTargetUid, currentUser, cloudHydratedUid]);
 
   // Automatically re-check email verification when user returns to browser tab after clicking link
   useEffect(() => {
@@ -1643,12 +1732,14 @@ export default function App() {
               const targetClinicUid = cloudTargetUid;
               if (targetClinicUid) {
                 setIsSyncingCloud(true);
-                Promise.all([
-                  saveClinicSettingsToCloud(targetClinicUid, normalizedNext),
-                  ...normalizedNext.services.map((srv) =>
-                    saveServiceToCloud(targetClinicUid, srv)
-                  ),
-                ])
+                saveClinicSettingsToCloud(targetClinicUid, normalizedNext)
+                  .then(() =>
+                    Promise.all(
+                      normalizedNext.services.map((srv) =>
+                        saveServiceToCloud(targetClinicUid, srv)
+                      )
+                    )
+                  )
                   .then(() => {
                     notify('تم حفظ إعدادات عيادتك ومزامنتها سحابياً بنجاح', 'success');
                   })
