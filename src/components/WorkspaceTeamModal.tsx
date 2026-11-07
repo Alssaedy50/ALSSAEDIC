@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowUpCircle,
+  Building2,
   Check,
   Crown,
   KeyRound,
   Mail,
   Plus,
+  RefreshCw,
   Shield,
   Trash2,
   UserCheck,
@@ -20,7 +22,9 @@ import {
   WorkspaceRole,
 } from '../types/clinic';
 import {
+  RegisteredClinicSummary,
   addWorkspaceMemberInCloud,
+  fetchRegisteredSystemDirectory,
   isValidRealEmail,
   loadLocalWorkspaceMembers,
   removeWorkspaceMemberFromCloud,
@@ -105,11 +109,29 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     DEFAULT_ROLE_PERMISSIONS.accountant
   );
   const [loading, setLoading] = useState(false);
+  const [registeredClinics, setRegisteredClinics] = useState<RegisteredClinicSummary[]>([]);
+  const [totalRegisteredAccountsCount, setTotalRegisteredAccountsCount] = useState<number>(1);
+  const [directoryLoading, setDirectoryLoading] = useState<boolean>(false);
+  const [showClinicsList, setShowClinicsList] = useState<boolean>(false);
+
+  const refreshSystemDirectory = async () => {
+    setDirectoryLoading(true);
+    try {
+      const dir = await fetchRegisteredSystemDirectory(effectiveWsId);
+      setRegisteredClinics(dir.clinics);
+      setTotalRegisteredAccountsCount(Math.max(1, dir.accounts.length));
+    } catch {
+      // ignore
+    } finally {
+      setDirectoryLoading(false);
+    }
+  };
 
   useEffect(() => {
     const unsub = subscribeToWorkspaceMembers(effectiveWsId, (list) => {
       setCloudMembers(list);
     });
+    refreshSystemDirectory();
     return () => {
       unsub();
     };
@@ -220,6 +242,82 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Live System Clinics & Accounts Counter Card */}
+      <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/80 p-3.5 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
+              إحصائيات العيادات والحسابات المسجلة في النظام
+            </h4>
+          </div>
+          <button
+            type="button"
+            disabled={directoryLoading}
+            onClick={refreshSystemDirectory}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-[11px] font-bold text-slate-700 dark:text-slate-300 hover:border-sky-500/40"
+          >
+            <RefreshCw className={`w-3 h-3 ${directoryLoading ? 'animate-spin text-sky-500' : ''}`} />
+            <span>تحديث</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+            <div className="text-[11px] font-bold text-slate-500">العيادات المسجلة</div>
+            <div className="text-base font-black text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+              {Math.max(1, registeredClinics.length)}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+            <div className="text-[11px] font-bold text-slate-500">إجمالي الحسابات</div>
+            <div className="text-base font-black text-sky-600 dark:text-sky-400 font-mono mt-0.5">
+              {Math.max(1 + displayMembers.length, totalRegisteredAccountsCount)}
+            </div>
+          </div>
+
+          <div className="col-span-2 sm:col-span-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 flex flex-col justify-center">
+            <button
+              type="button"
+              onClick={() => setShowClinicsList((p) => !p)}
+              className="text-xs font-black text-sky-600 dark:text-sky-400 hover:underline"
+            >
+              {showClinicsList ? 'إخفاء سجل العيادات ▲' : 'عرض العيادات المسجلة ▼'}
+            </button>
+          </div>
+        </div>
+
+        {showClinicsList && (
+          <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+            {registeredClinics.length === 0 ? (
+              <div className="text-[11px] font-bold text-slate-500 text-center py-2">
+                عيادتك الحالية نشطة (سيظهر سجل السحابة فور المزامنة).
+              </div>
+            ) : (
+              registeredClinics.map((c, idx) => (
+                <div
+                  key={c.id}
+                  className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <div className="space-y-0.5">
+                    <div className="font-black text-slate-900 dark:text-slate-100">
+                      {idx + 1}. {c.clinicAr}
+                    </div>
+                    <div className="text-[11px] font-bold text-slate-500">
+                      {c.doctorAr} {c.address ? `— ${c.address}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-500" dir="ltr">
+                    {c.phones || c.updatedAt}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Add Member Form */}
       {effectiveIsOwner ? (
         <section className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 space-y-3">

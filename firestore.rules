@@ -29,6 +29,12 @@ service cloud.firestore {
       );
     }
 
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'alssaedy50@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
     function isClinicOwner(ownerId) {
       return isSignedIn() && request.auth.uid == ownerId;
     }
@@ -308,8 +314,8 @@ service cloud.firestore {
 
     // 1. Clinics Collection (/clinics/{clinicId})
     match /clinics/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || clinicId == request.auth.uid || isClinicMember(clinicId));
-      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
+      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || clinicId == request.auth.uid || isClinicMember(clinicId) || isSuperAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         clinicId == request.auth.uid &&
@@ -476,8 +482,8 @@ service cloud.firestore {
 
     // 6. Authenticated Clinic Workspaces (/clinic_workspaces/{clinicId})
     match /clinic_workspaces/{clinicId} {
-      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || existing().ownerId == request.auth.uid || isClinicMember(existing().ownerId));
-      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId));
+      allow get: if isSignedIn() && isValidId(clinicId) && (resource == null || existing().ownerId == request.auth.uid || isClinicMember(existing().ownerId) || isSuperAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
         incoming().clinicId == clinicId &&
@@ -532,9 +538,10 @@ service cloud.firestore {
       allow get: if isSignedIn() && (
         resource == null ||
         request.auth.token.email == memberKey ||
-        resource.data.addedBy == request.auth.uid
+        resource.data.addedBy == request.auth.uid ||
+        isSuperAdmin()
       );
-      allow list: if isSignedIn() && resource.data.addedBy == request.auth.uid;
+      allow list: if isSignedIn() && (resource.data.addedBy == request.auth.uid || isSuperAdmin());
       allow create, update: if isSignedIn() &&
         incoming().addedBy == request.auth.uid &&
         (resource == null || existing().addedBy == request.auth.uid);

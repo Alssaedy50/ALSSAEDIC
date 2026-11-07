@@ -1891,4 +1891,109 @@ export async function lookupUserWorkspaceByEmail(
   }
 }
 
+export interface RegisteredClinicSummary {
+  id: string;
+  clinicAr: string;
+  doctorAr: string;
+  phones: string;
+  address: string;
+  updatedAt: string;
+}
+
+export interface RegisteredAccountSummary {
+  email: string;
+  displayName?: string;
+  role: WorkspaceRole;
+  workspaceId: string;
+}
+
+export async function fetchRegisteredSystemDirectory(
+  workspaceId: string
+): Promise<{
+  clinics: RegisteredClinicSummary[];
+  accounts: RegisteredAccountSummary[];
+}> {
+  const safeWsId = normalizeClinicWorkspaceId(workspaceId || 'alssaedy-clinic');
+  const localMembers = loadLocalWorkspaceMembers(safeWsId);
+  const accountMap = new Map<string, RegisteredAccountSummary>();
+
+  if (auth.currentUser?.email) {
+    accountMap.set(auth.currentUser.email.toLowerCase(), {
+      email: auth.currentUser.email.toLowerCase(),
+      displayName: auth.currentUser.displayName || 'الحساب الرئيسي (المالك)',
+      role: 'owner',
+      workspaceId: safeWsId,
+    });
+  }
+
+  for (const m of localMembers) {
+    if (m.email) {
+      accountMap.set(m.email.toLowerCase(), {
+        email: m.email.toLowerCase(),
+        displayName: m.displayName,
+        role: m.role,
+        workspaceId: safeWsId,
+      });
+    }
+  }
+
+  const clinics: RegisteredClinicSummary[] = [];
+
+  if (!auth.currentUser) {
+    return {
+      clinics,
+      accounts: Array.from(accountMap.values()),
+    };
+  }
+
+  const isSuperAdmin = auth.currentUser.email?.toLowerCase() === 'alssaedy50@gmail.com';
+
+  try {
+    const clinicsQuery = isSuperAdmin
+      ? query(collection(db, 'clinics'))
+      : query(collection(db, 'clinics'), where('ownerId', '==', auth.currentUser.uid));
+    const clinicsSnap = await getDocs(clinicsQuery);
+    clinicsSnap.docs.forEach((docSnap) => {
+      const d = docSnap.data();
+      clinics.push({
+        id: docSnap.id,
+        clinicAr: String(d.clinicAr || 'عيادة مسجلة'),
+        doctorAr: String(d.doctorAr || ''),
+        phones: String(d.phones || ''),
+        address: String(d.address || ''),
+        updatedAt: d.updatedAt?.toDate
+          ? d.updatedAt.toDate().toISOString().slice(0, 10)
+          : '',
+      });
+    });
+  } catch (err) {
+    console.warn('Directory clinics fetch notice:', err);
+  }
+
+  try {
+    const accountsQuery = isSuperAdmin
+      ? query(collection(db, 'user_workspaces'))
+      : query(collection(db, 'user_workspaces'), where('addedBy', '==', auth.currentUser.uid));
+    const accountsSnap = await getDocs(accountsQuery);
+    accountsSnap.docs.forEach((docSnap) => {
+      const d = docSnap.data();
+      const email = String(d.email || docSnap.id).toLowerCase();
+      accountMap.set(email, {
+        email,
+        displayName: d.displayName ? String(d.displayName) : undefined,
+        role: (d.role || 'viewer') as WorkspaceRole,
+        workspaceId: String(d.workspaceId || safeWsId),
+      });
+    });
+  } catch (err) {
+    console.warn('Directory accounts fetch notice:', err);
+  }
+
+  return {
+    clinics,
+    accounts: Array.from(accountMap.values()),
+  };
+}
+
+
 
