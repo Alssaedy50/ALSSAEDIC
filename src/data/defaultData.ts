@@ -17,14 +17,10 @@ export const PLATFORM_DEVELOPER_EMAILS = [
 
 export function isPlatformDeveloperUser(userEmail?: string | null): boolean {
   const clean = String(userEmail || '').trim().toLowerCase();
-  if (PLATFORM_DEVELOPER_EMAILS.includes(clean) || clean.startsWith('alssaedy')) {
+  if (clean && PLATFORM_DEVELOPER_EMAILS.includes(clean)) {
     return true;
   }
-  try {
-    return typeof window !== 'undefined' && window.localStorage.getItem('docai_developer_mode_active') === 'true';
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 export const DEFAULT_SUBSCRIPTION: ClinicSubscription = {
@@ -120,7 +116,7 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
     address: 'ريمة - كسمة - عزلة الضبارة',
     phones: '+967 716 339 366 | +967 739 550 138 | +967 775 956 520',
     defaultCurrency: 'ريال يمني',
-    ownerEmail: 'alssaedy50@gmail.com',
+    ownerEmail: '',
   },
   appearance: {
     primaryColor: '#0B2545',
@@ -229,12 +225,14 @@ export function createInitialClinicSettingsForUser(
   const cleanEmail = String(email || '').trim().toLowerCase();
   const isDev = isPlatformDeveloperUser(cleanEmail);
 
-  if (!cleanEmail || isDev) {
+  if (isDev) {
     return {
       ...DEFAULT_SETTINGS,
       identity: {
         ...DEFAULT_SETTINGS.identity,
-        ownerEmail: cleanEmail || DEFAULT_SETTINGS.identity.ownerEmail || 'alssaedy50@gmail.com',
+        clinicAr: 'حساب المطور — عيادة السعيدي لطب الأسنان',
+        doctorAr: 'د. عمير السعيدي',
+        ownerEmail: cleanEmail || 'alssaedy50@gmail.com',
       },
       appearance: { ...DEFAULT_SETTINGS.appearance },
       features: { ...DEFAULT_SETTINGS.features },
@@ -251,6 +249,21 @@ export function createInitialClinicSettingsForUser(
         activatedBy: 'مطور المنصة',
         notes: 'حساب مالك ومطور المنصة المعتمد',
       },
+    };
+  }
+
+  if (!cleanEmail) {
+    return {
+      ...DEFAULT_SETTINGS,
+      identity: {
+        ...DEFAULT_SETTINGS.identity,
+        ownerEmail: '',
+      },
+      appearance: { ...DEFAULT_SETTINGS.appearance },
+      features: { ...DEFAULT_SETTINGS.features },
+      services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
+      telegramBackup: { enabled: false, autoBackupOnReceipt: true, botToken: '', chatId: '' },
+      subscription: { ...DEFAULT_SUBSCRIPTION },
     };
   }
 

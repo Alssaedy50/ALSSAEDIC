@@ -425,9 +425,13 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                       <div className="text-[11px] font-bold text-slate-500">
                         {c.doctorAr} {c.address ? `— ${c.address}` : ''}
                       </div>
-                      {c.ownerEmail && (
-                        <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400" dir="ltr">
+                      {c.ownerEmail ? (
+                        <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-bold" dir="ltr">
                           {c.ownerEmail}
+                        </div>
+                      ) : (
+                        <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                          حساب محلي / مساحة عمل خاصة (غير مرتبط ببريد سحابي)
                         </div>
                       )}
                     </div>
