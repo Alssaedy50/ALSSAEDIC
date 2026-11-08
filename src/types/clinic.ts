@@ -122,6 +122,7 @@ export interface ClinicSettings {
   services: DentalServiceItem[];
   telegramBackup?: TelegramBackupSettings;
   subscription?: ClinicSubscription;
+  aiConfig?: AIProviderConfig;
 }
 
 export interface AIProviderConfig {

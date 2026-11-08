@@ -102,6 +102,7 @@ service cloud.firestore {
         'permanentAccountantSig',
         'telegramBackup',
         'subscription',
+        'aiConfig',
         'createdAt',
         'updatedAt'
       ]) &&
@@ -124,6 +125,7 @@ service cloud.firestore {
       data.permanentAccountantSig is string && data.permanentAccountantSig.size() <= 250000 &&
       (!('telegramBackup' in data) || data.telegramBackup is map) &&
       (!('subscription' in data) || data.subscription is map) &&
+      (!('aiConfig' in data) || data.aiConfig is map) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }

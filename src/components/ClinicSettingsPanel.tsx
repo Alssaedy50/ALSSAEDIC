@@ -1,8 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
-  Bot,
   Building2,
-  Check,
   CheckCircle2,
   Cpu,
   Crown,
@@ -17,46 +15,43 @@ import {
   Key,
   Lock,
   Mic,
-  PhoneCall,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
   Send,
-  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Trash2,
-  Unlock,
   Upload,
   X,
-  Zap,
 } from 'lucide-react';
 import {
   AIProviderConfig,
   ClinicSettings,
-  ClinicSubscription,
   CurrencyCode,
   DentalServiceItem,
   ExpenseRecord,
   InventoryItem,
-  PaidPackageTier,
   ReceiptRecord,
   TelegramBackupSettings,
   WorkspaceRole,
+  DEFAULT_AI_CONFIG,
 } from '../types/clinic';
 import {
   CURRENCIES,
   DEFAULT_CLINIC_LOGO_DATA_URI,
-  DEFAULT_SUBSCRIPTION,
-  PLATFORM_PACKAGES,
   isPlatformDeveloperUser,
 } from '../data/defaultData';
 import {
+  RegisteredClinicSummary,
+  applyAiConfigToAllClinicsByDeveloper,
   auth,
+  fetchRegisteredSystemDirectory,
   flushPendingSyncQueue,
   getActiveCloudDiagnostics,
   sendBackupToTelegramApi,
+  updateClinicAiConfigByDeveloper,
 } from '../firebase';
 import {
   GEMINI_CANDIDATE_MODELS,
@@ -114,11 +109,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   notify,
 }) => {
   // Strict Platform Developer check (alssaedy50@gmail.com only)
-  const isPlatformDev = isPlatformDeveloperUser(auth.currentUser?.email || ownerEmail);
+  const isPlatformDev = isPlatformDeveloperUser(auth.currentUser?.email);
 
   const [subTab, setSubTab] = useState<'identity' | 'services' | 'team' | 'backup' | 'ai' | 'subscription'>(() => {
     if (initialSubTab) {
-      if (initialSubTab === 'subscription' && !isPlatformDev) return 'identity';
+      if ((initialSubTab === 'ai' || initialSubTab === 'subscription') && !isPlatformDev) {
+        return 'identity';
+      }
+      if (initialSubTab === 'subscription') return 'ai';
       return initialSubTab;
     }
     try {
@@ -128,8 +126,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         saved === 'services' ||
         saved === 'team' ||
         saved === 'backup' ||
-        saved === 'ai' ||
-        (saved === 'subscription' && isPlatformDev)
+        (saved === 'ai' && isPlatformDev)
       ) {
         return saved;
       }
@@ -141,23 +138,20 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   const [formState, setFormState] = useState<ClinicSettings>(settings);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const [devAiEnabled, setDevAiEnabled] = useState<boolean>(() => formState.subscription?.isAiEnabled ?? false);
-  const [devPlanId, setDevPlanId] = useState<'free' | 'ai_pro' | 'enterprise'>(
-    () => formState.subscription?.planId ?? 'free'
-  );
-  const [devStatus, setDevStatus] = useState<'active' | 'expired' | 'trial' | 'locked'>(
-    () => formState.subscription?.status ?? 'locked'
-  );
-  const [devExpiresAt, setDevExpiresAt] = useState<string>(() => formState.subscription?.expiresAt ?? '');
-  const [devNotes, setDevNotes] = useState<string>(() => formState.subscription?.notes ?? '');
-
-  // AI BYOK Configuration state
-  const [aiConfig, setAiConfig] = useState<AIProviderConfig>(() => loadAIProviderConfig());
+  // AI Configuration state (Strictly managed by Platform Developer per clinic)
+  const [aiConfig, setAiConfig] = useState<AIProviderConfig>(() => settings.aiConfig || loadAIProviderConfig());
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showGroqKey, setShowGroqKey] = useState(false);
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [testingProvider, setTestingProvider] = useState<'gemini' | 'groq' | 'openrouter' | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latencyMs: number; error?: string }>>({});
+
+  // Developer Per-Clinic AI Key Management State
+  const [devClinicsList, setDevClinicsList] = useState<RegisteredClinicSummary[]>([]);
+  const [selectedDevClinicId, setSelectedDevClinicId] = useState<string>(() => ownerUid || auth.currentUser?.uid || '');
+  const [isLoadingDevClinics, setIsLoadingDevClinics] = useState(false);
+  const [isSavingClinicAi, setIsSavingClinicAi] = useState(false);
+  const [isApplyingAiToAll, setIsApplyingAiToAll] = useState(false);
 
   // Pop-up Add Service Modal
   const [isAddServiceModalOpen, setIsAddServiceModalOpen] = useState(false);
@@ -221,10 +215,44 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   React.useEffect(() => {
     if (isNewAccountSetup) {
       setSubTab('identity');
-    } else if (!isPlatformDev && subTab === 'subscription') {
+    } else if (!isPlatformDev && (subTab === 'ai' || subTab === 'subscription')) {
       setSubTab('identity');
+    } else if (subTab === 'subscription') {
+      setSubTab(isPlatformDev ? 'ai' : 'identity');
     }
   }, [isNewAccountSetup, isPlatformDev, subTab]);
+
+  const loadDeveloperClinicsDirectory = React.useCallback(async () => {
+    if (!isPlatformDev) return;
+    setIsLoadingDevClinics(true);
+    try {
+      const res = await fetchRegisteredSystemDirectory(
+        workspaceId || 'alssaedy-clinic',
+        ownerEmail || formState.identity.ownerEmail || auth.currentUser?.email
+      );
+      setDevClinicsList(res.clinics);
+      setSelectedDevClinicId((prev) => {
+        if (prev && res.clinics.some((c) => c.id === prev)) return prev;
+        return res.clinics[0]?.id || ownerUid || auth.currentUser?.uid || '';
+      });
+    } catch {
+      // Ignore directory load errors
+    } finally {
+      setIsLoadingDevClinics(false);
+    }
+  }, [
+    isPlatformDev,
+    workspaceId,
+    ownerUid,
+    ownerEmail,
+    formState.identity.ownerEmail,
+  ]);
+
+  React.useEffect(() => {
+    if (isPlatformDev && subTab === 'ai') {
+      loadDeveloperClinicsDirectory();
+    }
+  }, [isPlatformDev, subTab, loadDeveloperClinicsDirectory]);
 
   React.useEffect(() => {
     try {
@@ -581,9 +609,98 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     }));
   };
 
-  const handleSaveAiSettings = () => {
+  const handleSelectDevClinicForAi = (clinicId: string) => {
+    setSelectedDevClinicId(clinicId);
+    const found = devClinicsList.find((c) => c.id === clinicId);
+    if (found?.aiConfig) {
+      const hasAnyKey = Boolean(
+        found.aiConfig.geminiApiKey?.trim() ||
+          found.aiConfig.groqApiKey?.trim() ||
+          found.aiConfig.openrouterApiKey?.trim()
+      );
+      if (hasAnyKey) {
+        setAiConfig({
+          ...DEFAULT_AI_CONFIG,
+          ...found.aiConfig,
+        });
+      }
+    }
+  };
+
+  const handleSaveAiSettings = async () => {
     saveAIProviderConfig(aiConfig);
-    notify('تم حفظ مفاتيح وإعدادات الذكاء الاصطناعي بنجاح', 'success');
+    if (!isPlatformDev) return;
+
+    const targetClinic: RegisteredClinicSummary =
+      devClinicsList.find((c) => c.id === selectedDevClinicId) || {
+        id: selectedDevClinicId || ownerUid || auth.currentUser?.uid || 'local_owner',
+        clinicAr: formState.identity.clinicAr || formState.identity.systemTitleAr || 'العيادة الحالية',
+        doctorAr: formState.identity.doctorAr || '',
+        ownerEmail: ownerEmail || formState.identity.ownerEmail || auth.currentUser?.email || '',
+        phones: formState.identity.phones || '',
+        address: formState.identity.address || '',
+        updatedAt: new Date().toISOString(),
+      };
+
+    setIsSavingClinicAi(true);
+    try {
+      await updateClinicAiConfigByDeveloper(targetClinic, aiConfig);
+      setDevClinicsList((prev) =>
+        prev.map((c) =>
+          c.id === targetClinic.id
+            ? { ...c, aiConfig: { ...aiConfig } }
+            : c
+        )
+      );
+      if (targetClinic.id === (ownerUid || auth.currentUser?.uid)) {
+        const nextSettings: ClinicSettings = {
+          ...formState,
+          aiConfig: { ...aiConfig },
+        };
+        setFormState(nextSettings);
+        onSaveSettings(nextSettings);
+      }
+      notify(`تم حفظ وتفعيل مفاتيح الذكاء الاصطناعي لعيادة (${targetClinic.clinicAr}) سحابياً بنجاح ✅`, 'success');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر حفظ مفاتيح الذكاء للعيادة سحابياً', 'error');
+    } finally {
+      setIsSavingClinicAi(false);
+    }
+  };
+
+  const handleApplyAiSettingsToAllClinics = async () => {
+    if (!isPlatformDev) return;
+    saveAIProviderConfig(aiConfig);
+    setIsApplyingAiToAll(true);
+    try {
+      const clinicsToUpdate: RegisteredClinicSummary[] =
+        devClinicsList.length > 0
+          ? devClinicsList
+          : [
+              {
+                id: ownerUid || auth.currentUser?.uid || 'local_owner',
+                clinicAr: formState.identity.clinicAr || 'العيادة الحالية',
+                doctorAr: formState.identity.doctorAr || '',
+                ownerEmail: ownerEmail || formState.identity.ownerEmail || '',
+                phones: formState.identity.phones || '',
+                address: formState.identity.address || '',
+                updatedAt: new Date().toISOString(),
+              },
+            ];
+      const count = await applyAiConfigToAllClinicsByDeveloper(clinicsToUpdate, aiConfig);
+      setDevClinicsList((prev) => prev.map((c) => ({ ...c, aiConfig: { ...aiConfig } })));
+      const nextSettings: ClinicSettings = {
+        ...formState,
+        aiConfig: { ...aiConfig },
+      };
+      setFormState(nextSettings);
+      onSaveSettings(nextSettings);
+      notify(`تم تعميم وحفظ مفاتيح الذكاء الاصطناعي لجميع العيادات المسجلة (${count} عيادة) بنجاح ✅`, 'success');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر تعميم مفاتيح الذكاء على العيادات', 'error');
+    } finally {
+      setIsApplyingAiToAll(false);
+    }
   };
 
   const handleTestProvider = async (provider: 'gemini' | 'groq' | 'openrouter') => {
@@ -629,10 +746,10 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
-      {/* Top Segmented Switcher (الهوية | الخدمات | الفريق | النسخ | الذكاء الاصطناعي | [للمطور فقط: الميزات المدفوعة]) */}
+      {/* Top Segmented Switcher (الهوية | الخدمات | الفريق | النسخ | [للمطور فقط: الذكاء AI]) */}
       <div
-        className={`grid grid-cols-3 ${
-          isPlatformDev ? 'sm:grid-cols-6' : 'sm:grid-cols-5'
+        className={`grid grid-cols-2 ${
+          isPlatformDev ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
         } gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] sm:text-xs`}
       >
         <button
@@ -691,36 +808,22 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         >
           النسخ
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setSubTab('ai');
-            try { localStorage.setItem('docai_settings_subtab_v1', 'ai'); } catch {}
-          }}
-          className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
-            subTab === 'ai'
-              ? 'bg-sky-600 text-white shadow-xs'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          }`}
-        >
-          <Sparkles className="w-3 h-3 shrink-0" />
-          <span>الذكاء (AI)</span>
-        </button>
         {isPlatformDev && (
           <button
             type="button"
             onClick={() => {
-              setSubTab('subscription');
-              try { localStorage.setItem('docai_settings_subtab_v1', 'subscription'); } catch {}
+              setSubTab('ai');
+              try { localStorage.setItem('docai_settings_subtab_v1', 'ai'); } catch {}
             }}
-            className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
-              subTab === 'subscription'
+            className={`col-span-2 sm:col-span-1 py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
+              subTab === 'ai'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300'
             }`}
           >
             <Crown className="w-3.5 h-3.5 shrink-0 text-amber-300" />
-            <span>الباقات (للمطور)</span>
+            <Sparkles className="w-3 h-3 shrink-0" />
+            <span>الذكاء (AI للمطور)</span>
           </button>
         )}
       </div>
@@ -1323,71 +1426,111 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         </div>
       )}
 
-      {/* TAB 5: AI MULTI-PROVIDER ARCHITECTURE (BYOK) */}
-      {subTab === 'ai' && (
+      {/* TAB 5: DEVELOPER-ONLY AI MULTI-PROVIDER ARCHITECTURE & PER-CLINIC KEYS */}
+      {subTab === 'ai' && isPlatformDev && (
         <div className="space-y-4">
-          {/* Header & Save Bar */}
-          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
+          {/* Developer Per-Clinic Selector & Save Bar */}
+          <section className="rounded-2xl border-2 border-amber-500/40 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
-                  <Sparkles className="w-4 h-4" />
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <Crown className="w-4 h-4" />
                 </div>
                 <div>
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                    إعدادات نماذج ومزودي الذكاء الاصطناعي (AI Settings & BYOK)
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">
+                      إدارة مفاتيح الذكاء الاصطناعي للعيادات
+                    </h2>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                      للمطور فقط
+                    </span>
+                  </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    أدخل مفاتيحك الخاصة مع التبديل التلقائي الذكي ومحركات الرؤية والتسجيل الصوتي
+                    أدخل مفاتيح الذكاء لكل عيادة أو عمّمها على جميع العيادات المسجلة (لا تظهر خيارات المفاتيح داخل حسابات العيادات)
                   </p>
                 </div>
               </div>
 
-              {/* Paid Status Alert if AI is locked */}
-              {!formState.subscription?.isAiEnabled && !isPlatformDev && (
-                <div className="w-full rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
-                      <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                      <span>خدمات الذكاء الاصطناعي ميزة مدفوعة ومقفلة لعيادتك حالياً</span>
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold text-[10px]">
-                      يتطلب ترخيص المطور
-                    </span>
-                  </div>
-                  <p className="text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
-                    يمكنك إدخال واختبار مفاتيحك الخاصة هنا بحرية، ولكن لتشغيل المساعد السريري وفحص الأشعة والتفريغ الصوتي بالسندات، يرجى التواصل مع مطور المنصة لفتح الميزات المدفوعة لعيادتك.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                    <a
-                      href={`https://wa.me/967716339366?text=${encodeURIComponent(
-                        `السلام عليكم د. صلاح الدين السعيدي، أرغب في تفعيل باقة الذكاء الاصطناعي لعيادة (${formState.identity.clinicAr || 'العيادة'}).`
-                      )}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-colors"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>مراسلة مطور المنصة لتفعيل الباقة (واتساب)</span>
-                    </a>
-                    <a
-                      href="tel:+967716339366"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-[11px] transition-colors"
-                    >
-                      <PhoneCall className="w-3.5 h-3.5 text-sky-500" />
-                      <span>716339366</span>
-                    </a>
-                  </div>
-                </div>
-              )}
               <button
                 type="button"
-                onClick={handleSaveAiSettings}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg shadow-xs transition-colors"
+                onClick={loadDeveloperClinicsDirectory}
+                disabled={isLoadingDevClinics}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
               >
-                <Save className="w-3.5 h-3.5" />
-                <span>حفظ الإعدادات</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDevClinics ? 'animate-spin' : ''}`} />
+                <span>تحديث قائمة العيادات ({devClinicsList.length})</span>
               </button>
+            </div>
+
+            {/* Target Clinic Picker for AI Keys */}
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 dark:bg-amber-950/20 p-3.5 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <label className="text-xs font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span>اختر العيادة المستهدفة لإدخال أو تعديل مفاتيح الذكاء لها:</span>
+                </label>
+                {selectedDevClinicId && (
+                  <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                    معرّف العيادة: {selectedDevClinicId.slice(0, 10)}...
+                  </span>
+                )}
+              </div>
+
+              <select
+                value={selectedDevClinicId}
+                onChange={(e) => handleSelectDevClinicForAi(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100"
+              >
+                {devClinicsList.length === 0 ? (
+                  <option value={ownerUid || auth.currentUser?.uid || 'local_owner'}>
+                    {formState.identity.clinicAr || 'العيادة الحالية'} — {ownerEmail || auth.currentUser?.email}
+                  </option>
+                ) : (
+                  devClinicsList.map((clinic, idx) => {
+                    const hasKeys = Boolean(
+                      clinic.aiConfig?.geminiApiKey?.trim() ||
+                        clinic.aiConfig?.groqApiKey?.trim() ||
+                        clinic.aiConfig?.openrouterApiKey?.trim()
+                    );
+                    return (
+                      <option key={clinic.id} value={clinic.id}>
+                        {idx + 1}. {clinic.clinicAr} ({clinic.doctorAr || clinic.ownerEmail}){' '}
+                        {hasKeys ? '— [مفاتيح مضافة ✓]' : '— [بدون مفاتيح مخصصة]'}
+                      </option>
+                    );
+                  })
+                )}
+              </select>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={isSavingClinicAi}
+                  onClick={handleSaveAiSettings}
+                  className="py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xs transition-colors"
+                >
+                  {isSavingClinicAi ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  <span>حفظ وتفعيل المفاتيح للعيادة المحددة فقط</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isApplyingAiToAll}
+                  onClick={handleApplyAiSettingsToAllClinics}
+                  className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xs transition-colors"
+                >
+                  {isApplyingAiToAll ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  <span>تعميم وحفظ المفاتيح لجميع العيادات ({devClinicsList.length || 1})</span>
+                </button>
+              </div>
             </div>
 
             {/* Architecture Visual Pipeline Banner */}
@@ -1398,7 +1541,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   <span>سلسلة التبديل الذكي التلقائي (Automatic Failover Chain):</span>
                 </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
-                  حماية متواصلة 100%
+                  مزامنة سحابية فورية للعيادة
                 </span>
               </div>
 
@@ -1416,23 +1559,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 </span>
                 <span className="text-slate-400">←</span>
                 <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 shadow-2xs">
-                  4. خادم الوكيل / المحلي
+                  4. خادم المنصة الاحتياطي
                 </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px] text-slate-600 dark:text-slate-400 font-medium">
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                  <span>تبديل فوري عند نفاد الكوتا (429) أو أخطاء 5xx</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                  <span>توجيه ذكي لصور الأشعة نحو نماذج Vision فقط</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <ShieldCheck className="w-3 h-3 text-sky-500 shrink-0" />
-                  <span>تخزين مشفر محلياً بمتصفحك دون إرسالها لأي طرف</span>
-                </div>
               </div>
             </div>
           </section>
@@ -1845,196 +1973,36 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             </div>
           </section>
 
-          {/* Big Bottom Save Button */}
-          <div className="pt-2">
+          {/* Bottom Save Actions for Selected Clinic or All Clinics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             <button
               type="button"
+              disabled={isSavingClinicAi}
               onClick={handleSaveAiSettings}
-              className="w-full py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
+              className="w-full py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
             >
-              <Save className="w-4 h-4" />
-              <span>حفظ وتطبيق إعدادات ومفاتيح الذكاء الاصطناعي</span>
+              {isSavingClinicAi ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              <span>حفظ وتفعيل المفاتيح للعيادة المحددة سحابياً</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isApplyingAiToAll}
+              onClick={handleApplyAiSettingsToAllClinics}
+              className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
+            >
+              {isApplyingAiToAll ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>تعميم وحفظ المفاتيح لجميع العيادات المسجلة</span>
             </button>
           </div>
-        </div>
-      )}
-
-      {/* TAB 6: DEVELOPER-ONLY PAID FEATURES & PACKAGES (الميزات المدفوعة والباقات — للمطور فقط) */}
-      {subTab === 'subscription' && isPlatformDev && (
-        <div className="space-y-4">
-          {/* Developer Multi-Clinic Directory (Open/Close Paid Features & Delete Clinics) */}
-          <section className="rounded-2xl border-2 border-amber-500/40 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
-            <WorkspaceTeamPanel
-              workspaceId={workspaceId || 'alssaedy-clinic'}
-              ownerUid={ownerUid || 'local_owner'}
-              isOwner={isOwner}
-              currentRole={currentRole}
-              ownerEmail={ownerEmail || formState.identity.ownerEmail}
-              doctorName={formState.identity.doctorAr || formState.identity.systemTitleAr}
-              clinicName={formState.identity.clinicAr || formState.identity.systemTitleAr}
-              notify={notify}
-            />
-          </section>
-
-          {/* Current Active Clinic Subscription Controls */}
-          <section className="rounded-2xl border-2 border-amber-500/50 bg-linear-to-b from-amber-500/5 to-transparent dark:from-amber-950/20 p-4 sm:p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-amber-500/20">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-sm">
-                  <Crown className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                    <span>إعدادات باقة العيادة الحالية</span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold">
-                      Developer Only
-                    </span>
-                  </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    خاص بمطور البرنامج (alssaedy50@gmail.com) للتحكم المباشر في باقة العيادة المفتوحة حالياً
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30">
-                <ShieldCheck className="w-4 h-4" />
-                <span>صلاحية مطور المنصة</span>
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-1">
-              {/* Instant AI Toggle */}
-              <div className="p-3.5 rounded-xl border border-amber-500/30 bg-white dark:bg-slate-900 flex items-center justify-between gap-4">
-                <div className="space-y-0.5">
-                  <div className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                    {devAiEnabled ? (
-                      <Unlock className="w-4 h-4 text-emerald-500" />
-                    ) : (
-                      <Lock className="w-4 h-4 text-amber-500" />
-                    )}
-                    <span>ترخيص وفتح خدمة الذكاء الاصطناعي لهذه العيادة:</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    عند التفعيل، يمكن للعيادة استخدام المساعد الذكي وفحص الأشعة والتفريغ الصوتي دون قفل.
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={devAiEnabled}
-                    onChange={(e) => setDevAiEnabled(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-300 peer-focus:outline-hidden rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                </label>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    تحديد الباقة المعتمدة
-                  </label>
-                  <select
-                    value={devPlanId}
-                    onChange={(e) => {
-                      const val = e.target.value as 'free' | 'ai_pro' | 'enterprise';
-                      setDevPlanId(val);
-                      if (val !== 'free') setDevAiEnabled(true);
-                    }}
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="free">الباقة الأساسية (مجاناً - بدون AI)</option>
-                    <option value="ai_pro">باقة الذكاء الاصطناعي الطبي (AI Pro)</option>
-                    <option value="enterprise">باقة العيادة المتكاملة الشاملة (Enterprise)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    حالة الاشتراك
-                  </label>
-                  <select
-                    value={devStatus}
-                    onChange={(e) => setDevStatus(e.target.value as 'active' | 'expired' | 'trial' | 'locked')}
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="active">نشط ومفعل (Active)</option>
-                    <option value="trial">فترة تجريبية (Trial)</option>
-                    <option value="locked">مغلق ومحجوب (Locked)</option>
-                    <option value="expired">منتهي الصلاحية (Expired)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    تاريخ انتهاء الترخيص (اختياري)
-                  </label>
-                  <input
-                    type="date"
-                    value={devExpiresAt}
-                    onChange={(e) => setDevExpiresAt(e.target.value)}
-                    placeholder="اتركه فارغاً لدائم"
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  ملاحظات المطور للعيادة (تظهر في معلومات الاشتراك)
-                </label>
-                <input
-                  type="text"
-                  value={devNotes}
-                  onChange={(e) => setDevNotes(e.target.value)}
-                  placeholder="مثال: تم سداد الاشتراك السنوي عبر بنك الكريمي — ترخيص سارٍ"
-                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
-                />
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const planInfo = PLATFORM_PACKAGES.find((p) => p.id === devPlanId);
-                    const updatedSubscription: ClinicSubscription = {
-                      planId: devPlanId,
-                      planNameAr:
-                        planInfo?.nameAr ||
-                        (devPlanId === 'enterprise'
-                          ? 'باقة العيادة المتكاملة الشاملة'
-                          : devPlanId === 'ai_pro'
-                            ? 'باقة الذكاء الاصطناعي الطبي'
-                            : 'الباقة الأساسية'),
-                      isAiEnabled: devAiEnabled,
-                      status: devStatus,
-                      activatedAt: formState.subscription?.activatedAt || new Date().toISOString().slice(0, 10),
-                      expiresAt: devExpiresAt || undefined,
-                      activatedBy: auth.currentUser?.email || 'مطور ومالك المنصة (د. صلاح الدين السعيدي)',
-                      notes: devNotes.trim() || undefined,
-                    };
-
-                    const nextSettings: ClinicSettings = {
-                      ...formState,
-                      subscription: updatedSubscription,
-                    };
-                    setFormState(nextSettings);
-                    onSaveSettings(nextSettings);
-                    notify(
-                      devAiEnabled
-                        ? 'تم حفظ وتطبيق باقة الذكاء الاصطناعي للعيادة سحابياً بنجاح! 👑'
-                        : 'تم حفظ وتحديث حالة الاشتراك للعيادة سحابياً.',
-                      devAiEnabled ? 'success' : 'info'
-                    );
-                  }}
-                  className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-colors"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>حفظ وتطبيق حالة اشتراك العيادة الحالية سحابياً</span>
-                </button>
-              </div>
-            </div>
-          </section>
         </div>
       )}
       {isAddServiceModalOpen && (

@@ -6,23 +6,26 @@ import {
   CheckCircle2,
   Copy,
   Crown,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   Mail,
   Plus,
   RefreshCw,
+  Save,
   Shield,
   ShieldCheck,
   Sparkles,
   Trash2,
-  Unlock,
   UserCheck,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import {
-  ClinicSubscription,
+  AIProviderConfig,
+  DEFAULT_AI_CONFIG,
   DEFAULT_ROLE_PERMISSIONS,
   WorkspaceMember,
   WorkspacePermissions,
@@ -39,9 +42,18 @@ import {
   loadLocalWorkspaceMembers,
   removeWorkspaceMemberFromCloud,
   subscribeToWorkspaceMembers,
-  updateClinicSubscriptionByDeveloper,
+  updateClinicAiConfigByDeveloper,
   updateWorkspaceMemberRoleInCloud,
 } from '../firebase';
+import {
+  GEMINI_CANDIDATE_MODELS,
+  GROQ_TEXT_MODELS,
+  GROQ_VISION_MODELS,
+  GROQ_WHISPER_MODELS,
+  OPENROUTER_MODELS,
+  formatModelDisplayLabel,
+  loadAIProviderConfig,
+} from '../utils/aiClient';
 
 export interface WorkspaceTeamPanelProps {
   workspaceId: string;
@@ -133,6 +145,9 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   const [copiedEmail, setCopiedEmail] = useState(false);
   const [busyClinicId, setBusyClinicId] = useState<string | null>(null);
   const [confirmDeleteClinicId, setConfirmDeleteClinicId] = useState<string | null>(null);
+  const [editingAiClinicId, setEditingAiClinicId] = useState<string | null>(null);
+  const [clinicAiDraft, setClinicAiDraft] = useState<AIProviderConfig>(() => loadAIProviderConfig());
+  const [showInlineKeys, setShowInlineKeys] = useState<boolean>(false);
 
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => auth.currentUser?.email || null);
 
@@ -201,10 +216,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
       .catch(() => {});
   };
 
-  const isDeveloperSuperAdmin = Boolean(
-    isSuperAdminEmail(currentUserEmail) ||
-      (effectiveIsOwner && isSuperAdminEmail(effectiveOwnerEmail))
-  );
+  const isDeveloperSuperAdmin = Boolean(isSuperAdminEmail(currentUserEmail));
 
   const refreshSystemDirectory = async () => {
     if (!isDeveloperSuperAdmin) return;
@@ -218,12 +230,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
       address: '',
       updatedAt: new Date().toISOString().slice(0, 10),
       isDeveloperClinic: true,
-      subscription: {
-        planId: 'enterprise',
-        planNameAr: 'باقة المطور الشاملة',
-        isAiEnabled: true,
-        status: 'active',
-      },
+      aiConfig: loadAIProviderConfig(),
     };
     try {
       const dir = await fetchRegisteredSystemDirectory(effectiveWsId, effectiveOwnerEmail);
@@ -240,46 +247,33 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
     }
   };
 
-  const handleToggleClinicPaidFeatures = async (
-    clinic: RegisteredClinicSummary,
-    enableAi: boolean,
-    planIdOverride?: 'free' | 'ai_pro' | 'enterprise'
-  ) => {
+  const handleOpenClinicAiEditor = (clinic: RegisteredClinicSummary) => {
+    if (editingAiClinicId === clinic.id) {
+      setEditingAiClinicId(null);
+      return;
+    }
+    setEditingAiClinicId(clinic.id);
+    setClinicAiDraft(
+      clinic.aiConfig
+        ? {
+            ...DEFAULT_AI_CONFIG,
+            ...clinic.aiConfig,
+          }
+        : loadAIProviderConfig()
+    );
+  };
+
+  const handleSaveClinicAiKeys = async (clinic: RegisteredClinicSummary) => {
     setBusyClinicId(clinic.id);
     try {
-      const nextPlanId: 'free' | 'ai_pro' | 'enterprise' =
-        planIdOverride ?? (enableAi ? 'ai_pro' : 'free');
-      const nextPlanName =
-        nextPlanId === 'enterprise'
-          ? 'باقة العيادة المتكاملة الشاملة (Enterprise VIP)'
-          : nextPlanId === 'ai_pro'
-            ? 'باقة الذكاء الاصطناعي الطبي (AI Pro)'
-            : 'الباقة الأساسية';
-
-      const nextSub: ClinicSubscription = {
-        planId: nextPlanId,
-        planNameAr: nextPlanName,
-        isAiEnabled: enableAi,
-        status: enableAi ? 'active' : 'locked',
-        activatedAt: new Date().toISOString().slice(0, 10),
-        activatedBy: currentUserEmail || 'مطور المنصة (alssaedy50@gmail.com)',
-        notes: enableAi
-          ? 'تم تفعيل وفتح الميزات المدفوعة بواسطة مطور المنصة'
-          : 'تم إغلاق الميزات المدفوعة وتحويل العيادة للباقة الأساسية',
-      };
-
-      await updateClinicSubscriptionByDeveloper(clinic, nextSub);
+      const savedConfig = await updateClinicAiConfigByDeveloper(clinic, clinicAiDraft);
       setRegisteredClinics((prev) =>
-        prev.map((item) => (item.id === clinic.id ? { ...item, subscription: nextSub } : item))
+        prev.map((item) => (item.id === clinic.id ? { ...item, aiConfig: savedConfig } : item))
       );
-      notify(
-        enableAi
-          ? `تم فتح وتفعيل الميزات المدفوعة لـ (${clinic.clinicAr}) بنجاح ✅`
-          : `تم إغلاق الميزات المدفوعة لـ (${clinic.clinicAr}) 🔒`,
-        enableAi ? 'success' : 'info'
-      );
+      setEditingAiClinicId(null);
+      notify(`تم حفظ وتفعيل مفاتيح الذكاء الاصطناعي لعيادة (${clinic.clinicAr}) سحابياً بنجاح ✅`, 'success');
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'تعذر تحديث اشتراك العيادة', 'error');
+      notify(err instanceof Error ? err.message : 'تعذر حفظ مفاتيح الذكاء الاصطناعي للعيادة', 'error');
     } finally {
       setBusyClinicId(null);
     }
@@ -423,7 +417,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
               <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
               <div>
                 <h4 className="text-xs font-black text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
-                  <span>إحصائيات العيادات والحسابات المسجلة في النظام</span>
+                  <span>إحصائيات العيادات وإدارة مفاتيح الذكاء الاصطناعي لكل عيادة</span>
                   <span className="text-[10px] bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-mono font-normal">
                     لوحة المطور فقط
                   </span>
@@ -470,14 +464,18 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
           {showClinicsList && (
             <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               {registeredClinics.map((c, idx) => {
-                const isAiActive = Boolean(c.subscription?.isAiEnabled || c.isDeveloperClinic);
-                const currentPlanId = c.subscription?.planId || (c.isDeveloperClinic ? 'enterprise' : 'free');
+                const hasCustomAiKeys = Boolean(
+                  c.aiConfig?.geminiApiKey?.trim() ||
+                    c.aiConfig?.groqApiKey?.trim() ||
+                    c.aiConfig?.openrouterApiKey?.trim()
+                );
                 const isPrimaryDevClinic = Boolean(
                   c.isDeveloperClinic ||
                     c.id === auth.currentUser?.uid ||
                     c.id === 'alssaedy-clinic'
                 );
                 const isBusy = busyClinicId === c.id;
+                const isEditingAi = editingAiClinicId === c.id;
 
                 return (
                   <div
@@ -490,15 +488,15 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                           <span>
                             {idx + 1}. {c.clinicAr}
                           </span>
-                          {isAiActive ? (
+                          {hasCustomAiKeys ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
                               <Sparkles className="w-2.5 h-2.5" />
-                              <span>الميزات المدفوعة مفتوحة ✅</span>
+                              <span>مفاتيح الذكاء مضافة ✅</span>
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                              <Lock className="w-2.5 h-2.5" />
-                              <span>مغلق (الباقة المجانية) 🔒</span>
+                              <Sparkles className="w-2.5 h-2.5" />
+                              <span>بدون مفاتيح مخصصة</span>
                             </span>
                           )}
                         </div>
@@ -523,44 +521,19 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                     {/* Developer Action Bar for this Clinic */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <select
-                          disabled={isBusy}
-                          value={currentPlanId}
-                          onChange={(e) => {
-                            const val = e.target.value as 'free' | 'ai_pro' | 'enterprise';
-                            handleToggleClinicPaidFeatures(c, val !== 'free', val);
-                          }}
-                          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-1 text-[11px] font-bold text-slate-800 dark:text-slate-200"
-                        >
-                          <option value="free">الباقة الأساسية (مغلق)</option>
-                          <option value="ai_pro">باقة الذكاء الاصطناعي (مفعل)</option>
-                          <option value="enterprise">الباقة الشاملة VIP (مفعل)</option>
-                        </select>
-
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => handleToggleClinicPaidFeatures(c, !isAiActive, !isAiActive ? 'ai_pro' : 'free')}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
-                            isAiActive
-                              ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-600 hover:text-white'
-                              : 'bg-emerald-600 text-white hover:bg-emerald-500'
-                          }`}
-                        >
-                          {isAiActive ? (
-                            <>
-                              <Lock className="w-3 h-3" />
-                              <span>إغلاق الميزات المدفوعة</span>
-                            </>
-                          ) : (
-                            <>
-                              <Unlock className="w-3 h-3" />
-                              <span>فتح الميزات المدفوعة</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => handleOpenClinicAiEditor(c)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                          isEditingAi
+                            ? 'bg-sky-600 text-white'
+                            : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 hover:bg-sky-600 hover:text-white'
+                        }`}
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        <span>{isEditingAi ? 'إغلاق إعدادات المفاتيح ▲' : 'إدخال / تعديل مفاتيح الذكاء للعيادة ⚙️'}</span>
+                      </button>
 
                       {!isPrimaryDevClinic ? (
                         confirmDeleteClinicId === c.id ? (
@@ -600,6 +573,190 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                         </span>
                       )}
                     </div>
+
+                    {/* Inline Developer AI Keys Editor for this specific clinic */}
+                    {isEditingAi && (
+                      <div className="mt-2 pt-3 border-t border-sky-500/30 bg-sky-500/5 dark:bg-slate-950/90 rounded-xl p-3 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-black text-sky-700 dark:text-sky-300 text-xs flex items-center gap-1.5">
+                            <KeyRound className="w-3.5 h-3.5" />
+                            <span>تخصيص مفاتيح الذكاء الاصطناعي لـ: {c.clinicAr}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowInlineKeys((s) => !s)}
+                            className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                          >
+                            {showInlineKeys ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            <span>{showInlineKeys ? 'إخفاء المفاتيح' : 'إظهار المفاتيح'}</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              مفتاح Google Gemini API Key
+                            </label>
+                            <input
+                              type={showInlineKeys ? 'text' : 'password'}
+                              dir="ltr"
+                              value={clinicAiDraft.geminiApiKey}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, geminiApiKey: e.target.value }))
+                              }
+                              placeholder="AIzaSy..."
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              نموذج Gemini الافتراضي
+                            </label>
+                            <select
+                              value={clinicAiDraft.geminiModel}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, geminiModel: e.target.value }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              {GEMINI_CANDIDATE_MODELS.map((m) => (
+                                <option key={m} value={m}>
+                                  {formatModelDisplayLabel(m)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              مفتاح Groq Cloud API Key
+                            </label>
+                            <input
+                              type={showInlineKeys ? 'text' : 'password'}
+                              dir="ltr"
+                              value={clinicAiDraft.groqApiKey}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, groqApiKey: e.target.value }))
+                              }
+                              placeholder="gsk_..."
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              نموذج Groq للنصوص
+                            </label>
+                            <select
+                              value={clinicAiDraft.groqTextModel}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, groqTextModel: e.target.value }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              {GROQ_TEXT_MODELS.map((m) => (
+                                <option key={m} value={m}>
+                                  {formatModelDisplayLabel(m)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              مفتاح OpenRouter API Key
+                            </label>
+                            <input
+                              type={showInlineKeys ? 'text' : 'password'}
+                              dir="ltr"
+                              value={clinicAiDraft.openrouterApiKey}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, openrouterApiKey: e.target.value }))
+                              }
+                              placeholder="sk-or-v1-..."
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              نموذج OpenRouter الافتراضي
+                            </label>
+                            <select
+                              value={clinicAiDraft.openrouterModel}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, openrouterModel: e.target.value }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              {OPENROUTER_MODELS.map((m) => (
+                                <option key={m} value={m}>
+                                  {formatModelDisplayLabel(m)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              نموذج الرؤية (Groq Vision)
+                            </label>
+                            <select
+                              value={clinicAiDraft.groqVisionModel}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({ ...prev, groqVisionModel: e.target.value }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              {GROQ_VISION_MODELS.map((m) => (
+                                <option key={m} value={m}>
+                                  {formatModelDisplayLabel(m)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              محرك التسجيل الصوتي (Voice STT)
+                            </label>
+                            <select
+                              value={clinicAiDraft.sttEngine}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({
+                                  ...prev,
+                                  sttEngine: e.target.value === 'groq' ? 'groq' : 'browser',
+                                }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              <option value="browser">المتصفح المباشر (Web Speech)</option>
+                              <option value="groq">Groq Whisper ({GROQ_WHISPER_MODELS[0]})</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingAiClinicId(null)}
+                            className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px]"
+                          >
+                            إلغاء
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleSaveClinicAiKeys(c)}
+                            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] shadow-xs transition-colors"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>حفظ وتفعيل المفاتيح لهذه العيادة</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -30,8 +30,10 @@ import {
   where,
 } from 'firebase/firestore';
 import {
+  AIProviderConfig,
   ClinicSettings,
   CurrencyCode,
+  DEFAULT_AI_CONFIG,
   DentalServiceItem,
   ExpenseRecord,
   InventoryItem,
@@ -44,6 +46,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
 } from './types/clinic';
 import { DEFAULT_SETTINGS, SEED_DEMO_IDS, isPlatformDeveloperUser } from './data/defaultData';
+import { saveAIProviderConfig } from './utils/aiClient';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 
 export const CUSTOM_FIREBASE_CONFIG_KEY = 'docai_custom_firebase_config_v1';
@@ -1030,13 +1033,13 @@ function buildClinicCloudPayload(
     };
   }
 
-  // Only write subscription on initial document creation or when the authenticated platform developer saves
+  // Only write subscription or aiConfig when the authenticated platform developer saves
   if (sub && (isDev || isInitialCreate)) {
     payload.subscription = {
-      planId: sanitizeStr(sub.planId, 40, isDev ? 'enterprise' : 'free'),
-      planNameAr: sanitizeStr(sub.planNameAr, 80, isDev ? 'باقة المطور الشاملة' : 'الباقة الأساسية'),
-      isAiEnabled: isDev ? true : Boolean(sub.isAiEnabled),
-      status: sanitizeStr(sub.status, 30, isDev ? 'active' : 'locked'),
+      planId: sanitizeStr(sub.planId, 40, 'enterprise'),
+      planNameAr: sanitizeStr(sub.planNameAr, 80, 'الباقة الشاملة'),
+      isAiEnabled: true,
+      status: 'active',
       activatedAt: sanitizeStr(sub.activatedAt || '', 40, ''),
       expiresAt: sanitizeStr(sub.expiresAt || '', 40, ''),
       activatedBy: sanitizeStr(sub.activatedBy || '', 120, ''),
@@ -1044,7 +1047,33 @@ function buildClinicCloudPayload(
     };
   }
 
+  if (settings.aiConfig && isDev) {
+    payload.aiConfig = sanitizeAiConfigPayload(settings.aiConfig);
+  }
+
   return payload;
+}
+
+function sanitizeAiConfigPayload(cfg: Partial<AIProviderConfig>): AIProviderConfig {
+  return {
+    geminiApiKey: sanitizeStr(cfg.geminiApiKey || '', 300, ''),
+    geminiModel: sanitizeStr(cfg.geminiModel || DEFAULT_AI_CONFIG.geminiModel, 100, DEFAULT_AI_CONFIG.geminiModel),
+    enableWebGrounding: cfg.enableWebGrounding !== false,
+    groqApiKey: sanitizeStr(cfg.groqApiKey || '', 300, ''),
+    groqTextModel: sanitizeStr(cfg.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel, 120, DEFAULT_AI_CONFIG.groqTextModel),
+    groqVisionModel: sanitizeStr(cfg.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel, 120, DEFAULT_AI_CONFIG.groqVisionModel),
+    groqWhisperModel: sanitizeStr(cfg.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel, 100, DEFAULT_AI_CONFIG.groqWhisperModel),
+    openrouterApiKey: sanitizeStr(cfg.openrouterApiKey || '', 300, ''),
+    openrouterModel: sanitizeStr(cfg.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel, 120, DEFAULT_AI_CONFIG.openrouterModel),
+    sttEngine: cfg.sttEngine === 'groq' ? 'groq' : 'browser',
+    customPriority: ['gemini', 'groq', 'openrouter'],
+  };
+}
+
+function parseCloudAiConfig(raw: unknown): AIProviderConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const d = raw as Partial<AIProviderConfig>;
+  return sanitizeAiConfigPayload(d);
 }
 
 export async function ensureClinicDocumentInCloud(
@@ -1693,6 +1722,11 @@ async function fetchClinicCollectionsFromFirestore(
       notes: cloudSub?.notes ? String(cloudSub.notes) : undefined,
     };
 
+    const parsedAiConfig = parseCloudAiConfig(d.aiConfig);
+    if (parsedAiConfig) {
+      saveAIProviderConfig(parsedAiConfig);
+    }
+
     if (!pendingState.settings) {
       const rawCurrency = String(d.defaultCurrency || 'ريال يمني');
       const validCurrency: CurrencyCode =
@@ -1739,12 +1773,14 @@ async function fetchClinicCollectionsFromFirestore(
           showQrCode: Boolean(d.showQrCode ?? true),
         },
         subscription: parsedSubscription,
+        ...(parsedAiConfig ? { aiConfig: parsedAiConfig } : {}),
       };
     } else {
-      // Always preserve cloud subscription even if pending identity edits exist locally
+      // Always preserve cloud subscription and developer-configured aiConfig
       nextSettings = {
         ...nextSettings,
         subscription: parsedSubscription,
+        ...(parsedAiConfig ? { aiConfig: parsedAiConfig } : {}),
       };
     }
   }
@@ -1984,6 +2020,11 @@ export function subscribeToClinicCloudData(
         notes: cloudSub?.notes ? String(cloudSub.notes) : undefined,
       };
 
+      const parsedAiConfig = parseCloudAiConfig(d.aiConfig);
+      if (parsedAiConfig) {
+        saveAIProviderConfig(parsedAiConfig);
+      }
+
       const isOwnerSession = auth.currentUser?.uid === safeUid;
       const resolvedOwnerEmail = d.ownerEmail
         ? String(d.ownerEmail).toLowerCase()
@@ -2019,6 +2060,7 @@ export function subscribeToClinicCloudData(
         },
         telegramBackup: parsedTelegram,
         subscription: parsedSubscription,
+        ...(parsedAiConfig ? { aiConfig: parsedAiConfig } : {}),
       });
     },
     (err) => {
@@ -2872,6 +2914,7 @@ export interface RegisteredClinicSummary {
   address: string;
   updatedAt: string;
   subscription?: ClinicSubscription;
+  aiConfig?: AIProviderConfig;
   isDeveloperClinic?: boolean;
   workspaceIds?: string[];
 }
@@ -3041,6 +3084,8 @@ export async function fetchRegisteredSystemDirectory(
         notes: wsSub?.notes ? String(wsSub.notes) : undefined,
       };
 
+      const parsedWsAiConfig = parseCloudAiConfig(d.settings?.aiConfig || d.aiConfig);
+
       clinicsMap.set(ownerId, {
         id: ownerId,
         clinicAr: String(identity.clinicAr || d.clinicId || 'عيادة مسجلة'),
@@ -3052,6 +3097,7 @@ export async function fetchRegisteredSystemDirectory(
           ? d.updatedAt.toDate().toISOString().slice(0, 10)
           : '',
         subscription: parsedSub,
+        aiConfig: parsedWsAiConfig,
         isDeveloperClinic: Boolean(isDevWs),
         workspaceIds: Array.from(wsSet),
       });
@@ -3128,6 +3174,8 @@ export async function fetchRegisteredSystemDirectory(
             status: isDeveloperClinic ? 'active' : 'locked',
           };
 
+      const parsedClinicAiConfig = parseCloudAiConfig(d.aiConfig) || existingEntry?.aiConfig;
+
       clinicsMap.set(clinicId, {
         id: clinicId,
         clinicAr: String(d.clinicAr || existingEntry?.clinicAr || 'عيادة مسجلة'),
@@ -3139,6 +3187,7 @@ export async function fetchRegisteredSystemDirectory(
           ? d.updatedAt.toDate().toISOString().slice(0, 10)
           : existingEntry?.updatedAt || '',
         subscription: parsedSub,
+        aiConfig: parsedClinicAiConfig,
         isDeveloperClinic: Boolean(isDeveloperClinic),
         workspaceIds: Array.from(wsSet),
       });
@@ -3167,12 +3216,12 @@ export async function fetchRegisteredSystemDirectory(
   };
 }
 
-export async function updateClinicSubscriptionByDeveloper(
+export async function updateClinicAiConfigByDeveloper(
   targetClinic: RegisteredClinicSummary,
-  nextSubscription: ClinicSubscription
-): Promise<void> {
+  nextAiConfig: AIProviderConfig
+): Promise<AIProviderConfig> {
   if (!auth.currentUser || !isSuperAdminEmail(auth.currentUser.email)) {
-    throw new Error('غير مصرح: هذه العملية مخصصة لمطور المنصة فقط.');
+    throw new Error('غير مصرح: إعداد مفاتيح الذكاء الاصطناعي للعيادات مخصص لمطور المنصة فقط.');
   }
 
   const cleanClinicId = String(targetClinic.id || '').trim();
@@ -3180,26 +3229,13 @@ export async function updateClinicSubscriptionByDeveloper(
     throw new Error('معرّف العيادة غير صالح.');
   }
 
-  const cleanSub = {
-    planId: sanitizeStr(nextSubscription.planId, 40, 'free'),
-    planNameAr: sanitizeStr(nextSubscription.planNameAr, 80, 'الباقة الأساسية'),
-    isAiEnabled: Boolean(nextSubscription.isAiEnabled),
-    status: sanitizeStr(nextSubscription.status, 30, nextSubscription.isAiEnabled ? 'active' : 'locked'),
-    activatedAt: sanitizeStr(nextSubscription.activatedAt || new Date().toISOString().slice(0, 10), 40, ''),
-    expiresAt: sanitizeStr(nextSubscription.expiresAt || '', 40, ''),
-    activatedBy: sanitizeStr(
-      nextSubscription.activatedBy || auth.currentUser.email || 'مطور المنصة',
-      120,
-      'مطور المنصة'
-    ),
-    notes: sanitizeStr(nextSubscription.notes || '', 400, ''),
-  };
+  const cleanAi = sanitizeAiConfigPayload(nextAiConfig);
 
   const clinicRef = doc(db, 'clinics', cleanClinicId);
   const clinicSnap = await getDoc(clinicRef).catch(() => null);
   if (clinicSnap && clinicSnap.exists()) {
     await updateDoc(clinicRef, {
-      subscription: cleanSub,
+      aiConfig: cleanAi,
       updatedAt: serverTimestamp(),
     });
   } else {
@@ -3222,7 +3258,7 @@ export async function updateClinicSubscriptionByDeveloper(
         customLogoDataUrl: '',
         permanentAccountantSig: '',
         ...(targetClinic.ownerEmail ? { ownerEmail: targetClinic.ownerEmail } : {}),
-        subscription: cleanSub,
+        aiConfig: cleanAi,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       },
@@ -3241,12 +3277,44 @@ export async function updateClinicSubscriptionByDeveloper(
       await updateDoc(wsRef, {
         settings: {
           ...existingSettings,
-          subscription: cleanSub,
+          aiConfig: cleanAi,
         },
         updatedAt: serverTimestamp(),
       }).catch(() => {});
     }
   }
+
+  // If updating the currently active clinic or developer clinic, also update local AI config immediately
+  if (
+    cleanClinicId === auth.currentUser.uid ||
+    cleanClinicId === 'alssaedy-clinic' ||
+    targetClinic.isDeveloperClinic
+  ) {
+    saveAIProviderConfig(cleanAi);
+  }
+
+  return cleanAi;
+}
+
+export async function applyAiConfigToAllClinicsByDeveloper(
+  clinics: RegisteredClinicSummary[],
+  nextAiConfig: AIProviderConfig
+): Promise<number> {
+  if (!auth.currentUser || !isSuperAdminEmail(auth.currentUser.email)) {
+    throw new Error('غير مصرح: هذه العملية مخصصة لمطور المنصة فقط.');
+  }
+  const cleanAi = sanitizeAiConfigPayload(nextAiConfig);
+  saveAIProviderConfig(cleanAi);
+  let updatedCount = 0;
+  for (const c of clinics) {
+    try {
+      await updateClinicAiConfigByDeveloper(c, cleanAi);
+      updatedCount++;
+    } catch (e) {
+      console.warn('Could not update AI config for clinic:', c.id, e);
+    }
+  }
+  return updatedCount;
 }
 
 export async function deleteClinicByDeveloper(
