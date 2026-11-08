@@ -130,8 +130,8 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       .filter(Boolean);
   }, [settings.identity.phones]);
 
-  // 6. Ultra-High-Resolution (pixelRatio = 3) Canvas Generator with safe inner padding so borders never clip
-  const generateHighResReceiptCanvas = async (pixelRatio = 3): Promise<HTMLCanvasElement> => {
+  // 6. Ultra-High-Resolution (pixelRatio = 4) Canvas Generator (2240px wide Ultra-HD 4K sharpness)
+  const generateHighResReceiptCanvas = async (pixelRatio = 4): Promise<HTMLCanvasElement> => {
     if (document.fonts && document.fonts.ready) {
       try {
         await document.fonts.ready;
@@ -453,14 +453,16 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     const tableTotalH = rowPatientH + rowPhoneH + rowServicesH + rowFdiH + rowWordsH;
     const noteBoxH = Math.max(32, notesLines.length * 18 + 14);
 
-    // Header (118) + Meta (50) + Gap (12) + Table (tableTotalH) + Gap (14) + Cards (68) + Gap (14) + Equal Signatures (94) + Gap (10) + NoteBanner (noteBoxH) + Gap (14) + Footer (62)
-    const calculatedH =
-      118 + 50 + 12 + tableTotalH + 14 + 68 + 14 + 94 + 10 + noteBoxH + 14 + 62;
-    const H = Math.max(792, calculatedH);
+    // Header (118) + Meta (48) + Gap (14) + Table (tableTotalH) + Gap (14) + Cards (66) + Gap (14) + Signatures (96) + Gap (10) + NoteBanner (noteBoxH) + Gap (14) + Footer + Margin
+    const footerContentH = phoneItems.length > 0 ? 46 : 28;
+    const H =
+      118 + 48 + 14 + tableTotalH + 14 + 66 + 14 + 96 + 10 + noteBoxH + 14 + footerContentH + safeMargin + 8;
 
     canvas.width = W * pixelRatio;
     canvas.height = H * pixelRatio;
     const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.scale(pixelRatio, pixelRatio);
     ctx.direction = 'rtl';
 
@@ -869,8 +871,8 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       ctx.fillText(line, W / 2, y + 20 + idx * 18);
     });
 
-    // 9. Balanced 2-Line Official Footer inside Safe Margin
-    const footerTopY = H - safeMargin - 50;
+    // 9. Balanced 2-Line Official Footer (Immediately below note banner with clean 14px gap)
+    const footerTopY = y + noteBoxH + 14;
     ctx.strokeStyle = '#1E293B';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -910,7 +912,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
   };
 
   const generatePDFBlob = async (): Promise<Blob> => {
-    const canvas = await generateHighResReceiptCanvas(3);
+    const canvas = await generateHighResReceiptCanvas(4);
     const imgDataUrl = canvas.toDataURL('image/png', 1.0);
     const isThermal = data.paperFormat === 'thermal80';
 
@@ -925,7 +927,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       pdf.addImage(imgDataUrl, 'PNG', 0, 0, pdfW, pdfH, undefined, 'FAST');
       return pdf.output('blob');
     } else {
-      // Standard A5 Portrait (148mm x 210mm) with safe 4mm inner margin so borders never clip
+      // Standard A5 Portrait (148mm x 210mm) with safe 5mm margin so borders never clip
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
@@ -933,7 +935,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
       });
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
-      const safePadMm = 4;
+      const safePadMm = 5;
       const availW = pageW - safePadMm * 2;
       const availH = pageH - safePadMm * 2;
       const imgRatio = canvas.height / canvas.width;
@@ -968,15 +970,15 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     return `سند_قبض_${data.receiptNo}_${cleanPatient}`;
   };
 
-  // 1. Download Ultra-HD PNG Image (pixelRatio = 3)
+  // 1. Download Ultra-HD PNG Image (pixelRatio = 4, 2240px wide Ultra-HD 4K)
   const handleDownloadHDImage = async () => {
     setBusyAction('png');
     try {
-      const canvas = await generateHighResReceiptCanvas(3);
+      const canvas = await generateHighResReceiptCanvas(4);
       const blob = await canvasToBlob(canvas);
       const fileName = `${getCleanBaseFileName()}.png`;
       triggerBlobDownload(blob, fileName);
-      notify(`تم حفظ صورة السند #${data.receiptNo} (A5 عمودي) بدقة عالية`, 'success');
+      notify(`تم حفظ صورة السند #${data.receiptNo} (A5 عمودي بدقة فائقة 4K)`, 'success');
     } catch {
       notify('تعذر إنشاء صورة السند، يرجى المحاولة مرة أخرى', 'error');
     } finally {
@@ -984,14 +986,14 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     }
   };
 
-  // 2. Download Official High-Resolution PDF File (pixelRatio = 3)
+  // 2. Download Official High-Resolution PDF File (pixelRatio = 4)
   const handleDownloadPDFFile = async () => {
     setBusyAction('pdf');
     try {
       const pdfBlob = await generatePDFBlob();
       const fileName = `${getCleanBaseFileName()}.pdf`;
       triggerBlobDownload(pdfBlob, fileName);
-      notify(`تم حفظ ملف PDF للسند #${data.receiptNo} (A5 عمودي)`, 'success');
+      notify(`تم حفظ ملف PDF للسند #${data.receiptNo} (A5 عمودي بدقة فائقة)`, 'success');
     } catch {
       notify('تعذر إنشاء ملف PDF للسند', 'error');
     } finally {
@@ -1010,7 +1012,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
         const pdfBlob = await generatePDFBlob();
         file = new File([pdfBlob], `${baseName}.pdf`, { type: 'application/pdf' });
       } else {
-        const canvas = await generateHighResReceiptCanvas(3);
+        const canvas = await generateHighResReceiptCanvas(4);
         const pngBlob = await canvasToBlob(canvas);
         file = new File([pngBlob], `${baseName}.png`, { type: 'image/png' });
       }
@@ -1098,14 +1100,48 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
     notify('تم فتح تطبيق واتساب لإرسال السند للمريض', 'success');
   };
 
-  // 5. Direct Print
+  // 5. Direct Print with Isolated Single-Page Portal (Never duplicates to page 2)
   const handlePrintDirect = () => {
+    const sourceCard = document.getElementById('receipt-capture-area');
+    if (!sourceCard) {
+      window.print();
+      return;
+    }
+
+    let printPortal = document.getElementById('print-isolated-portal');
+    if (!printPortal) {
+      printPortal = document.createElement('div');
+      printPortal.id = 'print-isolated-portal';
+      document.body.appendChild(printPortal);
+    }
+
+    // Populate isolated portal with clean cloned receipt
+    printPortal.innerHTML = sourceCard.outerHTML;
+
     if (data.paperFormat === 'thermal80') {
       document.body.classList.add('thermal-80mm-mode');
     } else {
       document.body.classList.remove('thermal-80mm-mode');
     }
-    window.print();
+    document.body.classList.add('printing-active-receipt');
+
+    const cleanUp = () => {
+      document.body.classList.remove('printing-active-receipt');
+      document.body.classList.remove('thermal-80mm-mode');
+      if (printPortal) {
+        printPortal.innerHTML = '';
+      }
+    };
+
+    window.addEventListener('afterprint', cleanUp, { once: true });
+
+    // Request animation frame so DOM is painted before print dialog
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.print();
+        setTimeout(cleanUp, 2500);
+      }, 60);
+    });
   };
 
   const logoSrc = settings.appearance.customLogoDataUrl || DEFAULT_CLINIC_LOGO_DATA_URI;

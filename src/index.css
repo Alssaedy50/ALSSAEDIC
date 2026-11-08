@@ -35,50 +35,81 @@
   color: #0f172a;
 }
 
+#print-isolated-portal {
+  display: none;
+}
+
 @media print {
   @page {
     size: A5 portrait;
-    margin: 8mm;
+    margin: 5mm;
   }
+
   html,
   body {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
   }
-  body * {
-    visibility: hidden !important;
+
+  /* When printing an active receipt, HIDE the entire application DOM (#root) completely! */
+  body.printing-active-receipt > #root {
+    display: none !important;
   }
-  #receipt-capture-area,
-  #receipt-capture-area * {
-    visibility: visible !important;
-  }
-  #receipt-capture-area {
-    position: fixed !important;
-    top: 4mm !important;
-    left: 4mm !important;
-    right: 4mm !important;
-    width: auto !important;
-    max-width: 132mm !important;
+
+  /* Display ONLY the isolated print portal containing the single receipt */
+  body.printing-active-receipt #print-isolated-portal {
+    display: block !important;
+    width: 100% !important;
+    max-width: 138mm !important;
     margin: 0 auto !important;
-    padding: 5mm !important;
+    padding: 0 !important;
     background: #ffffff !important;
     color: #0f172a !important;
-    box-shadow: none !important;
-    box-sizing: border-box !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
-    z-index: 99999 !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
-  body.thermal-80mm-mode #receipt-capture-area {
-    top: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    width: 80mm !important;
-    max-width: 80mm !important;
-    padding: 4mm !important;
+
+  body.printing-active-receipt #print-isolated-portal #receipt-capture-area {
+    position: static !important;
+    width: 100% !important;
+    max-width: 138mm !important;
+    margin: 0 auto !important;
+    padding: 12px 16px !important;
+    border-width: 2.5px !important;
+    box-shadow: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Thermal 80mm Mode */
+  body.printing-active-receipt.thermal-80mm-mode {
+    @page {
+      size: 80mm auto;
+      margin: 2mm;
+    }
+  }
+
+  body.printing-active-receipt.thermal-80mm-mode #print-isolated-portal {
+    max-width: 76mm !important;
+    width: 76mm !important;
+  }
+
+  body.printing-active-receipt.thermal-80mm-mode #print-isolated-portal #receipt-capture-area {
+    max-width: 76mm !important;
+    width: 76mm !important;
     border: 0 !important;
+    padding: 2mm !important;
   }
+
+  /* Fallback: hide no-print elements */
   .no-print {
     display: none !important;
   }
