@@ -980,8 +980,12 @@ export function isCurrentSessionAuthorizedForClinic(targetOwnerUid: string): boo
 
 // ==================== AUTHORITATIVE CLOUD FIRESTORE OPERATIONS ====================
 
-function buildClinicCloudPayload(settings: ClinicSettings, safeUid: string): Record<string, unknown> {
-  const isDev = isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail);
+function buildClinicCloudPayload(
+  settings: ClinicSettings,
+  safeUid: string,
+  isInitialCreate = false
+): Record<string, unknown> {
+  const isDev = isPlatformDeveloperUser(auth.currentUser?.email);
   const sub = settings.subscription;
   const tg = settings.telegramBackup;
 
@@ -1026,7 +1030,8 @@ function buildClinicCloudPayload(settings: ClinicSettings, safeUid: string): Rec
     };
   }
 
-  if (sub) {
+  // Only write subscription on initial document creation or when the authenticated platform developer saves
+  if (sub && (isDev || isInitialCreate)) {
     payload.subscription = {
       planId: sanitizeStr(sub.planId, 40, isDev ? 'enterprise' : 'free'),
       planNameAr: sanitizeStr(sub.planNameAr, 80, isDev ? 'باقة المطور الشاملة' : 'الباقة الأساسية'),
@@ -1081,7 +1086,7 @@ export async function ensureClinicDocumentInCloud(
       await withCloudRetry(async () => {
         if (!knownExistingDocIds.has(safeUid)) {
           const createPayload = {
-            ...buildClinicCloudPayload(effectiveSettings, safeUid),
+            ...buildClinicCloudPayload(effectiveSettings, safeUid, true),
             createdAt: serverTimestamp(),
           };
           await setDoc(ref, createPayload, { merge: true });
@@ -1671,55 +1676,77 @@ async function fetchClinicCollectionsFromFirestore(
   const pendingState = loadPendingSyncState(safeUid);
   let nextSettings = pendingState.settings || fallbackData.settings;
 
-  if (!clinicsSnap.empty && !pendingState.settings) {
+  if (!clinicsSnap.empty) {
     verifiedClinicParentUids.add(safeUid);
     knownExistingDocIds.add(safeUid);
     const d = clinicsSnap.docs[0].data();
-    const rawCurrency = String(d.defaultCurrency || 'ريال يمني');
-    const validCurrency: CurrencyCode =
-      rawCurrency === 'ريال سعودي' || rawCurrency === 'دولار أمريكي'
-        ? rawCurrency
-        : 'ريال يمني';
-
-    const isOwnerSession = auth.currentUser?.uid === safeUid;
-    const resolvedOwnerEmail = d.ownerEmail
-      ? String(d.ownerEmail).toLowerCase()
-      : isOwnerSession && auth.currentUser?.email
-        ? auth.currentUser.email.toLowerCase()
-        : nextSettings.identity.ownerEmail || '';
-
-    nextSettings = {
-      ...nextSettings,
-      identity: {
-        systemTitleAr: String(d.clinicAr || nextSettings.identity.systemTitleAr || 'عيادة طب الأسنان'),
-        clinicAr: String(d.clinicAr ?? ''),
-        doctorAr: String(d.doctorAr ?? ''),
-        specialtyAr: String(d.specialtyAr ?? ''),
-        clinicEn: String(d.clinicEn ?? ''),
-        doctorEn: String(d.doctorEn ?? ''),
-        address: String(d.address ?? ''),
-        phones: String(d.phones ?? ''),
-        defaultCurrency: validCurrency,
-        ownerEmail: resolvedOwnerEmail,
-      },
-      appearance: {
-        primaryColor: String(d.primaryColor || nextSettings.appearance.primaryColor),
-        accentColor: '#0EA5E9',
-        watermarkOpacity: Number(d.watermarkOpacity ?? nextSettings.appearance.watermarkOpacity),
-        customLogoDataUrl: String(
-          d.customLogoDataUrl || nextSettings.appearance.customLogoDataUrl
-        ),
-        permanentAccountantSig: String(
-          d.permanentAccountantSig || nextSettings.appearance.permanentAccountantSig
-        ),
-      },
-      features: {
-        autoPrice: true,
-        debtAlert: true,
-        autoInventory: Boolean(d.autoInventory ?? true),
-        showQrCode: Boolean(d.showQrCode ?? true),
-      },
+    const cloudSub = d.subscription as Partial<ClinicSubscription> | undefined;
+    const isDev = isPlatformDeveloperUser(auth.currentUser?.email || d.ownerEmail);
+    const parsedSubscription: ClinicSubscription = {
+      planId: (cloudSub?.planId as 'free' | 'ai_pro' | 'enterprise') || (isDev ? 'enterprise' : 'free'),
+      planNameAr: String(cloudSub?.planNameAr || (isDev ? 'باقة المطور الشاملة' : 'الباقة الأساسية')),
+      isAiEnabled: isDev ? true : Boolean(cloudSub?.isAiEnabled),
+      status: (cloudSub?.status as 'active' | 'expired' | 'trial' | 'locked') || (isDev ? 'active' : 'locked'),
+      activatedAt: cloudSub?.activatedAt ? String(cloudSub.activatedAt) : undefined,
+      expiresAt: cloudSub?.expiresAt ? String(cloudSub.expiresAt) : undefined,
+      activatedBy: cloudSub?.activatedBy ? String(cloudSub.activatedBy) : undefined,
+      notes: cloudSub?.notes ? String(cloudSub.notes) : undefined,
     };
+
+    if (!pendingState.settings) {
+      const rawCurrency = String(d.defaultCurrency || 'ريال يمني');
+      const validCurrency: CurrencyCode =
+        rawCurrency === 'ريال سعودي' || rawCurrency === 'دولار أمريكي'
+          ? rawCurrency
+          : 'ريال يمني';
+
+      const isOwnerSession = auth.currentUser?.uid === safeUid;
+      const resolvedOwnerEmail = d.ownerEmail
+        ? String(d.ownerEmail).toLowerCase()
+        : isOwnerSession && auth.currentUser?.email
+          ? auth.currentUser.email.toLowerCase()
+          : nextSettings.identity.ownerEmail || '';
+
+      nextSettings = {
+        ...nextSettings,
+        identity: {
+          systemTitleAr: String(d.clinicAr || nextSettings.identity.systemTitleAr || 'عيادة طب الأسنان'),
+          clinicAr: String(d.clinicAr ?? ''),
+          doctorAr: String(d.doctorAr ?? ''),
+          specialtyAr: String(d.specialtyAr ?? ''),
+          clinicEn: String(d.clinicEn ?? ''),
+          doctorEn: String(d.doctorEn ?? ''),
+          address: String(d.address ?? ''),
+          phones: String(d.phones ?? ''),
+          defaultCurrency: validCurrency,
+          ownerEmail: resolvedOwnerEmail,
+        },
+        appearance: {
+          primaryColor: String(d.primaryColor || nextSettings.appearance.primaryColor),
+          accentColor: '#0EA5E9',
+          watermarkOpacity: Number(d.watermarkOpacity ?? nextSettings.appearance.watermarkOpacity),
+          customLogoDataUrl: String(
+            d.customLogoDataUrl || nextSettings.appearance.customLogoDataUrl
+          ),
+          permanentAccountantSig: String(
+            d.permanentAccountantSig || nextSettings.appearance.permanentAccountantSig
+          ),
+        },
+        features: {
+          autoPrice: true,
+          debtAlert: true,
+          autoInventory: Boolean(d.autoInventory ?? true),
+          showQrCode: Boolean(d.showQrCode ?? true),
+        },
+        subscription: parsedSubscription,
+      };
+    } else {
+      // Always preserve cloud subscription even if pending identity edits exist locally
+      nextSettings = {
+        ...nextSettings,
+        subscription: parsedSubscription,
+      };
+    }
   }
 
   if (!servicesSnap.empty) {
@@ -2844,6 +2871,9 @@ export interface RegisteredClinicSummary {
   phones: string;
   address: string;
   updatedAt: string;
+  subscription?: ClinicSubscription;
+  isDeveloperClinic?: boolean;
+  workspaceIds?: string[];
 }
 
 export interface RegisteredAccountSummary {
@@ -2913,6 +2943,7 @@ export async function fetchRegisteredSystemDirectory(
   const clinicsMap = new Map<string, RegisteredClinicSummary>();
   const emailByWorkspaceId = new Map<string, string>();
   const emailByOwnerUid = new Map<string, string>();
+  const workspaceIdsByOwnerUid = new Map<string, Set<string>>();
 
   // Fetch all collections in parallel for maximum speed
   const [clinicsResult, wsResult, accountsResult, membersResult] = await Promise.allSettled([
@@ -2952,7 +2983,13 @@ export async function fetchRegisteredSystemDirectory(
     wsResult.value.docs.forEach((docSnap) => {
       const d = docSnap.data();
       const ownerId = String(d.ownerId || docSnap.id);
+      const wsSet = workspaceIdsByOwnerUid.get(ownerId) || new Set<string>();
+      wsSet.add(docSnap.id);
+      if (d.clinicId) wsSet.add(String(d.clinicId));
+      workspaceIdsByOwnerUid.set(ownerId, wsSet);
+
       const identity = (d.settings?.identity || {}) as Partial<ClinicSettings['identity']>;
+      const wsSub = (d.settings?.subscription || d.subscription) as Partial<ClinicSubscription> | undefined;
       const rawEmail = String(identity.ownerEmail || '').trim().toLowerCase();
       const isDevWs =
         ownerId === currentUid ||
@@ -2964,7 +3001,6 @@ export async function fetchRegisteredSystemDirectory(
       let resolvedOwnerEmail: string | undefined = undefined;
       if (rawEmail && rawEmail.includes('@') && !rawEmail.endsWith('.local')) {
         if (isSuperAdminEmail(rawEmail) && !isDevWs) {
-          // Do not leak superadmin email to another clinic's workspace
           const altEmail = emailByWorkspaceId.get(docSnap.id) || emailByOwnerUid.get(ownerId);
           if (altEmail && !isSuperAdminEmail(altEmail)) {
             resolvedOwnerEmail = altEmail;
@@ -2994,6 +3030,17 @@ export async function fetchRegisteredSystemDirectory(
         }
       }
 
+      const parsedSub: ClinicSubscription = {
+        planId: (wsSub?.planId as 'free' | 'ai_pro' | 'enterprise') || (isDevWs ? 'enterprise' : 'free'),
+        planNameAr: String(wsSub?.planNameAr || (isDevWs ? 'باقة المطور الشاملة' : 'الباقة الأساسية')),
+        isAiEnabled: isDevWs ? true : Boolean(wsSub?.isAiEnabled),
+        status: (wsSub?.status as 'active' | 'expired' | 'trial' | 'locked') || (isDevWs ? 'active' : 'locked'),
+        activatedAt: wsSub?.activatedAt ? String(wsSub.activatedAt) : undefined,
+        expiresAt: wsSub?.expiresAt ? String(wsSub.expiresAt) : undefined,
+        activatedBy: wsSub?.activatedBy ? String(wsSub.activatedBy) : undefined,
+        notes: wsSub?.notes ? String(wsSub.notes) : undefined,
+      };
+
       clinicsMap.set(ownerId, {
         id: ownerId,
         clinicAr: String(identity.clinicAr || d.clinicId || 'عيادة مسجلة'),
@@ -3004,6 +3051,9 @@ export async function fetchRegisteredSystemDirectory(
         updatedAt: d.updatedAt?.toDate
           ? d.updatedAt.toDate().toISOString().slice(0, 10)
           : '',
+        subscription: parsedSub,
+        isDeveloperClinic: Boolean(isDevWs),
+        workspaceIds: Array.from(wsSet),
       });
     });
   }
@@ -3014,6 +3064,9 @@ export async function fetchRegisteredSystemDirectory(
       const d = docSnap.data();
       const clinicId = docSnap.id;
       const ownerId = String(d.ownerId || clinicId);
+      const wsSet = workspaceIdsByOwnerUid.get(clinicId) || workspaceIdsByOwnerUid.get(ownerId) || new Set<string>();
+      wsSet.add(clinicId);
+
       const isDeveloperClinic =
         clinicId === currentUid ||
         ownerId === currentUid ||
@@ -3026,12 +3079,10 @@ export async function fetchRegisteredSystemDirectory(
 
       if (rawEmail && rawEmail.includes('@') && !rawEmail.endsWith('.local')) {
         if (isSuperAdminEmail(rawEmail) && !isDeveloperClinic) {
-          // If stored email was contaminated with developer email, check workspace map
           const altEmail = emailByWorkspaceId.get(clinicId) || emailByOwnerUid.get(ownerId);
           if (altEmail && !isSuperAdminEmail(altEmail)) {
             resolvedOwnerEmail = altEmail;
           } else {
-            // Leave undefined - do NOT falsely show superadmin email for other clinics
             resolvedOwnerEmail = undefined;
           }
         } else {
@@ -3057,16 +3108,39 @@ export async function fetchRegisteredSystemDirectory(
         });
       }
 
+      const cloudSub = d.subscription as Partial<ClinicSubscription> | undefined;
+      const existingEntry = clinicsMap.get(clinicId);
+      const parsedSub: ClinicSubscription = cloudSub
+        ? {
+            planId: (cloudSub.planId as 'free' | 'ai_pro' | 'enterprise') || (isDeveloperClinic ? 'enterprise' : 'free'),
+            planNameAr: String(cloudSub.planNameAr || (isDeveloperClinic ? 'باقة المطور الشاملة' : 'الباقة الأساسية')),
+            isAiEnabled: isDeveloperClinic ? true : Boolean(cloudSub.isAiEnabled),
+            status: (cloudSub.status as 'active' | 'expired' | 'trial' | 'locked') || (isDeveloperClinic ? 'active' : 'locked'),
+            activatedAt: cloudSub.activatedAt ? String(cloudSub.activatedAt) : undefined,
+            expiresAt: cloudSub.expiresAt ? String(cloudSub.expiresAt) : undefined,
+            activatedBy: cloudSub.activatedBy ? String(cloudSub.activatedBy) : undefined,
+            notes: cloudSub.notes ? String(cloudSub.notes) : undefined,
+          }
+        : existingEntry?.subscription || {
+            planId: isDeveloperClinic ? 'enterprise' : 'free',
+            planNameAr: isDeveloperClinic ? 'باقة المطور الشاملة' : 'الباقة الأساسية',
+            isAiEnabled: Boolean(isDeveloperClinic),
+            status: isDeveloperClinic ? 'active' : 'locked',
+          };
+
       clinicsMap.set(clinicId, {
         id: clinicId,
-        clinicAr: String(d.clinicAr || 'عيادة مسجلة'),
-        doctorAr: String(d.doctorAr || ''),
-        ownerEmail: resolvedOwnerEmail,
-        phones: String(d.phones || ''),
-        address: String(d.address || ''),
+        clinicAr: String(d.clinicAr || existingEntry?.clinicAr || 'عيادة مسجلة'),
+        doctorAr: String(d.doctorAr || existingEntry?.doctorAr || ''),
+        ownerEmail: resolvedOwnerEmail || existingEntry?.ownerEmail,
+        phones: String(d.phones || existingEntry?.phones || ''),
+        address: String(d.address || existingEntry?.address || ''),
         updatedAt: d.updatedAt?.toDate
           ? d.updatedAt.toDate().toISOString().slice(0, 10)
-          : '',
+          : existingEntry?.updatedAt || '',
+        subscription: parsedSub,
+        isDeveloperClinic: Boolean(isDeveloperClinic),
+        workspaceIds: Array.from(wsSet),
       });
     });
   }
@@ -3091,6 +3165,139 @@ export async function fetchRegisteredSystemDirectory(
     clinics: Array.from(clinicsMap.values()),
     accounts: Array.from(accountMap.values()),
   };
+}
+
+export async function updateClinicSubscriptionByDeveloper(
+  targetClinic: RegisteredClinicSummary,
+  nextSubscription: ClinicSubscription
+): Promise<void> {
+  if (!auth.currentUser || !isSuperAdminEmail(auth.currentUser.email)) {
+    throw new Error('غير مصرح: هذه العملية مخصصة لمطور المنصة فقط.');
+  }
+
+  const cleanClinicId = String(targetClinic.id || '').trim();
+  if (!cleanClinicId) {
+    throw new Error('معرّف العيادة غير صالح.');
+  }
+
+  const cleanSub = {
+    planId: sanitizeStr(nextSubscription.planId, 40, 'free'),
+    planNameAr: sanitizeStr(nextSubscription.planNameAr, 80, 'الباقة الأساسية'),
+    isAiEnabled: Boolean(nextSubscription.isAiEnabled),
+    status: sanitizeStr(nextSubscription.status, 30, nextSubscription.isAiEnabled ? 'active' : 'locked'),
+    activatedAt: sanitizeStr(nextSubscription.activatedAt || new Date().toISOString().slice(0, 10), 40, ''),
+    expiresAt: sanitizeStr(nextSubscription.expiresAt || '', 40, ''),
+    activatedBy: sanitizeStr(
+      nextSubscription.activatedBy || auth.currentUser.email || 'مطور المنصة',
+      120,
+      'مطور المنصة'
+    ),
+    notes: sanitizeStr(nextSubscription.notes || '', 400, ''),
+  };
+
+  const clinicRef = doc(db, 'clinics', cleanClinicId);
+  const clinicSnap = await getDoc(clinicRef).catch(() => null);
+  if (clinicSnap && clinicSnap.exists()) {
+    await updateDoc(clinicRef, {
+      subscription: cleanSub,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(
+      clinicRef,
+      {
+        ownerId: cleanClinicId,
+        clinicAr: sanitizeStr(targetClinic.clinicAr, 160, 'عيادة مسجلة'),
+        doctorAr: sanitizeStr(targetClinic.doctorAr, 160, ''),
+        specialtyAr: 'طب وجراحة الفم والأسنان',
+        clinicEn: 'DENTAL CLINIC',
+        doctorEn: '',
+        address: sanitizeStr(targetClinic.address, 250, ''),
+        phones: sanitizeStr(targetClinic.phones, 200, ''),
+        defaultCurrency: 'ريال يمني',
+        primaryColor: '#0B2545',
+        watermarkOpacity: 5,
+        autoInventory: true,
+        showQrCode: true,
+        customLogoDataUrl: '',
+        permanentAccountantSig: '',
+        ...(targetClinic.ownerEmail ? { ownerEmail: targetClinic.ownerEmail } : {}),
+        subscription: cleanSub,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+
+  // Also update any linked clinic_workspaces documents
+  const wsIds = Array.from(new Set([cleanClinicId, ...(targetClinic.workspaceIds || [])]));
+  for (const wsId of wsIds) {
+    if (!wsId) continue;
+    const wsRef = doc(db, 'clinic_workspaces', wsId);
+    const wsSnap = await getDoc(wsRef).catch(() => null);
+    if (wsSnap && wsSnap.exists()) {
+      const existingSettings = (wsSnap.data()?.settings || {}) as Record<string, unknown>;
+      await updateDoc(wsRef, {
+        settings: {
+          ...existingSettings,
+          subscription: cleanSub,
+        },
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+  }
+}
+
+export async function deleteClinicByDeveloper(
+  targetClinic: RegisteredClinicSummary
+): Promise<void> {
+  if (!auth.currentUser || !isSuperAdminEmail(auth.currentUser.email)) {
+    throw new Error('غير مصرح: حذف العيادات مخصص لمطور المنصة فقط.');
+  }
+
+  const cleanClinicId = String(targetClinic.id || '').trim();
+  if (!cleanClinicId) {
+    throw new Error('معرّف العيادة غير صالح.');
+  }
+
+  if (
+    cleanClinicId === auth.currentUser.uid ||
+    cleanClinicId === 'alssaedy-clinic' ||
+    targetClinic.isDeveloperClinic
+  ) {
+    throw new Error('لا يمكن حذف العيادة الرئيسية الخاصة بمطور المنصة.');
+  }
+
+  // 1. Delete associated sub-records (services, receipts, inventory, expenses) owned by this clinic
+  const subCollections = ['services', 'receipts', 'inventory', 'expenses'] as const;
+  await Promise.allSettled(
+    subCollections.map(async (colName) => {
+      const snap = await getDocs(query(collection(db, colName), where('ownerId', '==', cleanClinicId)));
+      await Promise.allSettled(snap.docs.map((d) => deleteDoc(d.ref)));
+    })
+  );
+
+  // 2. Delete clinic_workspaces documents & members
+  const wsIds = Array.from(new Set([cleanClinicId, ...(targetClinic.workspaceIds || [])]));
+  for (const wsId of wsIds) {
+    if (!wsId || wsId === 'alssaedy-clinic' || wsId === auth.currentUser.uid) continue;
+    try {
+      const membersSnap = await getDocs(collection(db, 'clinic_workspaces', wsId, 'members'));
+      await Promise.allSettled(membersSnap.docs.map((m) => deleteDoc(m.ref)));
+    } catch {
+      // Ignore
+    }
+    await deleteDoc(doc(db, 'clinic_workspaces', wsId)).catch(() => {});
+  }
+
+  // 3. Delete user_workspaces index entries pointing to this clinic
+  if (targetClinic.ownerEmail && !isSuperAdminEmail(targetClinic.ownerEmail)) {
+    await deleteDoc(doc(db, 'user_workspaces', normalizeEmailKey(targetClinic.ownerEmail))).catch(() => {});
+  }
+
+  // 4. Delete primary clinics/{clinicId} document
+  await deleteDoc(doc(db, 'clinics', cleanClinicId));
 }
 
 // ==================== TELEGRAM CLOUD BACKUP CLIENT HELPER ====================

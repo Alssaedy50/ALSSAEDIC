@@ -113,8 +113,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   onOpenTeamModal,
   notify,
 }) => {
+  // Strict Platform Developer check (alssaedy50@gmail.com only)
+  const isPlatformDev = isPlatformDeveloperUser(auth.currentUser?.email || ownerEmail);
+
   const [subTab, setSubTab] = useState<'identity' | 'services' | 'team' | 'backup' | 'ai' | 'subscription'>(() => {
-    if (initialSubTab) return initialSubTab;
+    if (initialSubTab) {
+      if (initialSubTab === 'subscription' && !isPlatformDev) return 'identity';
+      return initialSubTab;
+    }
     try {
       const saved = localStorage.getItem('docai_settings_subtab_v1');
       if (
@@ -123,7 +129,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         saved === 'team' ||
         saved === 'backup' ||
         saved === 'ai' ||
-        saved === 'subscription'
+        (saved === 'subscription' && isPlatformDev)
       ) {
         return saved;
       }
@@ -134,13 +140,6 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   });
   const [formState, setFormState] = useState<ClinicSettings>(settings);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  // Developer & Platform Owner Subscription Management State
-  const [devPasscode, setDevPasscode] = useState('');
-  const [isDevUnlocked, setIsDevUnlocked] = useState(false);
-  const isPlatformDev =
-    isPlatformDeveloperUser(auth.currentUser?.email || ownerEmail || formState.identity.ownerEmail) ||
-    isDevUnlocked;
 
   const [devAiEnabled, setDevAiEnabled] = useState<boolean>(() => formState.subscription?.isAiEnabled ?? false);
   const [devPlanId, setDevPlanId] = useState<'free' | 'ai_pro' | 'enterprise'>(
@@ -222,12 +221,15 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   React.useEffect(() => {
     if (isNewAccountSetup) {
       setSubTab('identity');
+    } else if (!isPlatformDev && subTab === 'subscription') {
+      setSubTab('identity');
     }
-  }, [isNewAccountSetup]);
+  }, [isNewAccountSetup, isPlatformDev, subTab]);
 
   React.useEffect(() => {
     try {
       localStorage.setItem('docai_settings_subtab_v1', subTab);
+      localStorage.removeItem('docai_developer_mode_active');
     } catch {
       // Ignore
     }
@@ -627,8 +629,12 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
-      {/* Top 6-Tab Segmented Switcher (الهوية | الخدمات | الفريق | النسخ | الذكاء الاصطناعي | الميزات المدفوعة) */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] sm:text-xs">
+      {/* Top Segmented Switcher (الهوية | الخدمات | الفريق | النسخ | الذكاء الاصطناعي | [للمطور فقط: الميزات المدفوعة]) */}
+      <div
+        className={`grid grid-cols-3 ${
+          isPlatformDev ? 'sm:grid-cols-6' : 'sm:grid-cols-5'
+        } gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] sm:text-xs`}
+      >
         <button
           type="button"
           onClick={() => {
@@ -700,21 +706,23 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
           <Sparkles className="w-3 h-3 shrink-0" />
           <span>الذكاء (AI)</span>
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setSubTab('subscription');
-            try { localStorage.setItem('docai_settings_subtab_v1', 'subscription'); } catch {}
-          }}
-          className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
-            subTab === 'subscription'
-              ? 'bg-amber-600 text-white shadow-xs'
-              : 'text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300'
-          }`}
-        >
-          <Crown className="w-3.5 h-3.5 shrink-0 text-amber-300" />
-          <span>الميزات المدفوعة</span>
-        </button>
+        {isPlatformDev && (
+          <button
+            type="button"
+            onClick={() => {
+              setSubTab('subscription');
+              try { localStorage.setItem('docai_settings_subtab_v1', 'subscription'); } catch {}
+            }}
+            className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
+              subTab === 'subscription'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300'
+            }`}
+          >
+            <Crown className="w-3.5 h-3.5 shrink-0 text-amber-300" />
+            <span>الباقات (للمطور)</span>
+          </button>
+        )}
       </div>
 
       {/* TAB 1: CLINIC IDENTITY */}
@@ -1348,19 +1356,28 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     </span>
                   </div>
                   <p className="text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
-                    يمكنك إدخال مفاتيحك الخاصة هنا بحرية، ولكن لتشغيل واستخدام المساعد السريري وفحص الأشعة والتفريغ الصوتي بالسندات، يجب ترقية باقة العيادة أو التواصل مع مطور المنصة لفتح الترخيص.
+                    يمكنك إدخال واختبار مفاتيحك الخاصة هنا بحرية، ولكن لتشغيل المساعد السريري وفحص الأشعة والتفريغ الصوتي بالسندات، يرجى التواصل مع مطور المنصة لفتح الميزات المدفوعة لعيادتك.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSubTab('subscription');
-                      try { localStorage.setItem('docai_settings_subtab_v1', 'subscription'); } catch {}
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] transition-colors"
-                  >
-                    <Crown className="w-3.5 h-3.5" />
-                    <span>الانتقال إلى صفحة الميزات المدفوعة والباقات 👑</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <a
+                      href={`https://wa.me/967716339366?text=${encodeURIComponent(
+                        `السلام عليكم د. صلاح الدين السعيدي، أرغب في تفعيل باقة الذكاء الاصطناعي لعيادة (${formState.identity.clinicAr || 'العيادة'}).`
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-colors"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>مراسلة مطور المنصة لتفعيل الباقة (واتساب)</span>
+                    </a>
+                    <a
+                      href="tel:+967716339366"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-[11px] transition-colors"
+                    >
+                      <PhoneCall className="w-3.5 h-3.5 text-sky-500" />
+                      <span>716339366</span>
+                    </a>
+                  </div>
                 </div>
               )}
               <button
@@ -1510,7 +1527,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 >
                   {GEMINI_CANDIDATE_MODELS.map((m) => (
                     <option key={m} value={m}>
-                      {formatModelDisplayLabel(m)} {m === 'gemini-1.5-flash' ? '(موصى به)' : ''}
+                      {formatModelDisplayLabel(m)} {m === 'gemini-2.5-flash' ? '(موصى به)' : ''}
                     </option>
                   ))}
                 </select>
@@ -1842,217 +1859,24 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         </div>
       )}
 
-      {/* TAB 6: PAID FEATURES & PACKAGES (الميزات المدفوعة) */}
-      {subTab === 'subscription' && (
+      {/* TAB 6: DEVELOPER-ONLY PAID FEATURES & PACKAGES (الميزات المدفوعة والباقات — للمطور فقط) */}
+      {subTab === 'subscription' && isPlatformDev && (
         <div className="space-y-4">
-          {/* Current Clinic Subscription Status Banner */}
-          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-                  <Crown className="w-4 h-4" />
-                </div>
-                <div>
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                    <span>حالة اشتراك العيادة والميزات المدفوعة</span>
-                    {formState.subscription?.isAiEnabled ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
-                        الذكاء الاصطناعي مفعل ✅
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                        <Lock className="w-3 h-3" />
-                        <span>الذكاء الاصطناعي مغلق</span>
-                      </span>
-                    )}
-                  </h2>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    إدارة باقات المنصة وتراخيص خدمات الذكاء الاصطناعي المعتمدة من مطور البرنامج
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-right">
-                <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  الباقة الحالية: <span className="text-sky-600 dark:text-sky-400 font-black">{formState.subscription?.planNameAr || 'الباقة الأساسية'}</span>
-                </div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                  الحالة: {formState.subscription?.status === 'active' ? 'نشط' : formState.subscription?.status === 'trial' ? 'فترة تجريبية' : 'مغلق (مجاني)'}
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Status Pill Bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
-              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-medium">خدمة الذكاء الاصطناعي (AI):</span>
-                <span className={`font-bold flex items-center gap-1.5 mt-0.5 ${formState.subscription?.isAiEnabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                  {formState.subscription?.isAiEnabled ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>مفعلة ومرخصة للعيادة</span>
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>مدفوعة ومغلقة (تتطلب تفعيل)</span>
-                    </>
-                  )}
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-medium">مدة الصلاحية:</span>
-                <span className="font-bold text-slate-700 dark:text-slate-300 mt-0.5 block">
-                  {formState.subscription?.expiresAt ? `تنتهي في ${formState.subscription.expiresAt}` : 'دائم (غير محدد)'}
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-medium">جهة الاعتماد والترخيص:</span>
-                <span className="font-bold text-slate-700 dark:text-slate-300 mt-0.5 block truncate">
-                  {formState.subscription?.activatedBy || 'مطور ومالك المنصة'}
-                </span>
-              </div>
-            </div>
-
-            {formState.subscription?.notes && (
-              <div className="p-2.5 rounded-lg bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900/50 text-[11px] text-sky-800 dark:text-sky-300">
-                <span className="font-bold">ملاحظات الترخيص: </span>
-                <span>{formState.subscription.notes}</span>
-              </div>
-            )}
+          {/* Developer Multi-Clinic Directory (Open/Close Paid Features & Delete Clinics) */}
+          <section className="rounded-2xl border-2 border-amber-500/40 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+            <WorkspaceTeamPanel
+              workspaceId={workspaceId || 'alssaedy-clinic'}
+              ownerUid={ownerUid || 'local_owner'}
+              isOwner={isOwner}
+              currentRole={currentRole}
+              ownerEmail={ownerEmail || formState.identity.ownerEmail}
+              doctorName={formState.identity.doctorAr || formState.identity.systemTitleAr}
+              clinicName={formState.identity.clinicAr || formState.identity.systemTitleAr}
+              notify={notify}
+            />
           </section>
 
-          {/* Platform Package Tiers Grid */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between px-1">
-              <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>باقات المنصة والميزات المتاحة</span>
-              </h3>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                يتم إدارة وتفعيل الباقات حصرياً بواسطة مطور المنصة
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-              {PLATFORM_PACKAGES.map((pkg) => {
-                const isCurrent = formState.subscription?.planId === pkg.id || (!formState.subscription?.planId && pkg.id === 'free');
-                const whatsappUrl = `https://wa.me/967716339366?text=${encodeURIComponent(
-                  `السلام عليكم د. صلاح الدين السعيدي، أرغب في ترقية باقة عيادة (${formState.identity.clinicAr || 'العيادة'}) إلى "${pkg.nameAr}" لتفعيل ميزات الذكاء الاصطناعي الطبي.`
-                )}`;
-
-                return (
-                  <div
-                    key={pkg.id}
-                    className={`rounded-2xl border p-4 sm:p-5 flex flex-col justify-between transition-all relative ${
-                      isCurrent
-                        ? 'border-sky-500 bg-sky-50/20 dark:bg-sky-950/20 shadow-md ring-2 ring-sky-500/20'
-                        : pkg.isPopular
-                        ? 'border-amber-500/50 bg-amber-50/15 dark:bg-amber-950/20 shadow-sm'
-                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
-                    }`}
-                  >
-                    {pkg.badge && (
-                      <div className="absolute -top-2.5 right-4 px-2.5 py-0.5 rounded-full bg-linear-to-r from-amber-500 to-amber-600 text-white font-black text-[10px] shadow-xs">
-                        {pkg.badge}
-                      </div>
-                    )}
-
-                    <div className="space-y-3">
-                      <div>
-                        <h4 className="text-sm font-black text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                          {pkg.isAiIncluded ? (
-                            <Zap className="w-4 h-4 text-amber-500 shrink-0" />
-                          ) : (
-                            <Check className="w-4 h-4 text-slate-400 shrink-0" />
-                          )}
-                          <span>{pkg.nameAr}</span>
-                        </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                          {pkg.descriptionAr}
-                        </p>
-                      </div>
-
-                      <div className="py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800">
-                        <div className="text-base font-black text-slate-900 dark:text-slate-100">
-                          {pkg.priceFormatted}
-                        </div>
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                          {pkg.billingPeriod}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5 pt-1">
-                        <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                          الميزات المتضمنة:
-                        </div>
-                        <ul className="space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
-                          {pkg.features.map((feat, i) => (
-                            <li key={i} className="flex items-start gap-1.5 leading-snug">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                              <span>{feat}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 mt-3 border-t border-slate-200 dark:border-slate-800">
-                      {isCurrent ? (
-                        <div className="py-2 px-3 rounded-xl bg-sky-600/10 border border-sky-500/30 text-sky-700 dark:text-sky-300 text-center font-bold text-xs flex items-center justify-center gap-1.5">
-                          <CheckCircle2 className="w-4 h-4 text-sky-600" />
-                          <span>باقة العيادة الحالية (مفعلة)</span>
-                        </div>
-                      ) : (
-                        <a
-                          href={whatsappUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>طلب تفعيل الباقة عبر المطور</span>
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Payment & Billing Channels Notice */}
-          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
-            <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
-              <Building2 className="w-4 h-4 text-sky-500" />
-              <span>طرق الدفع وتفعيل الاشتراكات</span>
-            </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-              طرق السداد المعتمدة حالياً: التحويل عبر بنك الكريمي (حساب: <span className="font-mono font-bold text-slate-900 dark:text-slate-100">716339366</span>) أو أي حوالة صرافة باسم مطور البرنامج، أو التواصل المباشر لتفعيل الخدمة فوراً. سيتم ربط بوابات الدفع الإلكتروني المباشرة في التحديثات اللاحقة.
-            </p>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <a
-                href="https://wa.me/967716339366"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>مراسلة مطور المنصة (واتساب: 716339366)</span>
-              </a>
-              <a
-                href="tel:+967716339366"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors"
-              >
-                <PhoneCall className="w-3.5 h-3.5 text-sky-500" />
-                <span>اتصال هاتفي مباشر</span>
-              </a>
-            </div>
-          </section>
-
-          {/* PLATFORM DEVELOPER & OWNER MANAGEMENT PANEL */}
+          {/* Current Active Clinic Subscription Controls */}
           <section className="rounded-2xl border-2 border-amber-500/50 bg-linear-to-b from-amber-500/5 to-transparent dark:from-amber-950/20 p-4 sm:p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-amber-500/20">
               <div className="flex items-center gap-2.5">
@@ -2061,188 +1885,155 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 </div>
                 <div>
                   <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                    <span>لوحة تحكم مطور ومالك المنصة</span>
+                    <span>إعدادات باقة العيادة الحالية</span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold">
-                      Platform Developer
+                      Developer Only
                     </span>
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    خاص بمطور البرنامج (alssaedy50@gmail.com) للتحكم في باقة أي عيادة وفتح أو قفل الذكاء الاصطناعي
+                    خاص بمطور البرنامج (alssaedy50@gmail.com) للتحكم المباشر في باقة العيادة المفتوحة حالياً
                   </p>
                 </div>
               </div>
 
-              {isPlatformDev ? (
-                <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>تم التحقق: صلاحية مطور المنصة</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    value={devPasscode}
-                    onChange={(e) => setDevPasscode(e.target.value)}
-                    placeholder="رمز المطور السري..."
-                    className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 w-36"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const clean = devPasscode.trim();
-                      if (
-                        clean === 'alssaedy_admin' ||
-                        clean === '716339366' ||
-                        clean === 'alssaedy50@gmail.com' ||
-                        clean === 'alssaedy500@gmail.com'
-                      ) {
-                        setIsDevUnlocked(true);
-                        try { localStorage.setItem('docai_developer_mode_active', 'true'); } catch {}
-                        notify('تم فتح لوحة تحكم مطور المنصة بنجاح', 'success');
-                      } else {
-                        notify('رمز المطور السري غير صحيح', 'error');
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition-colors"
-                  >
-                    فتح
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                <ShieldCheck className="w-4 h-4" />
+                <span>صلاحية مطور المنصة</span>
+              </div>
             </div>
 
-            {isPlatformDev ? (
-              <div className="space-y-4 pt-1">
-                {/* Instant AI Toggle */}
-                <div className="p-3.5 rounded-xl border border-amber-500/30 bg-white dark:bg-slate-900 flex items-center justify-between gap-4">
-                  <div className="space-y-0.5">
-                    <div className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                      {devAiEnabled ? (
-                        <Unlock className="w-4 h-4 text-emerald-500" />
-                      ) : (
-                        <Lock className="w-4 h-4 text-amber-500" />
-                      )}
-                      <span>ترخيص وفتح خدمة الذكاء الاصطناعي لهذه العيادة:</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      عند التفعيل، يمكن للعيادة استخدام المساعد الذكي وفحص الأشعة والتفريغ الصوتي دون قفل.
-                    </p>
+            <div className="space-y-4 pt-1">
+              {/* Instant AI Toggle */}
+              <div className="p-3.5 rounded-xl border border-amber-500/30 bg-white dark:bg-slate-900 flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <div className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    {devAiEnabled ? (
+                      <Unlock className="w-4 h-4 text-emerald-500" />
+                    ) : (
+                      <Lock className="w-4 h-4 text-amber-500" />
+                    )}
+                    <span>ترخيص وفتح خدمة الذكاء الاصطناعي لهذه العيادة:</span>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={devAiEnabled}
-                      onChange={(e) => setDevAiEnabled(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-300 peer-focus:outline-hidden rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                  </label>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    عند التفعيل، يمكن للعيادة استخدام المساعد الذكي وفحص الأشعة والتفريغ الصوتي دون قفل.
+                  </p>
                 </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={devAiEnabled}
+                    onChange={(e) => setDevAiEnabled(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-300 peer-focus:outline-hidden rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                      تحديد الباقة المعتمدة
-                    </label>
-                    <select
-                      value={devPlanId}
-                      onChange={(e) => {
-                        const val = e.target.value as 'free' | 'ai_pro' | 'enterprise';
-                        setDevPlanId(val);
-                        if (val !== 'free') setDevAiEnabled(true);
-                      }}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="free">الباقة الأساسية (مجاناً - بدون AI)</option>
-                      <option value="ai_pro">باقة الذكاء الاصطناعي الطبي (AI Pro)</option>
-                      <option value="enterprise">باقة العيادة المتكاملة الشاملة (Enterprise)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                      حالة الاشتراك
-                    </label>
-                    <select
-                      value={devStatus}
-                      onChange={(e) => setDevStatus(e.target.value as 'active' | 'expired' | 'trial' | 'locked')}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="active">نشط ومفعل (Active)</option>
-                      <option value="trial">فترة تجريبية (Trial)</option>
-                      <option value="locked">مغلق ومحجوب (Locked)</option>
-                      <option value="expired">منتهي الصلاحية (Expired)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                      تاريخ انتهاء الترخيص (اختياري)
-                    </label>
-                    <input
-                      type="date"
-                      value={devExpiresAt}
-                      onChange={(e) => setDevExpiresAt(e.target.value)}
-                      placeholder="اتركه فارغاً لدائم"
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
-                    />
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    تحديد الباقة المعتمدة
+                  </label>
+                  <select
+                    value={devPlanId}
+                    onChange={(e) => {
+                      const val = e.target.value as 'free' | 'ai_pro' | 'enterprise';
+                      setDevPlanId(val);
+                      if (val !== 'free') setDevAiEnabled(true);
+                    }}
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="free">الباقة الأساسية (مجاناً - بدون AI)</option>
+                    <option value="ai_pro">باقة الذكاء الاصطناعي الطبي (AI Pro)</option>
+                    <option value="enterprise">باقة العيادة المتكاملة الشاملة (Enterprise)</option>
+                  </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    ملاحظات المطور للعيادة (تظهر في معلومات الاشتراك)
+                    حالة الاشتراك
+                  </label>
+                  <select
+                    value={devStatus}
+                    onChange={(e) => setDevStatus(e.target.value as 'active' | 'expired' | 'trial' | 'locked')}
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="active">نشط ومفعل (Active)</option>
+                    <option value="trial">فترة تجريبية (Trial)</option>
+                    <option value="locked">مغلق ومحجوب (Locked)</option>
+                    <option value="expired">منتهي الصلاحية (Expired)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    تاريخ انتهاء الترخيص (اختياري)
                   </label>
                   <input
-                    type="text"
-                    value={devNotes}
-                    onChange={(e) => setDevNotes(e.target.value)}
-                    placeholder="مثال: تم سداد الاشتراك السنوي عبر بنك الكريمي — ترخيص سارٍ"
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
+                    type="date"
+                    value={devExpiresAt}
+                    onChange={(e) => setDevExpiresAt(e.target.value)}
+                    placeholder="اتركه فارغاً لدائم"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
                   />
                 </div>
-
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const planInfo = PLATFORM_PACKAGES.find((p) => p.id === devPlanId);
-                      const updatedSubscription: ClinicSubscription = {
-                        planId: devPlanId,
-                        planNameAr: planInfo?.nameAr || (devPlanId === 'enterprise' ? 'باقة العيادة المتكاملة الشاملة' : devPlanId === 'ai_pro' ? 'باقة الذكاء الاصطناعي الطبي' : 'الباقة الأساسية'),
-                        isAiEnabled: devAiEnabled,
-                        status: devStatus,
-                        activatedAt: formState.subscription?.activatedAt || new Date().toISOString().slice(0, 10),
-                        expiresAt: devExpiresAt || undefined,
-                        activatedBy: auth.currentUser?.email || 'مطور ومالك المنصة (د. صلاح الدين السعيدي)',
-                        notes: devNotes.trim() || undefined,
-                      };
-
-                      const nextSettings: ClinicSettings = {
-                        ...formState,
-                        subscription: updatedSubscription,
-                      };
-                      setFormState(nextSettings);
-                      onSaveSettings(nextSettings);
-                      notify(
-                        devAiEnabled
-                          ? 'تم حفظ وتطبيق باقة الذكاء الاصطناعي للعيادة سحابياً بنجاح! 👑'
-                          : 'تم حفظ وتحديث حالة الاشتراك للعيادة سحابياً.',
-                        devAiEnabled ? 'success' : 'info'
-                      );
-                    }}
-                    className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-colors"
-                  >
-                    <Save className="w-4 h-4" />
-                    <span>حفظ وتطبيق حالة اشتراك العيادة سحابياً فوراً</span>
-                  </button>
-                </div>
               </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 text-center">
-                هذا القسم مخصص حصرياً لمالك ومطور المنصة لإدارة الاشتراكات والتراخيص.
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  ملاحظات المطور للعيادة (تظهر في معلومات الاشتراك)
+                </label>
+                <input
+                  type="text"
+                  value={devNotes}
+                  onChange={(e) => setDevNotes(e.target.value)}
+                  placeholder="مثال: تم سداد الاشتراك السنوي عبر بنك الكريمي — ترخيص سارٍ"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-slate-100"
+                />
               </div>
-            )}
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const planInfo = PLATFORM_PACKAGES.find((p) => p.id === devPlanId);
+                    const updatedSubscription: ClinicSubscription = {
+                      planId: devPlanId,
+                      planNameAr:
+                        planInfo?.nameAr ||
+                        (devPlanId === 'enterprise'
+                          ? 'باقة العيادة المتكاملة الشاملة'
+                          : devPlanId === 'ai_pro'
+                            ? 'باقة الذكاء الاصطناعي الطبي'
+                            : 'الباقة الأساسية'),
+                      isAiEnabled: devAiEnabled,
+                      status: devStatus,
+                      activatedAt: formState.subscription?.activatedAt || new Date().toISOString().slice(0, 10),
+                      expiresAt: devExpiresAt || undefined,
+                      activatedBy: auth.currentUser?.email || 'مطور ومالك المنصة (د. صلاح الدين السعيدي)',
+                      notes: devNotes.trim() || undefined,
+                    };
+
+                    const nextSettings: ClinicSettings = {
+                      ...formState,
+                      subscription: updatedSubscription,
+                    };
+                    setFormState(nextSettings);
+                    onSaveSettings(nextSettings);
+                    notify(
+                      devAiEnabled
+                        ? 'تم حفظ وتطبيق باقة الذكاء الاصطناعي للعيادة سحابياً بنجاح! 👑'
+                        : 'تم حفظ وتحديث حالة الاشتراك للعيادة سحابياً.',
+                      devAiEnabled ? 'success' : 'info'
+                    );
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-colors"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>حفظ وتطبيق حالة اشتراك العيادة الحالية سحابياً</span>
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       )}

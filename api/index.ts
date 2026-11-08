@@ -131,26 +131,31 @@ function checkRateLimit(key: string, maxRequests: number, windowMs: number): boo
 }
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-  'gemini-3.8-flash': 'Gemini 3.8 Flash',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash',
+  'gemini-3-flash-preview': 'Gemini 3 Flash',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash Lite',
   'gemini-flash-latest': 'Gemini Flash Latest',
   'local-clinical-engine': 'المحرك السريري المدمج',
 };
 
 const TEXT_MODEL_POOL = [
-  'gemini-3.1-flash-lite',
-  'gemini-3.8-flash',
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-flash-latest',
 ] as const;
 
 const VISION_MODEL_POOL = [
-  'gemini-3.8-flash',
-  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-flash-latest',
 ] as const;
 
 const modelCooldownUntil = new Map<string, number>();
 
-function getGenAIClientsPool(): GoogleGenAI[] {
+function getGenAIClientsPool(customClientKey?: string): GoogleGenAI[] {
   const rawKeys = [
+    customClientKey,
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
@@ -402,7 +407,7 @@ async function generateWithMultiModelLoadBalancer(
       const modelConfig: Record<string, unknown> = {
         ...payload.config,
       };
-      if (target.modelName === 'gemini-3.8-flash') {
+      if (target.modelName === 'gemini-3-flash-preview' || target.modelName === 'gemini-3.1-flash-lite-preview') {
         modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
       }
 
@@ -1072,7 +1077,8 @@ export default async function handler(req: any, res: any) {
       }
       const cleanText = text.trim().slice(0, 2000);
 
-      const clients = getGenAIClientsPool();
+      const clientHeaderKey = String(req.headers?.['x-gemini-api-key'] || '').trim();
+      const clients = getGenAIClientsPool(clientHeaderKey);
       if (clients.length === 0) {
         const fallbackResult = parseReceiptHeuristicServer(
           cleanText,
@@ -1156,7 +1162,8 @@ export default async function handler(req: any, res: any) {
       }
       const cleanPrompt = prompt.trim().slice(0, 4000);
 
-      const clients = getGenAIClientsPool();
+      const clientHeaderKey = String(req.headers?.['x-gemini-api-key'] || '').trim();
+      const clients = getGenAIClientsPool(clientHeaderKey);
       if (clients.length === 0) {
         const localReply = buildLocalIntelligentReply(cleanPrompt, clinicContext);
         return res.status(200).json({

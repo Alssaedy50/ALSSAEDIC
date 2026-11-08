@@ -711,9 +711,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     });
   };
 
-  const isPlatformDev =
-    isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail) ||
-    (typeof window !== 'undefined' && window.localStorage.getItem('docai_developer_mode_active') === 'true');
+  const isPlatformDev = isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail);
   const isAiAuthorized = Boolean(settings.subscription?.isAiEnabled) || isPlatformDev;
 
   if (!isAiAuthorized) {
@@ -774,20 +772,22 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
           {/* Action Buttons */}
           <div className="space-y-2 pt-1">
-            <button
-              type="button"
-              onClick={() => onOpenSettings?.('subscription')}
-              className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
-            >
-              <Crown className="w-4 h-4 text-amber-200" />
-              <span>استعراض باقات الميزات المدفوعة والترقية 👑</span>
-            </button>
+            {isPlatformDev && (
+              <button
+                type="button"
+                onClick={() => onOpenSettings?.('subscription')}
+                className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
+              >
+                <Crown className="w-4 h-4 text-amber-200" />
+                <span>إدارة الباقات والميزات المدفوعة (للمطور) 👑</span>
+              </button>
+            )}
 
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+              className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
             >
               <Send className="w-3.5 h-3.5" />
               <span>تواصل مع مطور المنصة لفتح وتفعيل الخدمة (واتساب)</span>
@@ -802,7 +802,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           </div>
 
           {/* Developer Bypass if logged in as developer */}
-          {isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail) && (
+          {isPlatformDev && (
             <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"

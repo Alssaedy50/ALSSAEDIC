@@ -13,13 +13,16 @@ import {
   RefreshCw,
   Shield,
   ShieldCheck,
+  Sparkles,
   Trash2,
+  Unlock,
   UserCheck,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import {
+  ClinicSubscription,
   DEFAULT_ROLE_PERMISSIONS,
   WorkspaceMember,
   WorkspacePermissions,
@@ -29,12 +32,14 @@ import {
   RegisteredClinicSummary,
   addWorkspaceMemberInCloud,
   auth,
+  deleteClinicByDeveloper,
   fetchRegisteredSystemDirectory,
   isSuperAdminEmail,
   isValidRealEmail,
   loadLocalWorkspaceMembers,
   removeWorkspaceMemberFromCloud,
   subscribeToWorkspaceMembers,
+  updateClinicSubscriptionByDeveloper,
   updateWorkspaceMemberRoleInCloud,
 } from '../firebase';
 
@@ -126,6 +131,8 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   const [directoryLoading, setDirectoryLoading] = useState<boolean>(false);
   const [showClinicsList, setShowClinicsList] = useState<boolean>(true);
   const [copiedEmail, setCopiedEmail] = useState(false);
+  const [busyClinicId, setBusyClinicId] = useState<string | null>(null);
+  const [confirmDeleteClinicId, setConfirmDeleteClinicId] = useState<string | null>(null);
 
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => auth.currentUser?.email || null);
 
@@ -210,6 +217,13 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
       phones: '',
       address: '',
       updatedAt: new Date().toISOString().slice(0, 10),
+      isDeveloperClinic: true,
+      subscription: {
+        planId: 'enterprise',
+        planNameAr: 'باقة المطور الشاملة',
+        isAiEnabled: true,
+        status: 'active',
+      },
     };
     try {
       const dir = await fetchRegisteredSystemDirectory(effectiveWsId, effectiveOwnerEmail);
@@ -223,6 +237,65 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
       setTotalRegisteredAccountsCount(Math.max(cloudMembers.length + 1, 1));
     } finally {
       setDirectoryLoading(false);
+    }
+  };
+
+  const handleToggleClinicPaidFeatures = async (
+    clinic: RegisteredClinicSummary,
+    enableAi: boolean,
+    planIdOverride?: 'free' | 'ai_pro' | 'enterprise'
+  ) => {
+    setBusyClinicId(clinic.id);
+    try {
+      const nextPlanId: 'free' | 'ai_pro' | 'enterprise' =
+        planIdOverride ?? (enableAi ? 'ai_pro' : 'free');
+      const nextPlanName =
+        nextPlanId === 'enterprise'
+          ? 'باقة العيادة المتكاملة الشاملة (Enterprise VIP)'
+          : nextPlanId === 'ai_pro'
+            ? 'باقة الذكاء الاصطناعي الطبي (AI Pro)'
+            : 'الباقة الأساسية';
+
+      const nextSub: ClinicSubscription = {
+        planId: nextPlanId,
+        planNameAr: nextPlanName,
+        isAiEnabled: enableAi,
+        status: enableAi ? 'active' : 'locked',
+        activatedAt: new Date().toISOString().slice(0, 10),
+        activatedBy: currentUserEmail || 'مطور المنصة (alssaedy50@gmail.com)',
+        notes: enableAi
+          ? 'تم تفعيل وفتح الميزات المدفوعة بواسطة مطور المنصة'
+          : 'تم إغلاق الميزات المدفوعة وتحويل العيادة للباقة الأساسية',
+      };
+
+      await updateClinicSubscriptionByDeveloper(clinic, nextSub);
+      setRegisteredClinics((prev) =>
+        prev.map((item) => (item.id === clinic.id ? { ...item, subscription: nextSub } : item))
+      );
+      notify(
+        enableAi
+          ? `تم فتح وتفعيل الميزات المدفوعة لـ (${clinic.clinicAr}) بنجاح ✅`
+          : `تم إغلاق الميزات المدفوعة لـ (${clinic.clinicAr}) 🔒`,
+        enableAi ? 'success' : 'info'
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر تحديث اشتراك العيادة', 'error');
+    } finally {
+      setBusyClinicId(null);
+    }
+  };
+
+  const handleDeleteRegisteredClinic = async (clinic: RegisteredClinicSummary) => {
+    setBusyClinicId(clinic.id);
+    try {
+      await deleteClinicByDeveloper(clinic);
+      setRegisteredClinics((prev) => prev.filter((item) => item.id !== clinic.id));
+      setConfirmDeleteClinicId(null);
+      notify(`تم حذف العيادة (${clinic.clinicAr}) وبياناتها من السحابة نهائياً`, 'info');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر حذف العيادة', 'error');
+    } finally {
+      setBusyClinicId(null);
     }
   };
 
@@ -395,52 +468,141 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
           </div>
 
           {showClinicsList && (
-            <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
-              {registeredClinics.length === 0 ? (
-                <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="space-y-0.5">
-                    <div className="font-black text-slate-900 dark:text-slate-100">
-                      1. {effectiveClinicTitle}
-                    </div>
-                    <div className="text-[11px] font-bold text-slate-500">
-                      {effectiveOwnerDoctorName}
-                    </div>
-                    {effectiveOwnerEmail && (
-                      <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400" dir="ltr">
-                        {effectiveOwnerEmail}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                registeredClinics.map((c, idx) => (
+            <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              {registeredClinics.map((c, idx) => {
+                const isAiActive = Boolean(c.subscription?.isAiEnabled || c.isDeveloperClinic);
+                const currentPlanId = c.subscription?.planId || (c.isDeveloperClinic ? 'enterprise' : 'free');
+                const isPrimaryDevClinic = Boolean(
+                  c.isDeveloperClinic ||
+                    c.id === auth.currentUser?.uid ||
+                    c.id === 'alssaedy-clinic'
+                );
+                const isBusy = busyClinicId === c.id;
+
+                return (
                   <div
                     key={c.id}
-                    className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs"
+                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5 text-xs"
                   >
-                    <div className="space-y-0.5">
-                      <div className="font-black text-slate-900 dark:text-slate-100">
-                        {idx + 1}. {c.clinicAr}
-                      </div>
-                      <div className="text-[11px] font-bold text-slate-500">
-                        {c.doctorAr} {c.address ? `— ${c.address}` : ''}
-                      </div>
-                      {c.ownerEmail ? (
-                        <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-bold" dir="ltr">
-                          {c.ownerEmail}
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="font-black text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
+                          <span>
+                            {idx + 1}. {c.clinicAr}
+                          </span>
+                          {isAiActive ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              <span>الميزات المدفوعة مفتوحة ✅</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                              <Lock className="w-2.5 h-2.5" />
+                              <span>مغلق (الباقة المجانية) 🔒</span>
+                            </span>
+                          )}
                         </div>
+                        <div className="text-[11px] font-bold text-slate-500">
+                          {c.doctorAr} {c.address ? `— ${c.address}` : ''}
+                        </div>
+                        {c.ownerEmail ? (
+                          <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-bold" dir="ltr">
+                            {c.ownerEmail}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                            حساب عيادة مسجل (المعرّف: {c.id.slice(0, 12)})
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="text-[11px] font-mono text-slate-500 text-left" dir="ltr">
+                        {c.phones || c.updatedAt}
+                      </div>
+                    </div>
+
+                    {/* Developer Action Bar for this Clinic */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <select
+                          disabled={isBusy}
+                          value={currentPlanId}
+                          onChange={(e) => {
+                            const val = e.target.value as 'free' | 'ai_pro' | 'enterprise';
+                            handleToggleClinicPaidFeatures(c, val !== 'free', val);
+                          }}
+                          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-1 text-[11px] font-bold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="free">الباقة الأساسية (مغلق)</option>
+                          <option value="ai_pro">باقة الذكاء الاصطناعي (مفعل)</option>
+                          <option value="enterprise">الباقة الشاملة VIP (مفعل)</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => handleToggleClinicPaidFeatures(c, !isAiActive, !isAiActive ? 'ai_pro' : 'free')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                            isAiActive
+                              ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-600 hover:text-white'
+                              : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                          }`}
+                        >
+                          {isAiActive ? (
+                            <>
+                              <Lock className="w-3 h-3" />
+                              <span>إغلاق الميزات المدفوعة</span>
+                            </>
+                          ) : (
+                            <>
+                              <Unlock className="w-3 h-3" />
+                              <span>فتح الميزات المدفوعة</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {!isPrimaryDevClinic ? (
+                        confirmDeleteClinicId === c.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleDeleteRegisteredClinic(c)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black"
+                            >
+                              تأكيد الحذف النهائي
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => setConfirmDeleteClinicId(null)}
+                              className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold"
+                            >
+                              إلغاء
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setConfirmDeleteClinicId(c.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-[11px] font-bold transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>حذف العيادة</span>
+                          </button>
+                        )
                       ) : (
-                        <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                          حساب محلي / مساحة عمل خاصة (غير مرتبط ببريد سحابي)
-                        </div>
+                        <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                          <Crown className="w-3 h-3" />
+                          <span>عيادة المطور الأساسية</span>
+                        </span>
                       )}
                     </div>
-                    <div className="text-[11px] font-mono text-slate-500" dir="ltr">
-                      {c.phones || c.updatedAt}
-                    </div>
                   </div>
-                ))
-              )}
+                );
+              })}
             </div>
           )}
         </section>

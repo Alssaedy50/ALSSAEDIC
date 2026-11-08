@@ -12,22 +12,23 @@ import {
 export const AI_CONFIG_STORAGE_KEY = 'docai_ai_providers_config_v1';
 
 export const GEMINI_CANDIDATE_MODELS = [
-  'gemini-1.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-pro',
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite-preview',
   'gemini-flash-latest',
+  'gemini-2.5-pro',
 ] as const;
 
 export const GROQ_TEXT_MODELS = [
-  'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
-  'llama3-70b-8192',
-  'mixtral-8x7b-32768',
+  'llama-3.1-8b-instant',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
 ] as const;
 
 export const GROQ_VISION_MODELS = [
-  'llama-3.2-11b-vision-preview',
-  'llama-3.2-90b-vision-preview',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
 ] as const;
 
 export const GROQ_WHISPER_MODELS = [
@@ -36,37 +37,39 @@ export const GROQ_WHISPER_MODELS = [
 ] as const;
 
 export const OPENROUTER_MODELS = [
+  'google/gemini-2.5-flash',
   'deepseek/deepseek-chat',
-  'google/gemini-flash-1.5',
   'meta-llama/llama-3.3-70b-instruct',
-  'anthropic/claude-3.5-sonnet',
+  'openrouter/free',
+  'openrouter/auto',
 ] as const;
 
 export const MODEL_DISPLAY_LABELS: Record<string, string> = {
-  'gemini-1.5-flash': 'Google Gemini 1.5 Flash (موصى به)',
-  'gemini-2.0-flash': 'Google Gemini 2.0 Flash',
-  'gemini-1.5-pro': 'Google Gemini 1.5 Pro',
+  'gemini-2.5-flash': 'Google Gemini 2.5 Flash (موصى به)',
+  'gemini-3-flash-preview': 'Google Gemini 3 Flash',
+  'gemini-3.1-flash-lite-preview': 'Google Gemini 3.1 Flash Lite',
   'gemini-flash-latest': 'Google Gemini Flash Latest',
-  'gemini-2.5-flash': 'Google Gemini 1.5 Flash',
-  'llama-3.1-8b-instant': 'Groq Llama 3.1 8B Instant (متاح ومجاني)',
-  'llama-3.3-70b-versatile': 'Groq Llama 3.3 70B Versatile',
-  'llama3-70b-8192': 'Groq Llama 3 70B',
-  'mixtral-8x7b-32768': 'Groq Mixtral 8x7B',
-  'llama-3.2-11b-vision-preview': 'Groq Llama 3.2 11B Vision',
-  'llama-3.2-90b-vision-preview': 'Groq Llama 3.2 90B Vision',
+  'gemini-2.5-pro': 'Google Gemini 2.5 Pro',
+  'gemini-1.5-flash': 'Google Gemini 2.5 Flash',
+  'gemini-2.0-flash': 'Google Gemini 2.5 Flash',
+  'gemini-1.5-pro': 'Google Gemini 2.5 Pro',
+  'llama-3.3-70b-versatile': 'Groq Llama 3.3 70B Versatile (موصى به)',
+  'llama-3.1-8b-instant': 'Groq Llama 3.1 8B Instant (فائق السرعة)',
+  'meta-llama/llama-4-scout-17b-16e-instruct': 'Groq Llama 4 Scout 17B (نصوص ورؤية)',
+  'meta-llama/llama-4-maverick-17b-128e-instruct': 'Groq Llama 4 Maverick 17B',
   'whisper-large-v3': 'Groq Whisper Large v3',
   'whisper-large-v3-turbo': 'Groq Whisper Large v3 Turbo',
+  'google/gemini-2.5-flash': 'OpenRouter Gemini 2.5 Flash (موصى به)',
   'deepseek/deepseek-chat': 'OpenRouter DeepSeek V3',
-  'google/gemini-flash-1.5': 'OpenRouter Gemini 1.5 Flash',
-  'google/gemini-2.5-flash': 'OpenRouter Gemini 1.5 Flash',
   'meta-llama/llama-3.3-70b-instruct': 'OpenRouter Llama 3.3 70B',
-  'anthropic/claude-3.5-sonnet': 'OpenRouter Claude 3.5 Sonnet',
+  'openrouter/free': 'OpenRouter Free Router (مجاني تلقائي)',
+  'openrouter/auto': 'OpenRouter Auto Router (ذكي تلقائي)',
   'local-clinical-engine': 'المحرك السريري المدمج (خادم العيادة)',
 };
 
 export function formatModelDisplayLabel(modelName?: string | null): string {
   const clean = String(modelName || '').trim();
-  if (!clean) return 'Gemini 1.5 Flash';
+  if (!clean) return 'Google Gemini 2.5 Flash';
   return MODEL_DISPLAY_LABELS[clean] || clean;
 }
 
@@ -74,20 +77,43 @@ export function sanitizeGeminiModel(model?: string | null): string {
   const m = String(model || '').trim();
   if (
     !m ||
-    m === 'gemini-2.5-flash' ||
+    m.includes('1.5') ||
+    m.includes('2.0') ||
     m === 'gemini-3.8-flash' ||
-    m.includes('2.5') ||
-    m.includes('3.8')
+    m === 'gemini-3.1-flash-lite'
   ) {
-    return 'gemini-1.5-flash';
+    return 'gemini-2.5-flash';
   }
   return m;
 }
 
 export function sanitizeGroqTextModel(model?: string | null): string {
   const m = String(model || '').trim();
-  if (!m || m === 'llama-3.3-70b-versatile') {
-    return 'llama-3.1-8b-instant';
+  if (
+    !m ||
+    m === 'llama3-70b-8192' ||
+    m === 'mixtral-8x7b-32768' ||
+    m === 'llama3-8b-8192' ||
+    m === 'gemma-7b-it' ||
+    m.includes('llama-3.2-')
+  ) {
+    return 'llama-3.3-70b-versatile';
+  }
+  return m;
+}
+
+export function sanitizeGroqVisionModel(model?: string | null): string {
+  const m = String(model || '').trim();
+  if (!m || m.includes('llama-3.2-')) {
+    return 'meta-llama/llama-4-scout-17b-16e-instruct';
+  }
+  return m;
+}
+
+export function sanitizeOpenRouterModel(model?: string | null): string {
+  const m = String(model || '').trim();
+  if (!m || m === 'google/gemini-flash-1.5' || m === 'anthropic/claude-3.5-sonnet') {
+    return 'google/gemini-2.5-flash';
   }
   return m;
 }
@@ -103,6 +129,8 @@ export function loadAIProviderConfig(): AIProviderConfig {
 
     const geminiModel = sanitizeGeminiModel(parsed.geminiModel || DEFAULT_AI_CONFIG.geminiModel);
     const groqTextModel = sanitizeGroqTextModel(parsed.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel);
+    const groqVisionModel = sanitizeGroqVisionModel(parsed.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel);
+    const openrouterModel = sanitizeOpenRouterModel(parsed.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel);
 
     const config: AIProviderConfig = {
       geminiApiKey: String(parsed.geminiApiKey || '').trim(),
@@ -111,11 +139,11 @@ export function loadAIProviderConfig(): AIProviderConfig {
 
       groqApiKey: String(parsed.groqApiKey || '').trim(),
       groqTextModel,
-      groqVisionModel: String(parsed.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel).trim(),
+      groqVisionModel,
       groqWhisperModel: String(parsed.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel).trim(),
 
       openrouterApiKey: String(parsed.openrouterApiKey || '').trim(),
-      openrouterModel: String(parsed.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel).trim(),
+      openrouterModel,
 
       sttEngine: parsed.sttEngine === 'groq' ? 'groq' : 'browser',
       customPriority: Array.isArray(parsed.customPriority) && parsed.customPriority.length > 0
@@ -124,7 +152,12 @@ export function loadAIProviderConfig(): AIProviderConfig {
     };
 
     // Auto-heal localStorage if obsolete models were stored
-    if (parsed.geminiModel !== geminiModel || parsed.groqTextModel !== groqTextModel) {
+    if (
+      parsed.geminiModel !== geminiModel ||
+      parsed.groqTextModel !== groqTextModel ||
+      parsed.groqVisionModel !== groqVisionModel ||
+      parsed.openrouterModel !== openrouterModel
+    ) {
       try {
         window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config));
       } catch {
@@ -143,8 +176,13 @@ export function saveAIProviderConfig(config: AIProviderConfig): void {
     if (typeof window !== 'undefined' && window.localStorage) {
       const sanitized: AIProviderConfig = {
         ...config,
+        geminiApiKey: String(config.geminiApiKey || '').trim(),
+        groqApiKey: String(config.groqApiKey || '').trim(),
+        openrouterApiKey: String(config.openrouterApiKey || '').trim(),
         geminiModel: sanitizeGeminiModel(config.geminiModel),
         groqTextModel: sanitizeGroqTextModel(config.groqTextModel),
+        groqVisionModel: sanitizeGroqVisionModel(config.groqVisionModel),
+        openrouterModel: sanitizeOpenRouterModel(config.openrouterModel),
       };
       window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(sanitized));
     }
@@ -210,6 +248,10 @@ export function getStoredSessionAuthHeaders(): Record<string, string> {
   };
   try {
     if (typeof window === 'undefined') return headers;
+    const aiCfg = loadAIProviderConfig();
+    if (aiCfg.geminiApiKey.trim()) {
+      headers['X-Gemini-Api-Key'] = aiCfg.geminiApiKey.trim();
+    }
     const rawLocal = window.sessionStorage?.getItem(LOCAL_API_SESSION_KEY);
     const rawCloud = window.localStorage?.getItem(SESSION_STORAGE_KEY);
     const raw = rawLocal || rawCloud;
@@ -680,7 +722,7 @@ function extractCleanBase64(dataUrl: string): { base64: string; mimeType: string
   return { mimeType: 'image/jpeg', base64: dataUrl };
 }
 
-// 1. Google Gemini Direct (BYOK with Web Search Grounding)
+// 1. Google Gemini Direct (BYOK with automatic multi-model & grounding failover)
 async function callGeminiDirect(
   payload: AssistantRequestPayload,
   config: AIProviderConfig,
@@ -689,13 +731,21 @@ async function callGeminiDirect(
   const apiKey = config.geminiApiKey.trim();
   if (!apiKey) throw new Error('مفتاح Gemini API غير مدخل.');
 
-  let model = sanitizeGeminiModel(config.geminiModel);
-  let url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const primaryModel = sanitizeGeminiModel(config.geminiModel);
+  const candidateModels = Array.from(
+    new Set([
+      primaryModel,
+      'gemini-2.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite-preview',
+    ])
+  );
+
   const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
 
   const contents: Array<Record<string, unknown>> = [];
 
-  // Add history
   if (Array.isArray(payload.history)) {
     for (const h of payload.history.slice(-6)) {
       if (h.text && h.text.trim()) {
@@ -707,9 +757,9 @@ async function callGeminiDirect(
     }
   }
 
-  // Current turn parts
   const userParts: Array<Record<string, unknown>> = [];
-  if (payload.attachment && payload.attachment.base64Data) {
+  const hasAttachment = Boolean(payload.attachment && payload.attachment.base64Data);
+  if (hasAttachment && payload.attachment) {
     const { base64, mimeType } = extractCleanBase64(payload.attachment.base64Data);
     userParts.push({
       inlineData: {
@@ -727,7 +777,7 @@ async function callGeminiDirect(
     parts: userParts,
   });
 
-  const requestBody: Record<string, unknown> = {
+  const baseBody: Record<string, unknown> = {
     systemInstruction: {
       parts: [{ text: systemPrompt }],
     },
@@ -737,73 +787,86 @@ async function callGeminiDirect(
     },
   };
 
-  // Web search grounding if enabled
-  if (config.enableWebGrounding) {
-    requestBody.tools = [{ googleSearch: {} }];
-  }
+  let lastStatus = 0;
+  let lastErrorText = '';
 
-  let res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-    signal,
-  });
+  for (const targetModel of candidateModels) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted by user', 'AbortError');
+    }
 
-  // If model is 404 or deprecated, auto-fallback to active gemini-1.5-flash or gemini-2.0-flash
-  if (!res.ok && res.status === 404) {
-    const fallbackModel = model !== 'gemini-1.5-flash' ? 'gemini-1.5-flash' : 'gemini-2.0-flash';
-    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(fallbackModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const retryRes = await fetch(fallbackUrl, {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const bodyWithGrounding: Record<string, unknown> =
+      config.enableWebGrounding && !hasAttachment
+        ? { ...baseBody, tools: [{ googleSearch: {} }] }
+        : baseBody;
+
+    let res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(bodyWithGrounding),
       signal,
     });
-    if (retryRes.ok) {
-      res = retryRes;
-      model = fallbackModel;
-      config.geminiModel = fallbackModel;
-      saveAIProviderConfig(config);
-    }
-  }
 
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    throw new Error(`Gemini API Error (${res.status}): ${errorText}`);
-  }
-
-  const data = await res.json();
-  const candidate = data?.candidates?.[0];
-  const replyParts = candidate?.content?.parts || [];
-  const textReply = replyParts
-    .map((p: Record<string, unknown>) => (typeof p.text === 'string' ? p.text : ''))
-    .filter(Boolean)
-    .join('\n\n')
-    .trim();
-
-  if (!textReply) {
-    throw new Error('لم يتم استلام نص من نموذج Gemini.');
-  }
-
-  // Extract web search sources if grounding was active
-  const webSources: Array<{ title: string; uri: string }> = [];
-  const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
-  for (const chunk of groundingChunks) {
-    if (chunk?.web?.uri) {
-      webSources.push({
-        title: chunk.web.title || chunk.web.uri,
-        uri: chunk.web.uri,
+    // If web search grounding tool caused a 400 error on this key/model, retry immediately without tools
+    if (!res.ok && res.status === 400 && bodyWithGrounding.tools) {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseBody),
+        signal,
       });
     }
+
+    if (res.ok) {
+      const data = await res.json();
+      const candidate = data?.candidates?.[0];
+      const replyParts = candidate?.content?.parts || [];
+      const textReply = replyParts
+        .map((p: Record<string, unknown>) => (typeof p.text === 'string' ? p.text : ''))
+        .filter(Boolean)
+        .join('\n\n')
+        .trim();
+
+      if (textReply) {
+        if (targetModel !== config.geminiModel) {
+          config.geminiModel = targetModel;
+          saveAIProviderConfig(config);
+        }
+
+        const webSources: Array<{ title: string; uri: string }> = [];
+        const groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
+        for (const chunk of groundingChunks) {
+          if (chunk?.web?.uri) {
+            webSources.push({
+              title: chunk.web.title || chunk.web.uri,
+              uri: chunk.web.uri,
+            });
+          }
+        }
+
+        return {
+          reply: textReply,
+          model: targetModel,
+          modelLabel: formatModelDisplayLabel(targetModel),
+          providerUsed: 'gemini',
+          webSources: webSources.length > 0 ? webSources : undefined,
+        };
+      }
+    } else {
+      lastStatus = res.status;
+      lastErrorText = await res.text().catch(() => '');
+      // If key itself is invalid (401/403 API_KEY_INVALID), stop trying other Gemini models
+      if (
+        (res.status === 400 || res.status === 401 || res.status === 403) &&
+        lastErrorText.includes('API_KEY_INVALID')
+      ) {
+        break;
+      }
+    }
   }
 
-  return {
-    reply: textReply,
-    model,
-    modelLabel: formatModelDisplayLabel(model),
-    providerUsed: 'gemini',
-    webSources: webSources.length > 0 ? webSources : undefined,
-  };
+  throw new Error(`Gemini API Error (${lastStatus}): ${lastErrorText.slice(0, 180)}`);
 }
 
 // 2. Groq Cloud Direct (Text, Vision, & High-Speed Reasoning)
@@ -816,9 +879,22 @@ async function callGroqDirect(
   const apiKey = config.groqApiKey.trim();
   if (!apiKey) throw new Error('مفتاح Groq Cloud API غير مدخل.');
 
-  let model = hasImage
-    ? config.groqVisionModel.trim() || 'llama-3.2-11b-vision-preview'
-    : sanitizeGroqTextModel(config.groqTextModel);
+  const candidateModels = hasImage
+    ? Array.from(
+        new Set([
+          sanitizeGroqVisionModel(config.groqVisionModel),
+          'meta-llama/llama-4-scout-17b-16e-instruct',
+          'meta-llama/llama-4-maverick-17b-128e-instruct',
+        ])
+      )
+    : Array.from(
+        new Set([
+          sanitizeGroqTextModel(config.groqTextModel),
+          'llama-3.3-70b-versatile',
+          'llama-3.1-8b-instant',
+          'meta-llama/llama-4-scout-17b-16e-instruct',
+        ])
+      );
 
   const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
   const messages: Array<Record<string, unknown>> = [
@@ -854,66 +930,58 @@ async function callGroqDirect(
     });
   }
 
-  let res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.3,
-      max_tokens: 2048,
-    }),
-    signal,
-  });
+  let lastStatus = 0;
+  let lastErrorText = '';
 
-  // If model does not exist or user doesn't have access (404), fallback to active llama-3.1-8b-instant
-  if (!res.ok && res.status === 404 && !hasImage && model !== 'llama-3.1-8b-instant') {
-    const fallbackModel = 'llama-3.1-8b-instant';
-    const retryRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  for (const targetModel of candidateModels) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted by user', 'AbortError');
+    }
+
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: fallbackModel,
+        model: targetModel,
         messages,
         temperature: 0.3,
         max_tokens: 2048,
       }),
       signal,
     });
-    if (retryRes.ok) {
-      res = retryRes;
-      model = fallbackModel;
-      config.groqTextModel = fallbackModel;
-      saveAIProviderConfig(config);
+
+    if (res.ok) {
+      const data = await res.json();
+      const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+      if (reply) {
+        if (!hasImage && targetModel !== config.groqTextModel) {
+          config.groqTextModel = targetModel;
+          saveAIProviderConfig(config);
+        } else if (hasImage && targetModel !== config.groqVisionModel) {
+          config.groqVisionModel = targetModel;
+          saveAIProviderConfig(config);
+        }
+        return {
+          reply,
+          model: targetModel,
+          modelLabel: formatModelDisplayLabel(targetModel),
+          providerUsed: 'groq',
+        };
+      }
+    } else {
+      lastStatus = res.status;
+      lastErrorText = await res.text().catch(() => '');
+      if (res.status === 401) break;
     }
   }
 
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    throw new Error(`Groq API Error (${res.status}): ${errorText}`);
-  }
-
-  const data = await res.json();
-  const reply = String(data?.choices?.[0]?.message?.content || '').trim();
-  if (!reply) {
-    throw new Error('لم يتم استلام نص من نموذج Groq.');
-  }
-
-  return {
-    reply,
-    model,
-    modelLabel: formatModelDisplayLabel(model),
-    providerUsed: 'groq',
-  };
+  throw new Error(`Groq API Error (${lastStatus}): ${lastErrorText.slice(0, 180)}`);
 }
 
-// 3. OpenRouter Direct (DeepSeek, Claude, Llama, Gemini)
+// 3. OpenRouter Direct (Gemini 2.5, DeepSeek, Llama 3.3, Free & Auto Router)
 async function callOpenRouterDirect(
   payload: AssistantRequestPayload,
   config: AIProviderConfig,
@@ -923,9 +991,19 @@ async function callOpenRouterDirect(
   const apiKey = config.openrouterApiKey.trim();
   if (!apiKey) throw new Error('مفتاح OpenRouter API غير مدخل.');
 
-  const model = hasImage
-    ? 'google/gemini-flash-1.5'
-    : config.openrouterModel.trim() || 'deepseek/deepseek-chat';
+  const candidateModels = hasImage
+    ? ['google/gemini-2.5-flash', 'openrouter/auto', 'openrouter/free']
+    : Array.from(
+        new Set([
+          sanitizeOpenRouterModel(config.openrouterModel),
+          'google/gemini-2.5-flash',
+          'deepseek/deepseek-chat',
+          'meta-llama/llama-3.3-70b-instruct',
+          'openrouter/free',
+          'meta-llama/llama-3.3-70b-instruct:free',
+          'openrouter/auto',
+        ])
+      );
 
   const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
   const messages: Array<Record<string, unknown>> = [
@@ -961,39 +1039,53 @@ async function callOpenRouterDirect(
     });
   }
 
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://saedic.vercel.app',
-      'X-Title': 'ALSSAEDIC Dental Clinic ERP',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.3,
-    }),
-    signal,
-  });
+  let lastStatus = 0;
+  let lastErrorText = '';
 
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    throw new Error(`OpenRouter API Error (${res.status}): ${errorText}`);
+  for (const targetModel of candidateModels) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted by user', 'AbortError');
+    }
+
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://saedic.vercel.app',
+        'X-Title': 'ALSSAEDIC Dental Clinic ERP',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages,
+        temperature: 0.3,
+      }),
+      signal,
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+      if (reply) {
+        if (!hasImage && targetModel !== config.openrouterModel) {
+          config.openrouterModel = targetModel;
+          saveAIProviderConfig(config);
+        }
+        return {
+          reply,
+          model: targetModel,
+          modelLabel: formatModelDisplayLabel(targetModel),
+          providerUsed: 'openrouter',
+        };
+      }
+    } else {
+      lastStatus = res.status;
+      lastErrorText = await res.text().catch(() => '');
+      if (res.status === 401) break;
+    }
   }
 
-  const data = await res.json();
-  const reply = String(data?.choices?.[0]?.message?.content || '').trim();
-  if (!reply) {
-    throw new Error('لم يتم استلام نص من نموذج OpenRouter.');
-  }
-
-  return {
-    reply,
-    model,
-    modelLabel: formatModelDisplayLabel(model),
-    providerUsed: 'openrouter',
-  };
+  throw new Error(`OpenRouter API Error (${lastStatus}): ${lastErrorText.slice(0, 180)}`);
 }
 
 // 4. Groq Whisper Large-v3 Speech-to-Text Dispatcher
@@ -1042,115 +1134,184 @@ export async function testAIProviderConnection(
   try {
     if (provider === 'gemini') {
       const apiKey = config.geminiApiKey.trim();
-      if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
-      let model = sanitizeGeminiModel(config.geminiModel);
+      if (!apiKey) {
+        // Test built-in server Gemini if no custom key was typed
+        const srvRes = await fetch('/api/gemini/assistant', {
+          method: 'POST',
+          headers: getStoredSessionAuthHeaders(),
+          body: JSON.stringify({ prompt: 'قل كلمة: متصل', taskType: 'chat' }),
+        });
+        const latencyMs = Date.now() - start;
+        const parsed = await safeParseJsonResponse<{ reply?: string; model?: string }>(srvRes);
+        if (parsed.ok && parsed.data?.reply && parsed.data.model !== 'local-clinical-engine') {
+          return { ok: true, latencyMs };
+        }
+        return { ok: false, latencyMs, error: 'يرجى إدخال مفتاح Gemini API الصحيح من Google AI Studio' };
+      }
 
-      const tryGemini = async (targetModel: string) => {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        return fetch(url, {
+      const primaryModel = sanitizeGeminiModel(config.geminiModel);
+      const candidates = Array.from(
+        new Set([
+          primaryModel,
+          'gemini-2.5-flash',
+          'gemini-3-flash-preview',
+          'gemini-flash-latest',
+          'gemini-3.1-flash-lite-preview',
+        ])
+      );
+
+      let lastStatus = 0;
+      let lastErrText = '';
+
+      for (const candidate of candidates) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: 'قل كلمة: متصل' }] }],
-            generationConfig: { maxOutputTokens: 10 },
+            generationConfig: { maxOutputTokens: 12 },
           }),
         });
-      };
 
-      let res = await tryGemini(model);
+        if (res.ok) {
+          config.geminiModel = candidate;
+          saveAIProviderConfig(config);
+          return { ok: true, latencyMs: Date.now() - start };
+        }
 
-      // Auto-fallback if the configured model is deprecated or not found (404)
-      if (!res.ok && res.status === 404) {
-        const fallbackCandidates = ['gemini-1.5-flash', 'gemini-2.0-flash'];
-        for (const candidate of fallbackCandidates) {
-          if (candidate === model) continue;
-          const retryRes = await tryGemini(candidate);
-          if (retryRes.ok) {
-            res = retryRes;
-            model = candidate;
-            config.geminiModel = candidate;
-            saveAIProviderConfig(config);
-            break;
-          }
+        lastStatus = res.status;
+        lastErrText = await res.text().catch(() => '');
+        if (
+          (res.status === 400 || res.status === 401 || res.status === 403) &&
+          lastErrText.includes('API_KEY_INVALID')
+        ) {
+          return {
+            ok: false,
+            latencyMs: Date.now() - start,
+            error: 'مفتاح Gemini API غير صالح (تأكد من نسخه كاملاً من Google AI Studio)',
+          };
         }
       }
 
-      const latencyMs = Date.now() - start;
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        return { ok: false, latencyMs, error: `خطأ (${res.status}): ${text.slice(0, 100)}` };
-      }
-      return { ok: true, latencyMs };
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        error: `خطأ (${lastStatus}): ${lastErrText.slice(0, 100)}`,
+      };
     }
 
     if (provider === 'groq') {
       const apiKey = config.groqApiKey.trim();
-      if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
-      let model = sanitizeGroqTextModel(config.groqTextModel);
+      if (!apiKey) return { ok: false, latencyMs: 0, error: 'يرجى إدخال مفتاح Groq API أولاً' };
+      const primaryModel = sanitizeGroqTextModel(config.groqTextModel);
+      const candidates = Array.from(
+        new Set([
+          primaryModel,
+          'llama-3.3-70b-versatile',
+          'llama-3.1-8b-instant',
+          'meta-llama/llama-4-scout-17b-16e-instruct',
+        ])
+      );
 
-      const tryGroq = async (targetModel: string) => {
-        return fetch('https://api.groq.com/openai/v1/chat/completions', {
+      let lastStatus = 0;
+      let lastErrText = '';
+
+      for (const candidate of candidates) {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: targetModel,
+            model: candidate,
             messages: [{ role: 'user', content: 'Say OK' }],
-            max_tokens: 5,
+            max_tokens: 8,
           }),
         });
-      };
 
-      let res = await tryGroq(model);
+        if (res.ok) {
+          config.groqTextModel = candidate;
+          saveAIProviderConfig(config);
+          return { ok: true, latencyMs: Date.now() - start };
+        }
 
-      // Auto-fallback if the configured model does not exist or user lacks access (404)
-      if (!res.ok && res.status === 404) {
-        const fallbackCandidates = ['llama-3.1-8b-instant', 'llama3-70b-8192'];
-        for (const candidate of fallbackCandidates) {
-          if (candidate === model) continue;
-          const retryRes = await tryGroq(candidate);
-          if (retryRes.ok) {
-            res = retryRes;
-            model = candidate;
-            config.groqTextModel = candidate;
-            saveAIProviderConfig(config);
-            break;
-          }
+        lastStatus = res.status;
+        lastErrText = await res.text().catch(() => '');
+        if (res.status === 401) {
+          return {
+            ok: false,
+            latencyMs: Date.now() - start,
+            error: 'مفتاح Groq API غير صالح (تأكد من يبدأ بـ gsk_)',
+          };
         }
       }
 
-      const latencyMs = Date.now() - start;
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        return { ok: false, latencyMs, error: `خطأ (${res.status}): ${text.slice(0, 100)}` };
-      }
-      return { ok: true, latencyMs };
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        error: `خطأ (${lastStatus}): ${lastErrText.slice(0, 100)}`,
+      };
     }
 
     if (provider === 'openrouter') {
       const apiKey = config.openrouterApiKey.trim();
-      if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
-      const model = config.openrouterModel.trim() || 'deepseek/deepseek-chat';
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'Say OK' }],
-          max_tokens: 5,
-        }),
-      });
-      const latencyMs = Date.now() - start;
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        return { ok: false, latencyMs, error: `خطأ (${res.status}): ${text.slice(0, 100)}` };
+      if (!apiKey) return { ok: false, latencyMs: 0, error: 'يرجى إدخال مفتاح OpenRouter API أولاً' };
+      const primaryModel = sanitizeOpenRouterModel(config.openrouterModel);
+      const candidates = Array.from(
+        new Set([
+          primaryModel,
+          'google/gemini-2.5-flash',
+          'deepseek/deepseek-chat',
+          'meta-llama/llama-3.3-70b-instruct',
+          'openrouter/free',
+          'meta-llama/llama-3.3-70b-instruct:free',
+          'openrouter/auto',
+        ])
+      );
+
+      let lastStatus = 0;
+      let lastErrText = '';
+
+      for (const candidate of candidates) {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://saedic.vercel.app',
+            'X-Title': 'ALSSAEDIC Dental Clinic ERP',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: candidate,
+            messages: [{ role: 'user', content: 'Say OK' }],
+            max_tokens: 8,
+          }),
+        });
+
+        if (res.ok) {
+          config.openrouterModel = candidate;
+          saveAIProviderConfig(config);
+          return { ok: true, latencyMs: Date.now() - start };
+        }
+
+        lastStatus = res.status;
+        lastErrText = await res.text().catch(() => '');
+        if (res.status === 401) {
+          return {
+            ok: false,
+            latencyMs: Date.now() - start,
+            error: 'مفتاح OpenRouter API غير صالح (تأكد من يبدأ بـ sk-or-)',
+          };
+        }
       }
-      return { ok: true, latencyMs };
+
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        error: `خطأ (${lastStatus}): ${lastErrText.slice(0, 100)}`,
+      };
     }
   } catch (err: unknown) {
     const latencyMs = Date.now() - start;
@@ -1181,7 +1342,6 @@ export async function queryClinicAssistantDetailed(
       : ['gemini', 'groq', 'openrouter'];
 
   let failoverCount = 0;
-  const failureNotes: string[] = [];
 
   // Iterate through configured client-side BYOK providers with automatic failover
   for (const provider of priorityOrder) {
@@ -1203,8 +1363,6 @@ export async function queryClinicAssistantDetailed(
       } catch (err: unknown) {
         if (externalSignal?.aborted) throw err;
         failoverCount++;
-        failureNotes.push(`Gemini: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
-        // Immediately try next provider in chain
       }
     }
 
@@ -1222,8 +1380,6 @@ export async function queryClinicAssistantDetailed(
       } catch (err: unknown) {
         if (externalSignal?.aborted) throw err;
         failoverCount++;
-        failureNotes.push(`Groq: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
-        // Immediately try next provider in chain
       }
     }
 
@@ -1241,8 +1397,6 @@ export async function queryClinicAssistantDetailed(
       } catch (err: unknown) {
         if (externalSignal?.aborted) throw err;
         failoverCount++;
-        failureNotes.push(`OpenRouter: ${err instanceof Error ? err.message : 'خطأ غير متوقع'}`);
-        // Immediately try next provider in chain
       }
     }
   }
@@ -1279,7 +1433,7 @@ export async function queryClinicAssistantDetailed(
       error?: string;
     }>(response);
     if (parsed.ok && parsed.data?.reply && String(parsed.data.reply).trim()) {
-      const model = String(parsed.data.model || 'gemini-3.8-flash').trim();
+      const model = String(parsed.data.model || 'gemini-2.5-flash').trim();
       const baseLabel =
         String(parsed.data.modelLabel || '').trim() || formatModelDisplayLabel(model);
       const modelLabel =
@@ -1292,7 +1446,7 @@ export async function queryClinicAssistantDetailed(
         isFallbackApplied: failoverCount > 0,
       };
     }
-  } catch (err: unknown) {
+  } catch {
     clearTimeout(timer);
     if (externalSignal?.aborted) {
       throw new DOMException('Aborted by user', 'AbortError');
@@ -1329,7 +1483,7 @@ export async function parseSmartReceiptWithFallback(
   const cleanText = String(text || '').trim();
   if (!cleanText) return null;
 
-  // Call authenticated server endpoint (/api/gemini/parse-receipt) using safe text->JSON reader
+  // 1. Try server endpoint (/api/gemini/parse-receipt) which also uses X-Gemini-Api-Key header if set
   try {
     const response = await fetch('/api/gemini/parse-receipt', {
       method: 'POST',
@@ -1347,6 +1501,36 @@ export async function parseSmartReceiptWithFallback(
     }>(response);
     if (parsed.ok && parsed.data?.result) {
       return parsed.data.result;
+    }
+  } catch {
+    // Continue to client-side fallback
+  }
+
+  // 2. Client-side fallback using configured Gemini / Groq / OpenRouter keys if server endpoint is unreachable
+  try {
+    const config = loadAIProviderConfig();
+    if (config.geminiApiKey.trim() || config.groqApiKey.trim() || config.openrouterApiKey.trim()) {
+      const serviceNames = availableServices
+        .slice(0, 50)
+        .map((s) => `${s.name} (${s.price || 0})`)
+        .join('، ');
+      const jsonPrompt = `استخرج بيانات سند القبض من النص التالي بصيغة JSON فقط بدون أي شرح:
+النص: "${cleanText}"
+الخدمات المتاحة: ${serviceNames}
+العملة الافتراضية: ${defaultCurrency}
+الحقول المطلوبة في JSON: patientName, patientPhone, services (مصفوفة نصوص), toothFDI, totalAmount (رقم), paidAmount (رقم), currency, paymentMethod, notes.`;
+
+      const res = await queryClinicAssistantDetailed({
+        prompt: jsonPrompt,
+        taskType: 'chat',
+      });
+      const jsonMatch = res.reply.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsedObj = JSON.parse(jsonMatch[0]) as SmartReceiptParseResult;
+        if (parsedObj && (parsedObj.patientName || (parsedObj.services && parsedObj.services.length > 0))) {
+          return parsedObj;
+        }
+      }
     }
   } catch {
     // Fall back to caller's local deterministic parser

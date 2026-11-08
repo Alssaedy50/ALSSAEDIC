@@ -143,16 +143,16 @@ export interface AIProviderConfig {
 
 export const DEFAULT_AI_CONFIG: AIProviderConfig = {
   geminiApiKey: '',
-  geminiModel: 'gemini-1.5-flash',
+  geminiModel: 'gemini-2.5-flash',
   enableWebGrounding: true,
 
   groqApiKey: '',
-  groqTextModel: 'llama-3.1-8b-instant',
-  groqVisionModel: 'llama-3.2-11b-vision-preview',
+  groqTextModel: 'llama-3.3-70b-versatile',
+  groqVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
   groqWhisperModel: 'whisper-large-v3',
 
   openrouterApiKey: '',
-  openrouterModel: 'deepseek/deepseek-chat',
+  openrouterModel: 'google/gemini-2.5-flash',
 
   sttEngine: 'browser',
   customPriority: ['gemini', 'groq', 'openrouter'],

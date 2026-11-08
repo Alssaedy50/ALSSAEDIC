@@ -106,7 +106,7 @@ service cloud.firestore {
         'updatedAt'
       ]) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.ownerId == request.auth.uid &&
+      (data.ownerId == request.auth.uid || isSuperAdmin()) &&
       (!('ownerEmail' in data) || (data.ownerEmail is string && data.ownerEmail.size() <= 160)) &&
       data.clinicAr is string && data.clinicAr.size() >= 1 && data.clinicAr.size() <= 160 &&
       data.doctorAr is string && data.doctorAr.size() <= 160 &&
@@ -302,7 +302,7 @@ service cloud.firestore {
         'updatedAt'
       ]) &&
       data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
-      data.ownerId == request.auth.uid &&
+      (data.ownerId == request.auth.uid || isSuperAdmin()) &&
       data.clinicId is string && data.clinicId.size() >= 3 && data.clinicId.size() <= 64 && data.clinicId.matches('^[a-zA-Z0-9_\\-]+$') &&
       data.settings is map && data.settings.size() >= 1 && data.settings.size() <= 10 &&
       data.receiptCount is number && data.receiptCount >= 0 && data.receiptCount <= 1000000 &&
@@ -320,16 +320,16 @@ service cloud.firestore {
       allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(clinicId) &&
-        clinicId == request.auth.uid &&
+        (clinicId == request.auth.uid || isSuperAdmin()) &&
         isValidClinic(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
       allow update: if isStrictlyVerified() &&
         isValidId(clinicId) &&
-        isValidClinic(incoming()) &&
         (
           isSuperAdmin() ||
           (
+            isValidClinic(incoming()) &&
             clinicId == request.auth.uid &&
             existing().ownerId == request.auth.uid &&
             incoming().ownerId == existing().ownerId &&
@@ -359,13 +359,13 @@ service cloud.firestore {
             )
           )
         );
-      allow delete: if isStrictlyVerified() && isValidId(clinicId) && (clinicId == request.auth.uid || isSuperAdmin()) && existing().ownerId == clinicId;
+      allow delete: if isStrictlyVerified() && isValidId(clinicId) && (isSuperAdmin() || (clinicId == request.auth.uid && existing().ownerId == clinicId));
     }
 
     // 2. Dental Services Collection (/services/{serviceId})
     match /services/{serviceId} {
-      allow get: if isSignedIn() && isValidId(serviceId) && (resource == null || isClinicMember(existing().ownerId));
-      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow get: if isSignedIn() && isValidId(serviceId) && (resource == null || isClinicMember(existing().ownerId) || isSuperAdmin());
+      allow list: if isSignedIn() && (isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(serviceId) &&
         isValidDentalService(incoming()) &&
@@ -383,13 +383,13 @@ service cloud.firestore {
         hasClinicParent(existing().ownerId) && (
           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'price', 'category', 'keywords', 'updatedAt'])
         );
-      allow delete: if isStrictlyVerified() && isValidId(serviceId) && isClinicOwner(existing().ownerId);
+      allow delete: if isStrictlyVerified() && isValidId(serviceId) && (isClinicOwner(existing().ownerId) || isSuperAdmin());
     }
 
     // 3. Receipts Collection (/receipts/{receiptId})
     match /receipts/{receiptId} {
-      allow get: if isSignedIn() && isValidId(receiptId) && (resource == null || isClinicMember(existing().ownerId));
-      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow get: if isSignedIn() && isValidId(receiptId) && (resource == null || isClinicMember(existing().ownerId) || isSuperAdmin());
+      allow list: if isSignedIn() && (isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(receiptId) &&
         isValidReceipt(incoming()) &&
@@ -428,13 +428,13 @@ service cloud.firestore {
             'updatedAt'
           ])
         );
-      allow delete: if isStrictlyVerified() && isValidId(receiptId) && isClinicOwner(existing().ownerId);
+      allow delete: if isStrictlyVerified() && isValidId(receiptId) && (isClinicOwner(existing().ownerId) || isSuperAdmin());
     }
 
     // 4. Inventory Collection (/inventory/{itemId})
     match /inventory/{itemId} {
-      allow get: if isSignedIn() && isValidId(itemId) && (resource == null || isClinicMember(existing().ownerId));
-      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow get: if isSignedIn() && isValidId(itemId) && (resource == null || isClinicMember(existing().ownerId) || isSuperAdmin());
+      allow list: if isSignedIn() && (isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(itemId) &&
         isValidInventoryItem(incoming()) &&
@@ -463,13 +463,13 @@ service cloud.firestore {
             'updatedAt'
           ])
         );
-      allow delete: if isStrictlyVerified() && isValidId(itemId) && isClinicOwner(existing().ownerId);
+      allow delete: if isStrictlyVerified() && isValidId(itemId) && (isClinicOwner(existing().ownerId) || isSuperAdmin());
     }
 
     // 5. Expenses Collection (/expenses/{expenseId})
     match /expenses/{expenseId} {
-      allow get: if isSignedIn() && isValidId(expenseId) && (resource == null || isClinicMember(existing().ownerId));
-      allow list: if isSignedIn() && isClinicMember(resource.data.ownerId);
+      allow get: if isSignedIn() && isValidId(expenseId) && (resource == null || isClinicMember(existing().ownerId) || isSuperAdmin());
+      allow list: if isSignedIn() && (isClinicMember(resource.data.ownerId) || isSuperAdmin());
       allow create: if isStrictlyVerified() &&
         isValidId(expenseId) &&
         isValidExpense(incoming()) &&
@@ -487,7 +487,7 @@ service cloud.firestore {
         hasClinicParent(existing().ownerId) && (
           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'amount', 'category', 'currency', 'date', 'updatedAt'])
         );
-      allow delete: if isStrictlyVerified() && isValidId(expenseId) && isClinicOwner(existing().ownerId);
+      allow delete: if isStrictlyVerified() && isValidId(expenseId) && (isClinicOwner(existing().ownerId) || isSuperAdmin());
     }
 
     // 6. Authenticated Clinic Workspaces (/clinic_workspaces/{clinicId})
@@ -503,28 +503,34 @@ service cloud.firestore {
         hasClinicParent(incoming().ownerId);
       allow update: if isStrictlyVerified() &&
         isValidId(clinicId) &&
-        incoming().clinicId == clinicId &&
-        isValidClinicWorkspace(incoming()) &&
-        existing().ownerId == request.auth.uid &&
-        incoming().ownerId == existing().ownerId &&
-        incoming().clinicId == existing().clinicId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        hasClinicParent(existing().ownerId) && (
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'settings',
-            'receiptCount',
-            'inventoryCount',
-            'expenseCount',
-            'updatedAt'
-          ])
+        (
+          isSuperAdmin() ||
+          (
+            incoming().clinicId == clinicId &&
+            isValidClinicWorkspace(incoming()) &&
+            existing().ownerId == request.auth.uid &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().clinicId == existing().clinicId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            hasClinicParent(existing().ownerId) && (
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'settings',
+                'receiptCount',
+                'inventoryCount',
+                'expenseCount',
+                'updatedAt'
+              ])
+            )
+          )
         );
-      allow delete: if isStrictlyVerified() && isValidId(clinicId) && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(clinicId) && (isSuperAdmin() || existing().ownerId == request.auth.uid);
 
       // 6.1 Workspace Members Subcollection
       match /members/{memberKey} {
         allow get, list: if isSignedIn();
         allow create, update: if isSignedIn() && (
+          isSuperAdmin() ||
           incoming().addedBy == request.auth.uid ||
           request.auth.uid == clinicId ||
           (
@@ -533,6 +539,7 @@ service cloud.firestore {
           )
         );
         allow delete: if isSignedIn() && (
+          isSuperAdmin() ||
           (resource != null && existing().addedBy == request.auth.uid) ||
           request.auth.uid == clinicId ||
           (
@@ -552,11 +559,18 @@ service cloud.firestore {
         isSuperAdmin()
       );
       allow list: if isSignedIn() && (resource.data.addedBy == request.auth.uid || isSuperAdmin());
-      allow create, update: if isSignedIn() &&
-        incoming().addedBy == request.auth.uid &&
-        (resource == null || existing().addedBy == request.auth.uid);
-      allow delete: if isSignedIn() &&
-        (resource == null || existing().addedBy == request.auth.uid);
+      allow create, update: if isSignedIn() && (
+        isSuperAdmin() ||
+        (
+          incoming().addedBy == request.auth.uid &&
+          (resource == null || existing().addedBy == request.auth.uid)
+        )
+      );
+      allow delete: if isSignedIn() && (
+        isSuperAdmin() ||
+        resource == null ||
+        existing().addedBy == request.auth.uid
+      );
     }
 
     // 8. Unique Account Identifier Lookup Index (/account_identifiers/{identifier})
