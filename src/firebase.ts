@@ -58,7 +58,7 @@ export interface CustomFirebaseConfig {
 }
 
 const firebaseConfig: CustomFirebaseConfig = {
-  apiKey: 'AIzaSyDpjGbZrVLLOKCSkaNPeb1r3cE8Bfvx0jU',
+  apiKey: 'AIzaSyDpjGbZRvLLpKCSKaNPeb1r3cE8Bfvx0jU',
   authDomain: 'u-dental-app.firebaseapp.com',
   projectId: 'u-dental-app',
   storageBucket: 'u-dental-app.firebasestorage.app',
@@ -105,8 +105,20 @@ function resolveEffectiveFirebaseConfig(): {
       const rawCustom = window.localStorage.getItem(CUSTOM_FIREBASE_CONFIG_KEY);
       if (rawCustom) {
         const parsed = JSON.parse(rawCustom) as Partial<CustomFirebaseConfig>;
-        const customApiKey = String(parsed?.apiKey || '').trim();
+        let customApiKey = String(parsed?.apiKey || '').trim();
         const customProjectId = String(parsed?.projectId || '').trim();
+        // If project is u-dental-app, ensure exact valid API key is used
+        if (customProjectId === 'u-dental-app' && (customApiKey === 'AIzaSyDpjGbZrVLLOKCSkaNPeb1r3cE8Bfvx0jU' || !customApiKey)) {
+          customApiKey = 'AIzaSyDpjGbZRvLLpKCSKaNPeb1r3cE8Bfvx0jU';
+          try {
+            window.localStorage.setItem(CUSTOM_FIREBASE_CONFIG_KEY, JSON.stringify({
+              ...parsed,
+              apiKey: customApiKey,
+            }));
+          } catch {
+            // Ignore
+          }
+        }
         if (customApiKey && customProjectId && customProjectId !== 'refined-domain-53rp2') {
           const customDbId = String(parsed?.firestoreDatabaseId || '').trim();
           return {
