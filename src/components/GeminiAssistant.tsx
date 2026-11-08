@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
+  CheckCircle2,
   Copy,
+  Crown,
   ExternalLink,
   Eye,
   EyeOff,
@@ -9,8 +11,10 @@ import {
   ImagePlus,
   Key,
   Loader2,
+  Lock,
   Mic,
   MicOff,
+  PhoneCall,
   Radio,
   RefreshCw,
   Send,
@@ -18,6 +22,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Unlock,
   User,
   Volume2,
   VolumeX,
@@ -27,11 +32,14 @@ import {
   AIProviderConfig,
   ChatMessage,
   ClinicSettings,
+  ClinicSubscription,
   CurrencyFinancialSummary,
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
 } from '../types/clinic';
+import { isPlatformDeveloperUser } from '../data/defaultData';
+import { auth } from '../firebase';
 import {
   GEMINI_CANDIDATE_MODELS,
   GROQ_TEXT_MODELS,
@@ -59,6 +67,8 @@ interface GeminiAssistantProps {
   onClearMessages: () => void;
   onExitFullScreen?: () => void;
   onOpenMenu?: () => void;
+  onOpenSettings?: (tab?: 'subscription' | 'ai') => void;
+  onUpdateSubscription?: (sub: ClinicSubscription) => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
@@ -80,6 +90,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   messages,
   onAddMessage,
   onClearMessages,
+  onOpenSettings,
+  onUpdateSubscription,
   notify,
 }) => {
   const [input, setInput] = useState('');
@@ -698,6 +710,126 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       );
     });
   };
+
+  const isPlatformDev =
+    isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail) ||
+    (typeof window !== 'undefined' && window.localStorage.getItem('docai_developer_mode_active') === 'true');
+  const isAiAuthorized = Boolean(settings.subscription?.isAiEnabled) || isPlatformDev;
+
+  if (!isAiAuthorized) {
+    const whatsappUrl = `https://wa.me/967716339366?text=${encodeURIComponent(
+      `السلام عليكم د. صلاح الدين السعيدي، أرغب في ترقية باقة عيادة (${settings.identity.clinicAr || 'العيادة'}) وتفعيل ميزات الذكاء الاصطناعي الطبي.`
+    )}`;
+
+    return (
+      <div className="flex-1 min-h-0 w-full h-full sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col items-center justify-center p-4 sm:p-8 overflow-y-auto sm:shadow-xs text-center">
+        <div className="max-w-md w-full space-y-5 my-auto">
+          {/* Glowing Lock Badge */}
+          <div className="relative mx-auto w-20 h-20 rounded-3xl bg-linear-to-tr from-amber-500/20 via-sky-500/10 to-amber-500/30 border-2 border-amber-500/40 flex items-center justify-center shadow-lg">
+            <Lock className="w-9 h-9 text-amber-500 animate-pulse" />
+            <div className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center shadow-md">
+              <Crown className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
+              خدمات الذكاء الاصطناعي الطبي
+            </h2>
+            <div className="inline-block px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 font-black text-xs">
+              ميزة مدفوعة ومقفلة (تتطلب ترخيص المطور) 🔒
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-sm mx-auto pt-1">
+              أهلاً بك دكتور! خدمة المساعد الطبي والسريري، واستشارات طب الأسنان، وفحص الأشعة السينية (Vision)، والتفريغ الصوتي الطبي الذكي (Voice STT) هي ميزات مدفوعة تتطلب تفعيل الباقة من قبل مطور ومالك المنصة.
+            </p>
+          </div>
+
+          {/* Current Clinic Plan Pill */}
+          <div className="py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+            <span>باقة العيادة الحالية:</span>
+            <span className="text-amber-600 dark:text-amber-400 font-black">
+              {settings.subscription?.planNameAr || 'الباقة الأساسية (مجانية)'}
+            </span>
+          </div>
+
+          {/* Capabilities Grid */}
+          <div className="grid grid-cols-2 gap-2 text-right text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-start gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+              <span>فحص وتحليل صور الأشعة السينية والبانوراما</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-start gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+              <span>بروتوكولات الأدوية والجرعات واستشارات العصب</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-start gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+              <span>التفريغ الصوتي الطبي العربي متعدد اللهجات</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-start gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+              <span>ملخص الديون والمالية ومطابقة المخزون لحظياً</span>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="space-y-2 pt-1">
+            <button
+              type="button"
+              onClick={() => onOpenSettings?.('subscription')}
+              className="w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
+            >
+              <Crown className="w-4 h-4 text-amber-200" />
+              <span>استعراض باقات الميزات المدفوعة والترقية 👑</span>
+            </button>
+
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>تواصل مع مطور المنصة لفتح وتفعيل الخدمة (واتساب)</span>
+            </a>
+
+            <div className="flex items-center justify-center gap-3 pt-1 text-[11px] text-slate-500">
+              <a href="tel:+967716339366" className="hover:underline flex items-center gap-1">
+                <PhoneCall className="w-3 h-3 text-sky-500" />
+                <span>اتصال بمطور المنصة: 716339366</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Developer Bypass if logged in as developer */}
+          {isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail) && (
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onUpdateSubscription) {
+                    onUpdateSubscription({
+                      planId: 'enterprise',
+                      planNameAr: 'باقة المطور الشاملة',
+                      isAiEnabled: true,
+                      status: 'active',
+                      activatedBy: 'مطور المنصة',
+                      notes: 'تفعيل فوري بحساب مطور المنصة المعتمد',
+                    });
+                  }
+                  notify('تم تفعيل خدمة الذكاء الاصطناعي للمنصة فوراً (حساب المطور) ✅', 'success');
+                }}
+                className="w-full py-2 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                <span>تفعيل فوري لخدمة الذكاء الاصطناعي (حساب المطور)</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 min-h-0 w-full h-full sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs">

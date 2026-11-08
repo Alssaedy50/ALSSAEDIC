@@ -201,6 +201,7 @@ export default function App() {
   );
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState<boolean>(false);
+  const [settingsSubTab, setSettingsSubTab] = useState<'identity' | 'services' | 'team' | 'backup' | 'ai' | 'subscription'>('identity');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [directSession, setDirectSession] = useState<DirectClinicSession | null>(() =>
@@ -1857,6 +1858,20 @@ export default function App() {
               onClearMessages={() => setChatMessages([])}
               onExitFullScreen={() => navigateToSection('receipt')}
               onOpenMenu={() => setIsDrawerOpen(true)}
+              onOpenSettings={(tab) => {
+                setSettingsSubTab(tab || 'subscription');
+                navigateToSection('settings');
+              }}
+              onUpdateSubscription={(newSub) => {
+                const nextSettings: ClinicSettings = {
+                  ...settings,
+                  subscription: newSub,
+                };
+                setSettings(nextSettings);
+                if (cloudTargetUid) {
+                  saveClinicSettingsToCloud(cloudTargetUid, nextSettings).catch(() => {});
+                }
+              }}
               notify={notify}
             />
           ) : (
@@ -1879,6 +1894,7 @@ export default function App() {
             expenses={expenses}
             workspaceId={activeWorkspaceId}
             ownerUid={activeClinicOwnerUid || currentUser?.uid || 'local_owner'}
+            initialSubTab={settingsSubTab}
             ownerEmail={
               (currentRole === 'owner' &&
               currentUser?.email &&

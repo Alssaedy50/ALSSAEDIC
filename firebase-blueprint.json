@@ -93,6 +93,14 @@
           "description": "Data URL for permanent doctor/accountant signature.",
           "maxLength": 250000
         },
+        "telegramBackup": {
+          "type": "object",
+          "description": "Telegram backup bot token and channel settings."
+        },
+        "subscription": {
+          "type": "object",
+          "description": "Subscription tier and AI feature authorization status managed by platform developer."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

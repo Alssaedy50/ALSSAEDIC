@@ -92,12 +92,36 @@ export interface TelegramBackupSettings {
   lastBackupAt?: string;
 }
 
+export interface ClinicSubscription {
+  planId: 'free' | 'ai_pro' | 'enterprise';
+  planNameAr: string;
+  isAiEnabled: boolean;
+  status: 'active' | 'expired' | 'trial' | 'locked';
+  activatedAt?: string;
+  expiresAt?: string;
+  activatedBy?: string;
+  notes?: string;
+}
+
+export interface PaidPackageTier {
+  id: string;
+  nameAr: string;
+  priceFormatted: string;
+  billingPeriod: string;
+  descriptionAr: string;
+  badge?: string;
+  features: string[];
+  isAiIncluded: boolean;
+  isPopular?: boolean;
+}
+
 export interface ClinicSettings {
   identity: ClinicIdentity;
   appearance: ClinicAppearance;
   features: ClinicFeatures;
   services: DentalServiceItem[];
   telegramBackup?: TelegramBackupSettings;
+  subscription?: ClinicSubscription;
 }
 
 export interface AIProviderConfig {

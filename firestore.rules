@@ -107,6 +107,8 @@ service cloud.firestore {
         'showQrCode',
         'customLogoDataUrl',
         'permanentAccountantSig',
+        'telegramBackup',
+        'subscription',
         'createdAt',
         'updatedAt'
       ]) &&
@@ -127,6 +129,8 @@ service cloud.firestore {
       data.showQrCode is bool &&
       data.customLogoDataUrl is string && data.customLogoDataUrl.size() <= 350000 &&
       data.permanentAccountantSig is string && data.permanentAccountantSig.size() <= 250000 &&
+      (!('telegramBackup' in data) || data.telegramBackup is map) &&
+      (!('subscription' in data) || data.subscription is map) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -329,33 +333,40 @@ service cloud.firestore {
         incoming().updatedAt == request.time;
       allow update: if isStrictlyVerified() &&
         isValidId(clinicId) &&
-        clinicId == request.auth.uid &&
         isValidClinic(incoming()) &&
-        existing().ownerId == request.auth.uid &&
-        incoming().ownerId == existing().ownerId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time && (
-          // Action: Update Clinic Identity & Settings
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'clinicAr',
-            'ownerEmail',
-            'doctorAr',
-            'specialtyAr',
-            'clinicEn',
-            'doctorEn',
-            'address',
-            'phones',
-            'defaultCurrency',
-            'primaryColor',
-            'watermarkOpacity',
-            'autoInventory',
-            'showQrCode',
-            'customLogoDataUrl',
-            'permanentAccountantSig',
-            'updatedAt'
-          ])
+        (
+          isSuperAdmin() ||
+          (
+            clinicId == request.auth.uid &&
+            existing().ownerId == request.auth.uid &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time && (
+              // Action: Update Clinic Identity & Settings
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'clinicAr',
+                'ownerEmail',
+                'doctorAr',
+                'specialtyAr',
+                'clinicEn',
+                'doctorEn',
+                'address',
+                'phones',
+                'defaultCurrency',
+                'primaryColor',
+                'watermarkOpacity',
+                'autoInventory',
+                'showQrCode',
+                'customLogoDataUrl',
+                'permanentAccountantSig',
+                'telegramBackup',
+                'subscription',
+                'updatedAt'
+              ])
+            )
+          )
         );
-      allow delete: if isStrictlyVerified() && isValidId(clinicId) && clinicId == request.auth.uid && existing().ownerId == request.auth.uid;
+      allow delete: if isStrictlyVerified() && isValidId(clinicId) && (clinicId == request.auth.uid || isSuperAdmin()) && existing().ownerId == clinicId;
     }
 
     // 2. Dental Services Collection (/services/{serviceId})

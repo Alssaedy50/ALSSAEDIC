@@ -23,7 +23,7 @@ import {
   PaperFormat,
   ReceiptRecord,
 } from '../types/clinic';
-import { CURRENCIES, PAYMENT_METHODS } from '../data/defaultData';
+import { CURRENCIES, PAYMENT_METHODS, isPlatformDeveloperUser } from '../data/defaultData';
 import { numberToArabicWords, parseFDIToothNumbers } from '../utils/arabicTafqeet';
 import { parseSmartReceiptWithFallback } from '../utils/aiClient';
 import {
@@ -262,6 +262,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     const textToAnalyze = (textOverride ?? smartInput).trim();
     if (!textToAnalyze) {
       notify('اكتب أو تحدث بتفاصيل السند أولاً', 'warning');
+      return;
+    }
+
+    const isDeveloper = isPlatformDeveloperUser(settings.identity.ownerEmail);
+    if (!settings.subscription?.isAiEnabled && !isDeveloper) {
+      notify('خدمة التحليل بالذكاء الاصطناعي ميزة مدفوعة ومقفلة. جاري استخراج البيانات بالمعالج المحلي.', 'info');
+      applyLocalHeuristic(textToAnalyze);
       return;
     }
 

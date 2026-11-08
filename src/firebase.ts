@@ -36,12 +36,14 @@ import {
   ExpenseRecord,
   InventoryItem,
   ReceiptRecord,
+  TelegramBackupSettings,
+  ClinicSubscription,
   WorkspaceRole,
   WorkspacePermissions,
   WorkspaceMember,
   DEFAULT_ROLE_PERMISSIONS,
 } from './types/clinic';
-import { DEFAULT_SETTINGS, SEED_DEMO_IDS } from './data/defaultData';
+import { DEFAULT_SETTINGS, SEED_DEMO_IDS, isPlatformDeveloperUser } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
 
 export const CUSTOM_FIREBASE_CONFIG_KEY = 'docai_custom_firebase_config_v1';
@@ -884,6 +886,61 @@ export function isCurrentSessionAuthorizedForClinic(targetOwnerUid: string): boo
 
 // ==================== AUTHORITATIVE CLOUD FIRESTORE OPERATIONS ====================
 
+function buildClinicCloudPayload(settings: ClinicSettings, safeUid: string): Record<string, unknown> {
+  const isDev = isPlatformDeveloperUser(auth.currentUser?.email || settings.identity.ownerEmail);
+  const sub = settings.subscription;
+  const tg = settings.telegramBackup;
+
+  const payload: Record<string, unknown> = {
+    ownerId: safeUid,
+    clinicAr: sanitizeStr(settings.identity.clinicAr, 160, 'عيادة السعيدي لطب وجراحة الفم والأسنان'),
+    doctorAr: sanitizeStr(settings.identity.doctorAr, 160, 'د. صلاح الدين السعيدي'),
+    specialtyAr: sanitizeStr(settings.identity.specialtyAr, 200, 'طب وجراحة الفم والأسنان'),
+    clinicEn: sanitizeStr(settings.identity.clinicEn, 160, 'ALSSAEDY CLINIC FOR DENTISTRY'),
+    doctorEn: sanitizeStr(settings.identity.doctorEn, 160, 'Dr. Salahaldeen Alssaedy'),
+    address: sanitizeStr(settings.identity.address, 250, 'ريمة - كسمة - عزلة الضبارة'),
+    phones: sanitizeStr(settings.identity.phones, 200, '+967 716 339 366'),
+    defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
+    primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
+    watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
+    autoInventory: Boolean(settings.features.autoInventory),
+    showQrCode: Boolean(settings.features.showQrCode),
+    customLogoDataUrl: sanitizeStr(settings.appearance.customLogoDataUrl, 350000, ''),
+    permanentAccountantSig: sanitizeStr(settings.appearance.permanentAccountantSig, 250000, ''),
+    updatedAt: serverTimestamp(),
+  };
+
+  const ownerEmail = sanitizeStr(settings.identity.ownerEmail || auth.currentUser?.email, 160, '');
+  if (ownerEmail) {
+    payload.ownerEmail = ownerEmail;
+  }
+
+  if (tg) {
+    payload.telegramBackup = {
+      enabled: Boolean(tg.enabled && tg.botToken?.trim() && tg.chatId?.trim()),
+      autoBackupOnReceipt: Boolean(tg.autoBackupOnReceipt ?? true),
+      botToken: sanitizeStr(tg.botToken, 120, ''),
+      chatId: sanitizeStr(tg.chatId, 80, ''),
+      lastBackupAt: sanitizeStr(tg.lastBackupAt || '', 50, ''),
+    };
+  }
+
+  if (sub) {
+    payload.subscription = {
+      planId: sanitizeStr(sub.planId, 40, isDev ? 'enterprise' : 'free'),
+      planNameAr: sanitizeStr(sub.planNameAr, 80, isDev ? 'باقة المطور الشاملة' : 'الباقة الأساسية'),
+      isAiEnabled: isDev ? true : Boolean(sub.isAiEnabled),
+      status: sanitizeStr(sub.status, 30, isDev ? 'active' : 'locked'),
+      activatedAt: sanitizeStr(sub.activatedAt || '', 40, ''),
+      expiresAt: sanitizeStr(sub.expiresAt || '', 40, ''),
+      activatedBy: sanitizeStr(sub.activatedBy || '', 120, ''),
+      notes: sanitizeStr(sub.notes || '', 400, ''),
+    };
+  }
+
+  return payload;
+}
+
 export async function ensureClinicDocumentInCloud(
   uid: string,
   settings?: ClinicSettings
@@ -925,68 +982,15 @@ export async function ensureClinicDocumentInCloud(
         if (!exists) {
           wasCreated = true;
           const createPayload = {
-            ownerId: safeUid,
-            clinicAr: sanitizeStr(
-              effectiveSettings.identity.clinicAr,
-              160,
-              'عيادة السعيدي لطب وجراحة الفم والأسنان'
-            ),
-            doctorAr: sanitizeStr(
-              effectiveSettings.identity.doctorAr,
-              160,
-              'د. صلاح الدين السعيدي'
-            ),
-            specialtyAr: sanitizeStr(
-              effectiveSettings.identity.specialtyAr,
-              200,
-              'طب وجراحة الفم والأسنان'
-            ),
-            clinicEn: sanitizeStr(
-              effectiveSettings.identity.clinicEn,
-              160,
-              'ALSSAEDY CLINIC FOR DENTISTRY'
-            ),
-            doctorEn: sanitizeStr(
-              effectiveSettings.identity.doctorEn,
-              160,
-              'Dr. Salahaldeen Alssaedy'
-            ),
-            address: sanitizeStr(
-              effectiveSettings.identity.address,
-              250,
-              'ريمة - كسمة - عزلة الضبارة'
-            ),
-            phones: sanitizeStr(
-              effectiveSettings.identity.phones,
-              200,
-              '+967 716 339 366'
-            ),
-            defaultCurrency: sanitizeStr(
-              effectiveSettings.identity.defaultCurrency,
-              40,
-              'ريال يمني'
-            ),
-            primaryColor: sanitizeStr(effectiveSettings.appearance.primaryColor, 20, '#0B2545'),
-            watermarkOpacity: sanitizeNum(effectiveSettings.appearance.watermarkOpacity, 0, 30),
-            autoInventory: Boolean(effectiveSettings.features.autoInventory),
-            showQrCode: Boolean(effectiveSettings.features.showQrCode),
-            customLogoDataUrl: sanitizeStr(
-              effectiveSettings.appearance.customLogoDataUrl,
-              350000,
-              ''
-            ),
-            permanentAccountantSig: sanitizeStr(
-              effectiveSettings.appearance.permanentAccountantSig,
-              250000,
-              ''
-            ),
+            ...buildClinicCloudPayload(effectiveSettings, safeUid),
             createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
           };
           try {
             await setDoc(ref, createPayload);
           } catch {
-            const { ownerId: _o, createdAt: _c, ...updateFields } = createPayload;
+            const updateFields: Record<string, unknown> = { ...createPayload };
+            delete updateFields.ownerId;
+            delete updateFields.createdAt;
             await updateDoc(ref, updateFields);
           }
         }
@@ -1014,8 +1018,8 @@ export async function saveClinicSettingsToCloud(
   }
   latestSettingsCacheByUid.set(safeUid, settings);
 
-  // Only the clinic owner UID can write directly to `/clinics/{safeUid}` per Firestore rules
-  if (auth.currentUser && auth.currentUser.uid !== safeUid) {
+  // Only the clinic owner UID or developer can write directly to `/clinics/{safeUid}`
+  if (auth.currentUser && auth.currentUser.uid !== safeUid && !isPlatformDeveloperUser(auth.currentUser.email)) {
     return;
   }
 
@@ -1029,62 +1033,15 @@ export async function saveClinicSettingsToCloud(
   try {
     await withCloudRetry(async () => {
       const exists = await checkDocExistsFast('clinics', safeUid, safeUid);
-      const payload = {
-        clinicAr: sanitizeStr(
-          settings.identity.clinicAr,
-          160,
-          'عيادة السعيدي لطب وجراحة الفم والأسنان'
-        ),
-        doctorAr: sanitizeStr(
-          settings.identity.doctorAr,
-          160,
-          'د. صلاح الدين السعيدي'
-        ),
-        specialtyAr: sanitizeStr(
-          settings.identity.specialtyAr,
-          200,
-          'طب وجراحة الفم والأسنان'
-        ),
-        clinicEn: sanitizeStr(
-          settings.identity.clinicEn,
-          160,
-          'ALSSAEDY CLINIC FOR DENTISTRY'
-        ),
-        doctorEn: sanitizeStr(
-          settings.identity.doctorEn,
-          160,
-          'Dr. Salahaldeen Alssaedy'
-        ),
-        address: sanitizeStr(
-          settings.identity.address,
-          250,
-          'ريمة - كسمة - عزلة الضبارة'
-        ),
-        phones: sanitizeStr(
-          settings.identity.phones,
-          200,
-          '+967 716 339 366'
-        ),
-        defaultCurrency: sanitizeStr(settings.identity.defaultCurrency, 40, 'ريال يمني'),
-        primaryColor: sanitizeStr(settings.appearance.primaryColor, 20, '#0B2545'),
-        watermarkOpacity: sanitizeNum(settings.appearance.watermarkOpacity, 0, 30),
-        autoInventory: Boolean(settings.features.autoInventory),
-        showQrCode: Boolean(settings.features.showQrCode),
-        customLogoDataUrl: sanitizeStr(settings.appearance.customLogoDataUrl, 350000, ''),
-        permanentAccountantSig: sanitizeStr(
-          settings.appearance.permanentAccountantSig,
-          250000,
-          ''
-        ),
-        updatedAt: serverTimestamp(),
-      };
+      const payload = buildClinicCloudPayload(settings, safeUid);
 
       if (exists) {
         try {
-          await updateDoc(ref, payload);
+          const updateFields: Record<string, unknown> = { ...payload };
+          delete updateFields.ownerId;
+          await updateDoc(ref, updateFields);
         } catch {
           await setDoc(ref, {
-            ownerId: safeUid,
             ...payload,
             createdAt: serverTimestamp(),
           });
@@ -1092,12 +1049,12 @@ export async function saveClinicSettingsToCloud(
       } else {
         try {
           await setDoc(ref, {
-            ownerId: safeUid,
             ...payload,
             createdAt: serverTimestamp(),
           });
         } catch {
-          await updateDoc(ref, payload);
+          const { ownerId: _o, ...updateFields } = payload;
+          await updateDoc(ref, updateFields);
         }
       }
     });
@@ -1896,6 +1853,30 @@ export function subscribeToClinicCloudData(
           ? rawCurrency
           : 'ريال يمني';
 
+      const cloudTg = d.telegramBackup as Partial<TelegramBackupSettings> | undefined;
+      const parsedTelegram: TelegramBackupSettings | undefined = cloudTg
+        ? {
+            enabled: Boolean(cloudTg.enabled && cloudTg.botToken?.trim() && cloudTg.chatId?.trim()),
+            autoBackupOnReceipt: Boolean(cloudTg.autoBackupOnReceipt ?? true),
+            botToken: String(cloudTg.botToken || '').trim(),
+            chatId: String(cloudTg.chatId || '').trim(),
+            lastBackupAt: cloudTg.lastBackupAt ? String(cloudTg.lastBackupAt) : undefined,
+          }
+        : undefined;
+
+      const cloudSub = d.subscription as Partial<ClinicSubscription> | undefined;
+      const isDev = isPlatformDeveloperUser(auth.currentUser?.email || d.ownerEmail);
+      const parsedSubscription: ClinicSubscription = {
+        planId: (cloudSub?.planId as 'free' | 'ai_pro' | 'enterprise') || (isDev ? 'enterprise' : 'free'),
+        planNameAr: String(cloudSub?.planNameAr || (isDev ? 'باقة المطور الشاملة' : 'الباقة الأساسية')),
+        isAiEnabled: isDev ? true : Boolean(cloudSub?.isAiEnabled),
+        status: (cloudSub?.status as 'active' | 'expired' | 'trial' | 'locked') || (isDev ? 'active' : 'locked'),
+        activatedAt: cloudSub?.activatedAt ? String(cloudSub.activatedAt) : undefined,
+        expiresAt: cloudSub?.expiresAt ? String(cloudSub.expiresAt) : undefined,
+        activatedBy: cloudSub?.activatedBy ? String(cloudSub.activatedBy) : undefined,
+        notes: cloudSub?.notes ? String(cloudSub.notes) : undefined,
+      };
+
       callbacks.onSettingsUpdate({
         identity: {
           systemTitleAr: String(d.clinicAr || 'عيادة طب وجراحة الفم والأسنان'),
@@ -1922,6 +1903,8 @@ export function subscribeToClinicCloudData(
           autoInventory: Boolean(d.autoInventory ?? true),
           showQrCode: Boolean(d.showQrCode ?? true),
         },
+        telegramBackup: parsedTelegram,
+        subscription: parsedSubscription,
       });
     },
     (err) => {
