@@ -448,6 +448,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               </button>
             </div>
           ) : (
+            <div className="space-y-3.5">
               {registrationSuccessEmail ? (
                 <div className="rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/10 p-4 text-center space-y-3">
                   <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
@@ -796,9 +797,9 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                     </button>
                   </div>
                 )}
-              </form>
-            </>
-          )}
+                </form>
+              </>)}
+            </div>)}
         </div>
       </div>
     </div>
