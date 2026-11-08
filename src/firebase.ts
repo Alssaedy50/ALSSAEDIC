@@ -781,13 +781,83 @@ export async function handleRedirectAuthResult(): Promise<User | null> {
   }
 }
 
-const REAL_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const BLOCKED_DISPOSABLE_DOMAINS = new Set([
+  'tempmail.com',
+  'temp-mail.org',
+  '10minutemail.com',
+  'guerrillamail.com',
+  'mailinator.com',
+  'trashmail.com',
+  'yopmail.com',
+  'sharklasers.com',
+  'dispostable.com',
+  'fakeinbox.com',
+  'generator.email',
+  'getairmail.com',
+  'maildrop.cc',
+  'throwawaymail.com',
+  'mohmal.com',
+  'crazymailing.com',
+  'nada.ltd',
+  'inboxbear.com',
+]);
+
+const STRICT_EMAIL_REGEX =
+  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
 export function isValidRealEmail(email: string): boolean {
   const clean = String(email || '').trim().toLowerCase();
-  if (!REAL_EMAIL_REGEX.test(clean)) return false;
-  if (clean.endsWith('.local') || clean.endsWith('@clinic.alssaedic.local')) return false;
+  if (!clean || clean.length < 6 || clean.length > 120) return false;
+  if (!STRICT_EMAIL_REGEX.test(clean)) return false;
+
+  const parts = clean.split('@');
+  if (parts.length !== 2) return false;
+  const [localPart, domain] = parts;
+  if (!localPart || !domain) return false;
+
+  // Reject local and synthetic fake domains
+  if (
+    domain.endsWith('.local') ||
+    domain.endsWith('.test') ||
+    domain.endsWith('.example') ||
+    domain.endsWith('.invalid') ||
+    domain.endsWith('.localhost') ||
+    domain === 'clinic.alssaedic.local'
+  ) {
+    return false;
+  }
+
+  // Reject disposable/throwaway domains
+  if (BLOCKED_DISPOSABLE_DOMAINS.has(domain)) {
+    return false;
+  }
+
+  // Ensure domain has at least one dot and a valid TLD of at least 2 letters
+  const domainSegments = domain.split('.');
+  if (domainSegments.length < 2) return false;
+  const tld = domainSegments[domainSegments.length - 1];
+  if (!tld || tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
   return true;
+}
+
+export function isValidStrongPassword(password: string): { valid: boolean; reason?: string } {
+  const p = String(password || '').trim();
+  if (p.length < 8) {
+    return {
+      valid: false,
+      reason: 'كلمة المرور يجب أن لا تقل عن 8 خانات لحماية السجلات والبيانات الطبية.',
+    };
+  }
+  const hasLetter = /[a-zA-Z]/.test(p);
+  const hasDigit = /[0-9]/.test(p);
+  if (!hasLetter || !hasDigit) {
+    return {
+      valid: false,
+      reason: 'يجب أن تحتوي كلمة المرور على أحرف إنجليزية وأرقام معاً (مثال: Dent2025@).',
+    };
+  }
+  return { valid: true };
 }
 
 export async function registerWithEmailAndPassword(
@@ -796,14 +866,22 @@ export async function registerWithEmailAndPassword(
 ): Promise<{ user: User; verificationSent: boolean }> {
   const cleanEmail = email.trim().toLowerCase();
   if (!isValidRealEmail(cleanEmail)) {
-    throw new Error('يرجى إدخال بريد إلكتروني حقيقي وصحيح لإنشاء الحساب.');
+    throw new Error('يرجى إدخال بريد إلكتروني حقيقي وصحيح (نطاق بريدي حقيقي غير مؤقت).');
   }
-  const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+  const pwdCheck = isValidStrongPassword(pass);
+  if (!pwdCheck.valid) {
+    throw new Error(pwdCheck.reason || 'كلمة المرور غير مطابقة للشروط الأمنية.');
+  }
+
+  const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass.trim());
   let verificationSent = false;
   try {
     const actionSettings =
       typeof window !== 'undefined' && window.location?.origin
-        ? { url: window.location.origin }
+        ? {
+            url: window.location.origin,
+            handleCodeInApp: true,
+          }
         : undefined;
     await sendEmailVerification(cred.user, actionSettings);
     verificationSent = true;
@@ -822,7 +900,19 @@ export async function loginWithEmailAndPassword(
   if (!isValidRealEmail(cleanEmail)) {
     throw new Error('يرجى إدخال بريد إلكتروني حقيقي وصحيح لتسجيل الدخول.');
   }
-  const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+  const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass.trim());
+  if (!cred.user.emailVerified) {
+    // Automatically trigger fresh verification email if still unverified
+    try {
+      const actionSettings =
+        typeof window !== 'undefined' && window.location?.origin
+          ? { url: window.location.origin, handleCodeInApp: true }
+          : undefined;
+      await sendEmailVerification(cred.user, actionSettings);
+    } catch {
+      // ignore rate limit
+    }
+  }
   return cred.user;
 }
 
@@ -834,7 +924,7 @@ export async function resendVerificationEmail(): Promise<void> {
   if (auth.currentUser && !auth.currentUser.email?.endsWith('@clinic.alssaedic.local')) {
     const actionSettings =
       typeof window !== 'undefined' && window.location?.origin
-        ? { url: window.location.origin }
+        ? { url: window.location.origin, handleCodeInApp: true }
         : undefined;
     await sendEmailVerification(auth.currentUser, actionSettings);
   } else {
@@ -882,6 +972,8 @@ async function checkDocExistsFast(
 // Helper to determine if the active session is authorized to read/write for target clinic
 export function isCurrentSessionAuthorizedForClinic(targetOwnerUid: string): boolean {
   if (!auth.currentUser) return false;
+  // Strict rule: email must be verified (Google auth is pre-verified; email/pass requires email verification)
+  if (!auth.currentUser.emailVerified) return false;
   if (auth.currentUser.uid === targetOwnerUid) return true;
   return Boolean(auth.currentUser.email);
 }

@@ -12,21 +12,14 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Strict verification enforcement: verified email, email/password provider, or anonymous provider
+    // Strict verification enforcement: real verified email (Google Auth or verified Email/Password).
+    // Unverified accounts and anonymous sessions are strictly denied.
     function isStrictlyVerified() {
-      return isSignedIn() && (
-        request.auth.token.email_verified == true ||
-        request.auth.token.firebase.sign_in_provider == 'password' ||
-        request.auth.token.firebase.sign_in_provider == 'anonymous'
-      );
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && (
-        request.auth.token.email_verified == true ||
-        request.auth.token.firebase.sign_in_provider == 'password' ||
-        request.auth.token.firebase.sign_in_provider == 'anonymous'
-      );
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
     function isSuperAdmin() {

@@ -18,10 +18,12 @@ import {
 import {
   User,
   isValidRealEmail,
+  isValidStrongPassword,
   loginWithEmailAndPassword,
   registerWithEmailAndPassword,
   reloadAndCheckEmailVerified,
   requestPasswordReset,
+  resendVerificationEmail,
 } from '../firebase';
 import { WorkspaceRole } from '../types/clinic';
 
@@ -91,7 +93,9 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState(user?.email ? user.email : '');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [registrationSuccessEmail, setRegistrationSuccessEmail] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -111,6 +115,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     setAuthError(null);
     setAuthInfo(null);
     setIsOpNotAllowed(false);
+    setRegistrationSuccessEmail(null);
     if (user?.email && !user.email.endsWith('@clinic.alssaedic.local')) {
       setEmail(user.email);
       if (!user.emailVerified) {
@@ -163,24 +168,30 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       return;
     }
 
-    if (cleanPassword.length < 6) {
-      setAuthError('كلمة المرور يجب أن لا تقل عن 6 خانات.');
-      return;
-    }
-
-    // 2. Register Mode: Strictly Real Email + Password
+    // 2. Register Mode: Strictly Real Email + Strong Password + Match Confirmation
     if (authMode === 'register') {
+      if (cleanPassword !== confirmPassword.trim()) {
+        setAuthError('كلمتا المرور غير متطابقتين. يرجى إعادة كتابة كلمة المرور بدقة.');
+        return;
+      }
+      const pwdCheck = isValidStrongPassword(cleanPassword);
+      if (!pwdCheck.valid) {
+        setAuthError(pwdCheck.reason || 'كلمة المرور غير مطابقة للشروط الأمنية.');
+        return;
+      }
       setAuthLoading(true);
       try {
         const { verificationSent } = await registerWithEmailAndPassword(cleanEmail, cleanPassword);
-        if (verificationSent) {
-          notify('تم إنشاء الحساب بنجاح! أدخل بيانات عيادتك الخاصة الآن ثم اضغط حفظ.', 'success');
-        } else {
-          notify('تم إنشاء الحساب بنجاح! أدخل بيانات عيادتك الخاصة الآن ثم اضغط حفظ.', 'success');
-        }
         setPassword('');
+        setConfirmPassword('');
+        setRegistrationSuccessEmail(cleanEmail);
+        setIsEmailVerifiedState(false);
+        if (verificationSent) {
+          notify('تم إنشاء الحساب وإرسال رابط التحقق إلى بريدك الإلكتروني بنجاح!', 'success');
+        } else {
+          notify('تم إنشاء الحساب بنجاح! يرجى التحقق من بريدك الإلكتروني.', 'info');
+        }
         onAccountCreated?.();
-        onClose();
         return;
       } catch (err: unknown) {
         const code = (err as { code?: string })?.code || '';
@@ -192,9 +203,9 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
         } else if (code === 'auth/email-already-in-use') {
           msg = 'هذا البريد الإلكتروني مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".';
         } else if (code === 'auth/invalid-email') {
-          msg = 'صيغة البريد الإلكتروني غير صالحة.';
+          msg = 'صيغة البريد الإلكتروني غير صالحة. يرجى استخدام بريد حقيقي.';
         } else if (code === 'auth/weak-password') {
-          msg = 'كلمة المرور ضعيفة. يرجى اختيار كلمة مرور لا تقل عن 6 خانات.';
+          msg = 'كلمة المرور ضعيفة. يجب أن لا تقل عن 8 خانات وتتضمن أحرفاً وأرقاماً.';
         } else if (err instanceof Error) {
           msg = err.message;
         }
@@ -437,139 +448,255 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
               </button>
             </div>
           ) : (
-            <div className="space-y-3.5">
-              {/* Primary Instant Google Login Button */}
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  disabled={authLoading}
-                  onClick={handleGoogleLogin}
-                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm hover:shadow transition-all"
-                >
-                  <Cloud className="w-4 h-4 shrink-0 text-white" />
-                  <span>تسجيل الدخول الفوري عبر Google</span>
-                </button>
-                <div className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400">
-                  مفعل تلقائياً لمزامنة البيانات السحابية بضغطة زر
-                </div>
-              </div>
+              {registrationSuccessEmail ? (
+                <div className="rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/10 p-4 text-center space-y-3">
+                  <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                    <Mail className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 dark:text-slate-100 mb-1">
+                      تم إنشاء الحساب وإرسال رابط التأكيد بنجاح!
+                    </h4>
+                    <p className="text-xs text-slate-700 dark:text-slate-300 font-mono font-bold dir-ltr break-all bg-white dark:bg-slate-900 py-1.5 px-3 rounded-lg border border-emerald-500/30 inline-block my-1">
+                      {registrationSuccessEmail}
+                    </p>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-2 leading-relaxed">
+                      أرسلنا رابط التحقق وتفعيل الحساب إلى بريدك الإلكتروني. يرجى فتح صندوق الوارد (أو مجلد الرسائل غير المرغوب فيها Spam) والضغط على الرابط لتأكيد ملكية البريد وتفعيل الحساب والمزامنة السحابية.
+                    </p>
+                  </div>
 
-              <div className="relative flex items-center justify-center my-1">
-                <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
-                <span className="bg-white dark:bg-slate-900 px-2.5 text-[10px] font-bold text-slate-400 shrink-0">
-                  أو بالبريد الإلكتروني وكلمة المرور
-                </span>
-                <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
-              </div>
+                  {authError && (
+                    <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[11px] font-bold text-rose-600 dark:text-rose-300 flex items-start gap-1.5 text-right">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{authError}</span>
+                    </div>
+                  )}
 
-              {/* Segmented Switcher: دخول vs حساب جديد */}
-              {authMode !== 'forgot' && (
-                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('login');
-                      setAuthError(null);
-                      setAuthInfo(null);
-                    }}
-                    className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
-                      authMode === 'login'
-                        ? 'bg-sky-600 text-white shadow-xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <LogIn className="w-3.5 h-3.5 shrink-0" />
-                    <span>دخول</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('register');
-                      setAuthError(null);
-                      setAuthInfo(null);
-                    }}
-                    className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
-                      authMode === 'register'
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                    <span>حساب جديد</span>
-                  </button>
-                </div>
-              )}
+                  <div className="pt-2 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true);
+                        setAuthError(null);
+                        try {
+                          const verified = await reloadAndCheckEmailVerified();
+                          if (verified) {
+                            setIsEmailVerifiedState(true);
+                            setRegistrationSuccessEmail(null);
+                            notify('تم توثيق البريد وتفعيل الحساب بنجاح!', 'success');
+                            onClose();
+                          } else {
+                            setAuthError('لم يتم تأكيد الرابط بعد. يرجى فتح الرابط المرسل إلى بريدك أولاً، ثم الضغط هنا مجدداً.');
+                          }
+                        } catch {
+                          setAuthError('تعذر التحقق حالياً. يرجى المحاولة بعد لحظات.');
+                        } finally {
+                          setAuthLoading(false);
+                        }
+                      }}
+                      className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-colors disabled:opacity-50"
+                    >
+                      {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+                      <span>لقد قمت بالضغط على الرابط (تحقق وتفعيل الآن)</span>
+                    </button>
 
-              {authMode === 'forgot' && (
-                <div className="text-center pb-1">
-                  <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
-                    استعادة كلمة المرور
-                  </h4>
-                </div>
-              )}
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true);
+                        setAuthError(null);
+                        try {
+                          await resendVerificationEmail();
+                          notify('تمت إعادة إرسال رابط التأكيد إلى بريدك الإلكتروني بنجاح', 'success');
+                        } catch (err: unknown) {
+                          setAuthError(err instanceof Error ? err.message : 'تعذر إعادة إرسال الرابط.');
+                        } finally {
+                          setAuthLoading(false);
+                        }
+                      }}
+                      className="w-full py-2 px-3 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                      <span>إعادة إرسال رابط التحقق</span>
+                    </button>
 
-              <form onSubmit={handleSubmit} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    البريد الإلكتروني
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      required
-                      dir="ltr"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="example@gmail.com"
-                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-3 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
-                    />
-                    <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRegistrationSuccessEmail(null);
+                        setAuthMode('login');
+                        setAuthError(null);
+                      }}
+                      className="text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline pt-1"
+                    >
+                      تسجيل الدخول بحساب آخر
+                    </button>
                   </div>
                 </div>
+              ) : (
+                <>
+                  {/* Primary Instant Google Login Button */}
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={handleGoogleLogin}
+                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm hover:shadow transition-all"
+                    >
+                      <Cloud className="w-4 h-4 shrink-0 text-white" />
+                      <span>تسجيل الدخول الفوري عبر Google (موثّق تلقائياً)</span>
+                    </button>
+                    <div className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400">
+                      مفعل تلقائياً لمزامنة البيانات السحابية بضغطة زر
+                    </div>
+                  </div>
 
-                {authMode !== 'forgot' && (
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      كلمة المرور
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        dir="ltr"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••"
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
-                      />
-                      <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                  <div className="relative flex items-center justify-center my-1">
+                    <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+                    <span className="bg-white dark:bg-slate-900 px-2.5 text-[10px] font-bold text-slate-400 shrink-0">
+                      أو ببريد إلكتروني حقيقي وكلمة مرور
+                    </span>
+                    <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+                  </div>
+
+                  {/* Segmented Switcher: دخول vs حساب جديد */}
+                  {authMode !== 'forgot' && (
+                    <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
                       <button
                         type="button"
-                        onClick={() => setShowPassword((p) => !p)}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                        aria-label={showPassword ? 'إخفاء' : 'إظهار'}
+                        onClick={() => {
+                          setAuthMode('login');
+                          setAuthError(null);
+                          setAuthInfo(null);
+                        }}
+                        className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                          authMode === 'login'
+                            ? 'bg-sky-600 text-white shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                        }`}
                       >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        <LogIn className="w-3.5 h-3.5 shrink-0" />
+                        <span>دخول</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('register');
+                          setAuthError(null);
+                          setAuthInfo(null);
+                        }}
+                        className={`py-2 px-3 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                          authMode === 'register'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                        <span>حساب جديد</span>
                       </button>
                     </div>
+                  )}
 
-                    {authMode === 'login' && (
-                      <div className="pt-1 text-left">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAuthMode('forgot');
-                            setAuthError(null);
-                            setAuthInfo(null);
-                          }}
-                          className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline"
-                        >
-                          نسيت كلمة المرور؟
-                        </button>
+                  {authMode === 'forgot' && (
+                    <div className="text-center pb-1">
+                      <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
+                        استعادة كلمة المرور
+                      </h4>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleSubmit} className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        البريد الإلكتروني (حقيقي)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="email"
+                          required
+                          dir="ltr"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="example@gmail.com"
+                          className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-3 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
+                        />
+                        <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                      </div>
+                    </div>
+
+                    {authMode !== 'forgot' && (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                            كلمة المرور
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showPassword ? 'text' : 'password'}
+                              required
+                              dir="ltr"
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              placeholder="••••••••"
+                              className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
+                            />
+                            <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword((p) => !p)}
+                              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                              aria-label={showPassword ? 'إخفاء' : 'إظهار'}
+                            >
+                              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {authMode === 'register' && (
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                              تأكيد كلمة المرور
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showPassword ? 'text' : 'password'}
+                                required
+                                dir="ltr"
+                                value={confirmPassword}
+                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                placeholder="أعد كتابة كلمة المرور"
+                                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
+                              />
+                              <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                            </div>
+                            <div className="mt-1.5 p-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[10px] text-slate-600 dark:text-slate-400 space-y-0.5">
+                              <p className="font-bold text-slate-700 dark:text-slate-300">شروط الأمان الصارمة:</p>
+                              <p>• كلمة المرور 8 خانات على الأقل تجمع بين أحرف وأرقام.</p>
+                              <p>• بريد حقيقي فقط (لا يُقبل البريد الوهمي أو المؤقت).</p>
+                              <p>• إرسال رابط تأكيد وتفعيل إلزامي قبل فتح الحساب.</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {authMode === 'login' && (
+                          <div className="pt-1 text-left">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAuthMode('forgot');
+                                setAuthError(null);
+                                setAuthInfo(null);
+                              }}
+                              className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline"
+                            >
+                              نسيت كلمة المرور؟
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
 
                 {authError && (
                   <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-[11px] font-bold text-rose-600 dark:text-rose-300 space-y-2">
@@ -670,7 +797,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   </div>
                 )}
               </form>
-            </div>
+            </>
           )}
         </div>
       </div>
