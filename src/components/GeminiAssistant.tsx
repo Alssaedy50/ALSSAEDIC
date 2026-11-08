@@ -43,7 +43,6 @@ import {
   saveAIProviderConfig,
   queryClinicAssistantDetailed,
   transcribeAudioWithGroqWhisper,
-  testAIProviderConnection,
 } from '../utils/aiClient';
 import {
   buildCleanSpeechTranscript,

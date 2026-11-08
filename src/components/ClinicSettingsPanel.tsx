@@ -557,6 +557,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         ...prev,
         [provider]: res,
       }));
+      setAiConfig(loadAIProviderConfig());
       if (res.ok) {
         notify(`الاتصال ناجح (${formatModelDisplayLabel(provider)}) — استجابة ${res.latencyMs}ms`, 'success');
       } else {
@@ -1404,7 +1405,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 >
                   {GEMINI_CANDIDATE_MODELS.map((m) => (
                     <option key={m} value={m}>
-                      {formatModelDisplayLabel(m)} {m === 'gemini-2.5-flash' ? '(موصى به)' : ''}
+                      {formatModelDisplayLabel(m)} {m === 'gemini-1.5-flash' ? '(موصى به)' : ''}
                     </option>
                   ))}
                 </select>

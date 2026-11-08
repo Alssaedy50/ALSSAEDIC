@@ -12,14 +12,16 @@ import {
 export const AI_CONFIG_STORAGE_KEY = 'docai_ai_providers_config_v1';
 
 export const GEMINI_CANDIDATE_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-3.8-flash',
-  'gemini-3.1-flash-lite',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-pro',
+  'gemini-flash-latest',
 ] as const;
 
 export const GROQ_TEXT_MODELS = [
-  'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile',
+  'llama3-70b-8192',
   'mixtral-8x7b-32768',
 ] as const;
 
@@ -35,24 +37,28 @@ export const GROQ_WHISPER_MODELS = [
 
 export const OPENROUTER_MODELS = [
   'deepseek/deepseek-chat',
-  'google/gemini-2.5-flash',
+  'google/gemini-flash-1.5',
   'meta-llama/llama-3.3-70b-instruct',
   'anthropic/claude-3.5-sonnet',
 ] as const;
 
 export const MODEL_DISPLAY_LABELS: Record<string, string> = {
-  'gemini-2.5-flash': 'Google Gemini 2.5 Flash',
-  'gemini-3.8-flash': 'Google Gemini 3.8 Flash',
-  'gemini-3.1-flash-lite': 'Google Gemini 3.1 Flash Lite',
+  'gemini-1.5-flash': 'Google Gemini 1.5 Flash (موصى به)',
+  'gemini-2.0-flash': 'Google Gemini 2.0 Flash',
+  'gemini-1.5-pro': 'Google Gemini 1.5 Pro',
   'gemini-flash-latest': 'Google Gemini Flash Latest',
-  'llama-3.3-70b-versatile': 'Groq Llama 3.3 70B',
-  'llama-3.1-8b-instant': 'Groq Llama 3.1 8B Instant',
+  'gemini-2.5-flash': 'Google Gemini 1.5 Flash',
+  'llama-3.1-8b-instant': 'Groq Llama 3.1 8B Instant (متاح ومجاني)',
+  'llama-3.3-70b-versatile': 'Groq Llama 3.3 70B Versatile',
+  'llama3-70b-8192': 'Groq Llama 3 70B',
+  'mixtral-8x7b-32768': 'Groq Mixtral 8x7B',
   'llama-3.2-11b-vision-preview': 'Groq Llama 3.2 11B Vision',
   'llama-3.2-90b-vision-preview': 'Groq Llama 3.2 90B Vision',
   'whisper-large-v3': 'Groq Whisper Large v3',
   'whisper-large-v3-turbo': 'Groq Whisper Large v3 Turbo',
   'deepseek/deepseek-chat': 'OpenRouter DeepSeek V3',
-  'google/gemini-2.5-flash': 'OpenRouter Gemini 2.5 Flash',
+  'google/gemini-flash-1.5': 'OpenRouter Gemini 1.5 Flash',
+  'google/gemini-2.5-flash': 'OpenRouter Gemini 1.5 Flash',
   'meta-llama/llama-3.3-70b-instruct': 'OpenRouter Llama 3.3 70B',
   'anthropic/claude-3.5-sonnet': 'OpenRouter Claude 3.5 Sonnet',
   'local-clinical-engine': 'المحرك السريري المدمج (خادم العيادة)',
@@ -60,8 +66,30 @@ export const MODEL_DISPLAY_LABELS: Record<string, string> = {
 
 export function formatModelDisplayLabel(modelName?: string | null): string {
   const clean = String(modelName || '').trim();
-  if (!clean) return 'Gemini 2.5 Flash';
+  if (!clean) return 'Gemini 1.5 Flash';
   return MODEL_DISPLAY_LABELS[clean] || clean;
+}
+
+export function sanitizeGeminiModel(model?: string | null): string {
+  const m = String(model || '').trim();
+  if (
+    !m ||
+    m === 'gemini-2.5-flash' ||
+    m === 'gemini-3.8-flash' ||
+    m.includes('2.5') ||
+    m.includes('3.8')
+  ) {
+    return 'gemini-1.5-flash';
+  }
+  return m;
+}
+
+export function sanitizeGroqTextModel(model?: string | null): string {
+  const m = String(model || '').trim();
+  if (!m || m === 'llama-3.3-70b-versatile') {
+    return 'llama-3.1-8b-instant';
+  }
+  return m;
 }
 
 export function loadAIProviderConfig(): AIProviderConfig {
@@ -72,13 +100,17 @@ export function loadAIProviderConfig(): AIProviderConfig {
     const raw = window.localStorage.getItem(AI_CONFIG_STORAGE_KEY);
     if (!raw) return DEFAULT_AI_CONFIG;
     const parsed = JSON.parse(raw) as Partial<AIProviderConfig>;
-    return {
+
+    const geminiModel = sanitizeGeminiModel(parsed.geminiModel || DEFAULT_AI_CONFIG.geminiModel);
+    const groqTextModel = sanitizeGroqTextModel(parsed.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel);
+
+    const config: AIProviderConfig = {
       geminiApiKey: String(parsed.geminiApiKey || '').trim(),
-      geminiModel: String(parsed.geminiModel || DEFAULT_AI_CONFIG.geminiModel).trim(),
+      geminiModel,
       enableWebGrounding: parsed.enableWebGrounding !== false,
 
       groqApiKey: String(parsed.groqApiKey || '').trim(),
-      groqTextModel: String(parsed.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel).trim(),
+      groqTextModel,
       groqVisionModel: String(parsed.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel).trim(),
       groqWhisperModel: String(parsed.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel).trim(),
 
@@ -90,6 +122,17 @@ export function loadAIProviderConfig(): AIProviderConfig {
         ? parsed.customPriority
         : DEFAULT_AI_CONFIG.customPriority,
     };
+
+    // Auto-heal localStorage if obsolete models were stored
+    if (parsed.geminiModel !== geminiModel || parsed.groqTextModel !== groqTextModel) {
+      try {
+        window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config));
+      } catch {
+        // Ignore
+      }
+    }
+
+    return config;
   } catch {
     return DEFAULT_AI_CONFIG;
   }
@@ -98,7 +141,12 @@ export function loadAIProviderConfig(): AIProviderConfig {
 export function saveAIProviderConfig(config: AIProviderConfig): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config));
+      const sanitized: AIProviderConfig = {
+        ...config,
+        geminiModel: sanitizeGeminiModel(config.geminiModel),
+        groqTextModel: sanitizeGroqTextModel(config.groqTextModel),
+      };
+      window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(sanitized));
     }
   } catch {
     // Ignore storage quota errors
@@ -641,8 +689,8 @@ async function callGeminiDirect(
   const apiKey = config.geminiApiKey.trim();
   if (!apiKey) throw new Error('مفتاح Gemini API غير مدخل.');
 
-  const model = config.geminiModel.trim() || 'gemini-2.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  let model = sanitizeGeminiModel(config.geminiModel);
+  let url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
 
   const contents: Array<Record<string, unknown>> = [];
@@ -694,12 +742,30 @@ async function callGeminiDirect(
     requestBody.tools = [{ googleSearch: {} }];
   }
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(requestBody),
     signal,
   });
+
+  // If model is 404 or deprecated, auto-fallback to active gemini-1.5-flash or gemini-2.0-flash
+  if (!res.ok && res.status === 404) {
+    const fallbackModel = model !== 'gemini-1.5-flash' ? 'gemini-1.5-flash' : 'gemini-2.0-flash';
+    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(fallbackModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const retryRes = await fetch(fallbackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+    if (retryRes.ok) {
+      res = retryRes;
+      model = fallbackModel;
+      config.geminiModel = fallbackModel;
+      saveAIProviderConfig(config);
+    }
+  }
 
   if (!res.ok) {
     const errorText = await res.text().catch(() => '');
@@ -750,9 +816,9 @@ async function callGroqDirect(
   const apiKey = config.groqApiKey.trim();
   if (!apiKey) throw new Error('مفتاح Groq Cloud API غير مدخل.');
 
-  const model = hasImage
+  let model = hasImage
     ? config.groqVisionModel.trim() || 'llama-3.2-11b-vision-preview'
-    : config.groqTextModel.trim() || 'llama-3.3-70b-versatile';
+    : sanitizeGroqTextModel(config.groqTextModel);
 
   const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
   const messages: Array<Record<string, unknown>> = [
@@ -788,7 +854,7 @@ async function callGroqDirect(
     });
   }
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  let res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -802,6 +868,31 @@ async function callGroqDirect(
     }),
     signal,
   });
+
+  // If model does not exist or user doesn't have access (404), fallback to active llama-3.1-8b-instant
+  if (!res.ok && res.status === 404 && !hasImage && model !== 'llama-3.1-8b-instant') {
+    const fallbackModel = 'llama-3.1-8b-instant';
+    const retryRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: fallbackModel,
+        messages,
+        temperature: 0.3,
+        max_tokens: 2048,
+      }),
+      signal,
+    });
+    if (retryRes.ok) {
+      res = retryRes;
+      model = fallbackModel;
+      config.groqTextModel = fallbackModel;
+      saveAIProviderConfig(config);
+    }
+  }
 
   if (!res.ok) {
     const errorText = await res.text().catch(() => '');
@@ -833,7 +924,7 @@ async function callOpenRouterDirect(
   if (!apiKey) throw new Error('مفتاح OpenRouter API غير مدخل.');
 
   const model = hasImage
-    ? 'google/gemini-2.5-flash'
+    ? 'google/gemini-flash-1.5'
     : config.openrouterModel.trim() || 'deepseek/deepseek-chat';
 
   const systemPrompt = buildClinicalSystemPrompt(payload.clinicContext, payload.prompt);
@@ -952,16 +1043,38 @@ export async function testAIProviderConnection(
     if (provider === 'gemini') {
       const apiKey = config.geminiApiKey.trim();
       if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
-      const model = config.geminiModel.trim() || 'gemini-2.5-flash';
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: 'قل كلمة: متصل' }] }],
-          generationConfig: { maxOutputTokens: 10 },
-        }),
-      });
+      let model = sanitizeGeminiModel(config.geminiModel);
+
+      const tryGemini = async (targetModel: string) => {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'قل كلمة: متصل' }] }],
+            generationConfig: { maxOutputTokens: 10 },
+          }),
+        });
+      };
+
+      let res = await tryGemini(model);
+
+      // Auto-fallback if the configured model is deprecated or not found (404)
+      if (!res.ok && res.status === 404) {
+        const fallbackCandidates = ['gemini-1.5-flash', 'gemini-2.0-flash'];
+        for (const candidate of fallbackCandidates) {
+          if (candidate === model) continue;
+          const retryRes = await tryGemini(candidate);
+          if (retryRes.ok) {
+            res = retryRes;
+            model = candidate;
+            config.geminiModel = candidate;
+            saveAIProviderConfig(config);
+            break;
+          }
+        }
+      }
+
       const latencyMs = Date.now() - start;
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -973,19 +1086,41 @@ export async function testAIProviderConnection(
     if (provider === 'groq') {
       const apiKey = config.groqApiKey.trim();
       if (!apiKey) return { ok: false, latencyMs: 0, error: 'المفتاح غير مدخل' };
-      const model = config.groqTextModel.trim() || 'llama-3.3-70b-versatile';
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'Say OK' }],
-          max_tokens: 5,
-        }),
-      });
+      let model = sanitizeGroqTextModel(config.groqTextModel);
+
+      const tryGroq = async (targetModel: string) => {
+        return fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: targetModel,
+            messages: [{ role: 'user', content: 'Say OK' }],
+            max_tokens: 5,
+          }),
+        });
+      };
+
+      let res = await tryGroq(model);
+
+      // Auto-fallback if the configured model does not exist or user lacks access (404)
+      if (!res.ok && res.status === 404) {
+        const fallbackCandidates = ['llama-3.1-8b-instant', 'llama3-70b-8192'];
+        for (const candidate of fallbackCandidates) {
+          if (candidate === model) continue;
+          const retryRes = await tryGroq(candidate);
+          if (retryRes.ok) {
+            res = retryRes;
+            model = candidate;
+            config.groqTextModel = candidate;
+            saveAIProviderConfig(config);
+            break;
+          }
+        }
+      }
+
       const latencyMs = Date.now() - start;
       if (!res.ok) {
         const text = await res.text().catch(() => '');

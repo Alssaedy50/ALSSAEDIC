@@ -249,16 +249,32 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       const code = (err as { code?: string })?.code || '';
       const rawErr = err instanceof Error ? err.message : String(err);
       if (code === 'auth/unauthorized-domain' || rawErr.includes('unauthorized-domain')) {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'الموقع الحالي';
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'saedic.vercel.app';
         setAuthError(
-          `النطاق (${host}) غير مضاف بعد في قائمة النطاقات المصرح بها (Authorized domains) داخل إعدادات Firebase Authentication.`
+          `النطاق (${host}) غير مضاف في قائمة النطاقات المصرح بها (Authorized domains). يرجى إضافته من: Firebase Console -> Authentication -> Settings -> Authorized domains.`
+        );
+      } else if (
+        code === 'auth/api-key-not-valid' ||
+        code === 'auth/invalid-api-key' ||
+        rawErr.includes('API key not valid') ||
+        rawErr.includes('API_KEY_INVALID')
+      ) {
+        setAuthError(
+          'مفتاح Firebase API Key غير صالح. يرجى نسخ مفتاح Web API Key الصحيح من إعدادات مشروعك في Firebase (Project Settings -> General -> Web API Key).'
+        );
+      } else if (
+        code === 'auth/operation-not-allowed' ||
+        rawErr.includes('operation-not-allowed')
+      ) {
+        setAuthError(
+          'تسجيل الدخول عبر Google غير مفعّل في Firebase. يرجى تفعيله من: Firebase Console -> Authentication -> Sign-in method -> Google (Enabled).'
         );
       } else if (code === 'auth/popup-blocked' || rawErr.includes('popup-blocked')) {
-        setAuthError('قام المتصفح بحظر نافذة Google المنبثقة. يرجى السماح بالنوافذ المنبثقة.');
+        setAuthError('قام المتصفح بحظر نافذة Google المنبثقة. يرجى السماح بالنوافذ المنبثقة في المتصفح.');
       } else if (code === 'auth/popup-closed-by-user' || rawErr.includes('popup-closed-by-user')) {
         setAuthError('تم إغلاق نافذة تسجيل الدخول عبر Google قبل إكمال العملية.');
       } else {
-        setAuthError('تعذر الدخول عبر Google. يرجى التحقق من الاتصال والمحاولة مرة أخرى.');
+        setAuthError(`تعذر الدخول عبر Google: ${code || rawErr}`);
       }
     } finally {
       setAuthLoading(false);

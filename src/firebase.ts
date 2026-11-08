@@ -4,11 +4,13 @@ import {
   User,
   createUserWithEmailAndPassword,
   getAuth,
+  getRedirectResult,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
 import {
@@ -722,11 +724,45 @@ export async function issueServerSessionToken(params: {
 }
 
 // ==================== AUTHENTICATION ====================
-export async function signInWithGoogleAccount(): Promise<User> {
+export async function signInWithGoogleAccount(forceRedirect = false): Promise<User | null> {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  const result = await signInWithPopup(auth, provider);
-  return result.user;
+
+  const isMobile =
+    typeof navigator !== 'undefined' &&
+    /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+  if (forceRedirect) {
+    await signInWithRedirect(auth, provider);
+    return null;
+  }
+
+  try {
+    const result = await signInWithPopup(auth, provider);
+    return result.user;
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code || '';
+    if (
+      isMobile &&
+      (code === 'auth/popup-blocked' ||
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request')
+    ) {
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
+    throw err;
+  }
+}
+
+export async function handleRedirectAuthResult(): Promise<User | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    return result?.user || null;
+  } catch (err) {
+    console.warn('Redirect auth result error:', err);
+    throw err;
+  }
 }
 
 const REAL_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;

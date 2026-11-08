@@ -119,11 +119,11 @@ export interface AIProviderConfig {
 
 export const DEFAULT_AI_CONFIG: AIProviderConfig = {
   geminiApiKey: '',
-  geminiModel: 'gemini-2.5-flash',
+  geminiModel: 'gemini-1.5-flash',
   enableWebGrounding: true,
 
   groqApiKey: '',
-  groqTextModel: 'llama-3.3-70b-versatile',
+  groqTextModel: 'llama-3.1-8b-instant',
   groqVisionModel: 'llama-3.2-11b-vision-preview',
   groqWhisperModel: 'whisper-large-v3',
 

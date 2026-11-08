@@ -950,6 +950,10 @@ export default function App() {
   const handleSignInWithGoogle = async (): Promise<boolean> => {
     try {
       const user = await signInWithGoogleAccount();
+      if (!user) {
+        // Redirect initiated
+        return true;
+      }
       const issued = await issueServerSessionToken({
         clinicId: 'alssaedy-clinic',
         ownerUid: user.uid,
