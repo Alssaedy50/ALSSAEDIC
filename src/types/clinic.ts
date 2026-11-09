@@ -167,7 +167,7 @@ export const DEFAULT_AI_CONFIG: AIProviderConfig = {
   openrouterModel: 'google/gemini-2.5-flash',
   openrouterVisionModel: 'google/gemini-2.5-flash',
 
-  sttEngine: 'groq',
+  sttEngine: 'browser',
   ttsModel: 'canopylabs/orpheus-arabic-saudi',
   dataEntryModel: 'openai/gpt-oss-120b',
   customPriority: ['groq', 'gemini', 'openrouter'],

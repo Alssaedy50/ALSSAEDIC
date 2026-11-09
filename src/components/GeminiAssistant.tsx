@@ -64,8 +64,9 @@ import {
   transcribeAudioWithGroqWhisper,
 } from '../utils/aiClient';
 import {
-  buildCleanSpeechTranscript,
   deduplicateSpeechText,
+  extractSessionSpeechTranscript,
+  mergeTranscriptSegments,
 } from '../utils/speechTranscript';
 
 interface GeminiAssistantProps {
@@ -503,6 +504,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  const recognitionSessionTokenRef = useRef<number>(0);
+  const restartTimerRef = useRef<number | null>(null);
+  const latestInputRef = useRef<string>(input);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const activeAudioStreamRef = useRef<MediaStream | null>(null);
@@ -514,8 +518,16 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   const userInitiatedAbortRef = useRef<boolean>(false);
 
   useEffect(() => {
+    latestInputRef.current = input;
+  }, [input]);
+
+  useEffect(() => {
     return () => {
       shouldKeepListeningRef.current = false;
+      recognitionSessionTokenRef.current += 1;
+      if (restartTimerRef.current) {
+        window.clearTimeout(restartTimerRef.current);
+      }
       try {
         recognitionRef.current?.stop();
       } catch {
@@ -716,11 +728,33 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
   const stopVoiceInput = () => {
     shouldKeepListeningRef.current = false;
+    recognitionSessionTokenRef.current += 1;
+    if (restartTimerRef.current) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     setIsListening(false);
     try {
       recognitionRef.current?.stop();
     } catch {
       // Ignore
+    }
+    if (currentSessionFinalRef.current.trim()) {
+      const merged = deduplicateSpeechText(
+        mergeTranscriptSegments(
+          accumulatedTranscriptRef.current,
+          currentSessionFinalRef.current
+        )
+      );
+      accumulatedTranscriptRef.current = merged;
+      currentSessionFinalRef.current = '';
+      latestInputRef.current = merged;
+      setInput(merged);
+    } else if (latestInputRef.current.trim()) {
+      const clean = deduplicateSpeechText(latestInputRef.current);
+      accumulatedTranscriptRef.current = clean;
+      latestInputRef.current = clean;
+      setInput(clean);
     }
   };
 
@@ -739,96 +773,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
   };
 
-  const startGroqRecording = async () => {
-    if (!navigator?.mediaDevices?.getUserMedia) {
-      notify('المتصفح لا يدعم تسجيل الصوت عبر المايكروفون', 'warning');
-      toggleBrowserVoiceInput();
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      activeAudioStreamRef.current = stream;
-      audioChunksRef.current = [];
-
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-          ? 'audio/mp4'
-          : '';
-
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        if (activeAudioStreamRef.current) {
-          activeAudioStreamRef.current.getTracks().forEach((t) => t.stop());
-          activeAudioStreamRef.current = null;
-        }
-
-        const effectiveMime = mimeType || 'audio/webm';
-        const recordedBlob = new Blob(audioChunksRef.current, {
-          type: effectiveMime,
-        });
-
-        if (recordedBlob.size > 1000) {
-          // Attach recorded audio for preview/playback in composer & chat
-          const audioDataUrl = await blobToDataUrl(recordedBlob);
-          if (audioDataUrl) {
-            setAttachment({
-              name: `تسجيل صوتي (${new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })})`,
-              mimeType: effectiveMime,
-              base64Data: audioDataUrl,
-            });
-          }
-
-          if (aiConfig.groqApiKey.trim()) {
-            setIsTranscribingGroq(true);
-            try {
-              const transcript = await transcribeAudioWithGroqWhisper(
-                recordedBlob,
-                aiConfig.groqApiKey,
-                aiConfig.groqWhisperModel
-              );
-              if (transcript && transcript.trim()) {
-                setInput((prev) =>
-                  prev ? `${prev.trim()} ${transcript.trim()}` : transcript.trim()
-                );
-                notify('تم تسجيل وتفريغ الصوت بنجاح', 'success');
-              }
-            } catch (err: unknown) {
-              notify(
-                err instanceof Error
-                  ? `تم حفظ التسجيل الصوتي للاستماع (${err.message})`
-                  : 'تم إرفاق التسجيل الصوتي للمعاينة.',
-                'info'
-              );
-            } finally {
-              setIsTranscribingGroq(false);
-            }
-          }
-        }
-      };
-
-      recorder.start(250);
-      setIsRecordingGroq(true);
-    } catch {
-      setIsRecordingGroq(false);
-      notify('يرجى السماح بصلاحية المايكروفون في المتصفح', 'warning');
-    }
-  };
-
-  const toggleBrowserVoiceInput = () => {
-    if (isListening || shouldKeepListeningRef.current) {
-      stopVoiceInput();
-      return;
-    }
+  const launchBrowserRecognitionSession = () => {
+    if (!shouldKeepListeningRef.current) return;
 
     const SpeechRec =
       (
@@ -841,6 +787,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         .webkitSpeechRecognition;
 
     if (!SpeechRec) {
+      shouldKeepListeningRef.current = false;
+      setIsListening(false);
       notify('المتصفح لا يدعم الإملاء الصوتي المباشر', 'warning');
       return;
     }
@@ -851,6 +799,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       } catch {
         // Ignore
       }
+
+      const sessionToken = ++recognitionSessionTokenRef.current;
 
       const rec = new SpeechRec() as {
         lang: string;
@@ -881,20 +831,28 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       rec.interimResults = true;
       rec.maxAlternatives = 1;
 
-      const initialBase = deduplicateSpeechText(input.trim());
-      accumulatedTranscriptRef.current = initialBase;
       currentSessionFinalRef.current = '';
-      shouldKeepListeningRef.current = true;
 
       rec.onresult = (event) => {
-        const cleanTranscript = buildCleanSpeechTranscript(initialBase, event.results);
-        if (cleanTranscript) {
-          currentSessionFinalRef.current = cleanTranscript;
-          setInput(cleanTranscript);
+        if (
+          sessionToken !== recognitionSessionTokenRef.current ||
+          !shouldKeepListeningRef.current
+        ) {
+          return;
+        }
+        const sessionTranscript = extractSessionSpeechTranscript(event.results);
+        if (sessionTranscript) {
+          currentSessionFinalRef.current = sessionTranscript;
+          const combined = deduplicateSpeechText(
+            mergeTranscriptSegments(accumulatedTranscriptRef.current, sessionTranscript)
+          );
+          latestInputRef.current = combined;
+          setInput(combined);
         }
       };
 
       rec.onerror = (event) => {
+        if (sessionToken !== recognitionSessionTokenRef.current) return;
         const errCode = String(event?.error || '');
         if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
           shouldKeepListeningRef.current = false;
@@ -904,33 +862,90 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       };
 
       rec.onend = () => {
-        shouldKeepListeningRef.current = false;
-        setIsListening(false);
-        setInput((prev) => deduplicateSpeechText(prev));
+        if (sessionToken !== recognitionSessionTokenRef.current) return;
+
+        // Lock in any spoken words from this sub-session into accumulatedTranscriptRef
+        if (currentSessionFinalRef.current.trim()) {
+          const merged = deduplicateSpeechText(
+            mergeTranscriptSegments(
+              accumulatedTranscriptRef.current,
+              currentSessionFinalRef.current
+            )
+          );
+          accumulatedTranscriptRef.current = merged;
+          currentSessionFinalRef.current = '';
+          latestInputRef.current = merged;
+          setInput(merged);
+        }
+
+        // Automatically restart listening so the browser recorder NEVER stops until Send is clicked
+        if (shouldKeepListeningRef.current) {
+          if (restartTimerRef.current) {
+            window.clearTimeout(restartTimerRef.current);
+          }
+          restartTimerRef.current = window.setTimeout(() => {
+            if (shouldKeepListeningRef.current) {
+              launchBrowserRecognitionSession();
+            }
+          }, 60);
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognitionRef.current = rec;
       setIsListening(true);
       rec.start();
     } catch {
-      shouldKeepListeningRef.current = false;
-      setIsListening(false);
+      if (shouldKeepListeningRef.current) {
+        if (restartTimerRef.current) {
+          window.clearTimeout(restartTimerRef.current);
+        }
+        restartTimerRef.current = window.setTimeout(() => {
+          if (shouldKeepListeningRef.current) {
+            launchBrowserRecognitionSession();
+          }
+        }, 200);
+      } else {
+        setIsListening(false);
+      }
     }
   };
 
-  const handleMicButtonClick = () => {
-    if (aiConfig.sttEngine === 'groq' && aiConfig.groqApiKey.trim()) {
-      if (isRecordingGroq) {
-        stopGroqRecording();
-      } else {
-        if (isListening) stopVoiceInput();
-        startGroqRecording();
-      }
+  const startContinuousBrowserVoiceInput = () => {
+    const SpeechRec =
+      (
+        window as unknown as {
+          SpeechRecognition?: new () => unknown;
+          webkitSpeechRecognition?: new () => unknown;
+        }
+      ).SpeechRecognition ||
+      (window as unknown as { webkitSpeechRecognition?: new () => unknown })
+        .webkitSpeechRecognition;
+
+    if (!SpeechRec) {
+      notify('المتصفح لا يدعم الإملاء الصوتي المباشر', 'warning');
       return;
     }
 
-    if (isRecordingGroq) stopGroqRecording();
-    toggleBrowserVoiceInput();
+    if (isListening || shouldKeepListeningRef.current) {
+      // Keep listening active until the user clicks Send
+      return;
+    }
+
+    const initialBase = deduplicateSpeechText(latestInputRef.current.trim());
+    accumulatedTranscriptRef.current = initialBase;
+    currentSessionFinalRef.current = '';
+    shouldKeepListeningRef.current = true;
+    setIsListening(true);
+    launchBrowserRecognitionSession();
+  };
+
+  const handleMicButtonClick = () => {
+    if (isRecordingGroq) {
+      stopGroqRecording();
+    }
+    startContinuousBrowserVoiceInput();
   };
 
   const handleStopResponse = () => {
@@ -1059,10 +1074,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   };
 
   const sendMessage = async (textOverride?: string) => {
-    if (isListening || shouldKeepListeningRef.current) {
+    const wasListening = isListening || shouldKeepListeningRef.current;
+    if (wasListening) {
       stopVoiceInput();
     }
-    const promptText = (textOverride ?? input).trim();
+    if (isRecordingGroq) {
+      stopGroqRecording();
+    }
+    const rawPrompt =
+      textOverride !== undefined ? textOverride : latestInputRef.current || input;
+    const promptText = wasListening
+      ? deduplicateSpeechText(rawPrompt).trim()
+      : rawPrompt.trim();
     if (!promptText && !attachment) return;
 
     userInitiatedAbortRef.current = false;
@@ -1083,6 +1106,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
     onAddMessage(userMsg);
     setInput('');
+    latestInputRef.current = '';
+    accumulatedTranscriptRef.current = '';
+    currentSessionFinalRef.current = '';
     const sentAttachment = attachment;
     setAttachment(null);
     setIsSending(true);
@@ -2462,25 +2488,43 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                 : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:border-sky-500'
             }`}
             title={
-              aiConfig.sttEngine === 'groq' && aiConfig.groqApiKey.trim()
-                ? 'تسجيل صوتي وتفريغ عبر Groq Whisper'
-                : 'إملاء صوتي مباشر'
+              isListening
+                ? 'المسجل الصوتي نشط (يتوقف عند النقر على إرسال)'
+                : 'تشغيل الإملاء الصوتي المستمر'
             }
           >
-            {isListening || isRecordingGroq ? (
-              <MicOff className="w-4 h-4" />
-            ) : (
-              <Mic className="w-4 h-4" />
-            )}
+            <Mic className="w-4 h-4" />
           </button>
 
           <input
             type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const nextVal = e.target.value;
+              setInput(nextVal);
+              latestInputRef.current = nextVal;
+              accumulatedTranscriptRef.current = nextVal;
+              currentSessionFinalRef.current = '';
+              if (isListening || shouldKeepListeningRef.current) {
+                recognitionSessionTokenRef.current += 1;
+                try {
+                  recognitionRef.current?.stop();
+                } catch {
+                  // Ignore
+                }
+                if (restartTimerRef.current) {
+                  window.clearTimeout(restartTimerRef.current);
+                }
+                restartTimerRef.current = window.setTimeout(() => {
+                  if (shouldKeepListeningRef.current) {
+                    launchBrowserRecognitionSession();
+                  }
+                }, 80);
+              }
+            }}
             placeholder={
-              isRecordingGroq
-                ? 'جارٍ التسجيل الصوتي... اضغط المايكروفون للإيقاف'
+              isListening
+                ? 'جارٍ الاستماع المستمر... تحدث ثم اضغط إرسال عند الانتهاء'
                 : directEntryMode === 'receipt'
                   ? 'اكتب بيانات السند (مثال: سند للمريض محمد 20000 زيركون)...'
                   : directEntryMode === 'inventory'
@@ -2503,7 +2547,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           ) : (
             <button
               type="submit"
-              disabled={!input.trim() && !attachment}
+              disabled={!input.trim() && !attachment && !isListening}
               aria-label="إرسال"
               title="إرسال"
               className={`w-9 h-9 sm:w-10 sm:h-10 inline-flex items-center justify-center text-white ${activeTheme.sendBtn} disabled:opacity-50 rounded-xl shrink-0 transition-colors shadow-xs`}

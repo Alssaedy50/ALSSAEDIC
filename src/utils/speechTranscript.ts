@@ -1,13 +1,12 @@
 /**
- * Utilities to prevent word and phrase repetition in Web Speech API (SpeechRecognition / webkitSpeechRecognition),
- * especially on Android Chrome / Mobile WebKit where `event.results` emits cumulative transcripts
- * when `continuous` or `interimResults` is enabled.
+ * Utilities to prevent word and sentence repetition in Web Speech API (SpeechRecognition / webkitSpeechRecognition),
+ * across both continuous desktop sessions and auto-restarted mobile sessions (Android Chrome / Mobile WebKit).
  */
 
 function normalizeArabicToken(word: string): string {
   return word
     .trim()
-    .replace(/[،,.؛:!؟"']/g, '')
+    .replace(/[،,.؛:!؟"'()[\]{}]/g, '')
     .replace(/[أإآ]/g, 'ا')
     .replace(/ة$/g, 'ه')
     .replace(/ى$/g, 'ي')
@@ -24,8 +23,49 @@ function normalizePhraseForComparison(text: string): string {
 }
 
 /**
- * Removes consecutive repeated words AND consecutive repeated multi-word phrases (1 to 6 words).
- * Example: "سند جديد سند جديد للمريض صالح صالح" -> "سند جديد للمريض صالح"
+ * Checks whether `candidateWords` is a cumulative revision/extension of `baseWords`
+ * (e.g., when SpeechRecognition revises 1 word in an earlier interim result and adds more words).
+ */
+function isCumulativeRevision(baseWords: string[], candidateWords: string[]): boolean {
+  if (baseWords.length < 2 || candidateWords.length < baseWords.length) {
+    return false;
+  }
+
+  // Must start with the same first word (or second word if first word was adjusted)
+  const firstMatch =
+    normalizeArabicToken(baseWords[0]) === normalizeArabicToken(candidateWords[0]);
+  const secondMatch =
+    baseWords.length >= 2 &&
+    candidateWords.length >= 2 &&
+    normalizeArabicToken(baseWords[1]) === normalizeArabicToken(candidateWords[1]);
+
+  if (!firstMatch && !secondMatch) {
+    return false;
+  }
+
+  // Count how many tokens of baseWords match candidateWords in approximate position
+  let matchedCount = 0;
+  let searchStart = 0;
+  const maxCheckIdx = Math.min(candidateWords.length, baseWords.length + 3);
+
+  for (let i = 0; i < baseWords.length; i++) {
+    const bNorm = normalizeArabicToken(baseWords[i]);
+    if (!bNorm) continue;
+    for (let j = searchStart; j < maxCheckIdx; j++) {
+      if (normalizeArabicToken(candidateWords[j]) === bNorm) {
+        matchedCount += 1;
+        searchStart = j + 1;
+        break;
+      }
+    }
+  }
+
+  return matchedCount / baseWords.length >= 0.7;
+}
+
+/**
+ * Removes consecutive repeated words, phrases, AND full sentences (1 to 24 words),
+ * including near-duplicate consecutive sentences where the recognizer slightly revised 1 word.
  */
 export function deduplicateSpeechText(rawText: string): string {
   const rawWords = rawText
@@ -37,9 +77,10 @@ export function deduplicateSpeechText(rawText: string): string {
   if (rawWords.length <= 1) return rawWords.join(' ');
 
   let words = [...rawWords];
+  const maxWindow = Math.min(24, Math.floor(words.length / 2));
 
-  // Collapse repeated n-grams from largest window (6 words) down to 1 word
-  for (let n = 6; n >= 1; n--) {
+  // 1. Exact normalized n-gram deduplication from largest sentence window down to 1 word
+  for (let n = maxWindow; n >= 1; n--) {
     let i = 0;
     const nextWords: string[] = [];
     while (i < words.length) {
@@ -54,8 +95,49 @@ export function deduplicateSpeechText(rawText: string): string {
           }
         }
         if (isMatch) {
+          // Replace previous chunk with the newer chunk (preserves latest spelling/punctuation)
+          for (let k = 0; k < n; k++) {
+            nextWords[nextWords.length - n + k] = words[i + k];
+          }
           i += n;
           continue;
+        }
+      }
+      nextWords.push(words[i]);
+      i += 1;
+    }
+    words = nextWords;
+  }
+
+  // 2. Near-duplicate consecutive clause deduplication (4 to 16 words where >=80% tokens match and start/end match)
+  const maxFuzzyWindow = Math.min(16, Math.floor(words.length / 2));
+  for (let n = maxFuzzyWindow; n >= 4; n--) {
+    let i = 0;
+    const nextWords: string[] = [];
+    while (i < words.length) {
+      if (nextWords.length >= n && i + n <= words.length) {
+        const prevStart = normalizeArabicToken(nextWords[nextWords.length - n]);
+        const currStart = normalizeArabicToken(words[i]);
+        const prevEnd = normalizeArabicToken(nextWords[nextWords.length - 1]);
+        const currEnd = normalizeArabicToken(words[i + n - 1]);
+
+        if (prevStart && prevStart === currStart && prevEnd && prevEnd === currEnd) {
+          let matchCount = 0;
+          for (let k = 0; k < n; k++) {
+            if (
+              normalizeArabicToken(nextWords[nextWords.length - n + k]) ===
+              normalizeArabicToken(words[i + k])
+            ) {
+              matchCount += 1;
+            }
+          }
+          if (matchCount >= n - 1) {
+            for (let k = 0; k < n; k++) {
+              nextWords[nextWords.length - n + k] = words[i + k];
+            }
+            i += n;
+            continue;
+          }
         }
       }
       nextWords.push(words[i]);
@@ -68,9 +150,8 @@ export function deduplicateSpeechText(rawText: string): string {
 }
 
 /**
- * Merges two speech transcript segments without duplicating overlapping prefixes or suffixes.
- * Handles Android Chrome's cumulative `event.results` bug where `nextSegment` contains the
- * entire `accumulated` string plus the newly spoken words.
+ * Merges two speech transcript segments without duplicating overlapping prefixes, suffixes,
+ * or cumulative speech revisions.
  */
 export function mergeTranscriptSegments(accumulated: string, nextSegment: string): string {
   const acc = accumulated.replace(/\s+/g, ' ').trim();
@@ -90,7 +171,7 @@ export function mergeTranscriptSegments(accumulated: string, nextSegment: string
     return acc;
   }
 
-  // 2. Android Chrome cumulative behavior: `seg` starts with `acc` -> `seg` is a superset replacement
+  // 2. Cumulative behavior: `seg` starts with `acc` -> `seg` is a superset replacement
   if (normSeg.startsWith(normAcc + ' ') || normSeg.startsWith(normAcc)) {
     return seg;
   }
@@ -100,11 +181,27 @@ export function mergeTranscriptSegments(accumulated: string, nextSegment: string
     return acc;
   }
 
-  // 4. Suffix-prefix word overlap check (up to 10 words)
   const accWords = acc.split(' ');
   const segWords = seg.split(' ');
-  const maxOverlap = Math.min(accWords.length, segWords.length, 10);
 
+  // 4. Fuzzy cumulative revision of entire `acc` (when recognizer corrected 1 word inside `acc`)
+  if (isCumulativeRevision(accWords, segWords)) {
+    return seg;
+  }
+
+  // 5. Fuzzy cumulative revision of a suffix clause of `acc`
+  const maxTailLen = Math.min(accWords.length, segWords.length);
+  for (let tailLen = maxTailLen; tailLen >= 2; tailLen--) {
+    const startIdx = accWords.length - tailLen;
+    const accTail = accWords.slice(startIdx);
+    if (isCumulativeRevision(accTail, segWords)) {
+      const prefix = accWords.slice(0, startIdx);
+      return [...prefix, ...segWords].join(' ');
+    }
+  }
+
+  // 6. Suffix-prefix exact word overlap check (up to 16 words)
+  const maxOverlap = Math.min(accWords.length, segWords.length, 16);
   for (let overlapLen = maxOverlap; overlapLen >= 1; overlapLen--) {
     let matches = true;
     for (let j = 0; j < overlapLen; j++) {
@@ -126,11 +223,9 @@ export function mergeTranscriptSegments(accumulated: string, nextSegment: string
 }
 
 /**
- * Extracts a clean, non-duplicated transcript from a SpeechRecognitionEvent `results` list
- * and combines it safely with any text that was already in the input box before dictation started.
+ * Extracts a clean, non-duplicated transcript from the current SpeechRecognition session's `results`.
  */
-export function buildCleanSpeechTranscript(
-  initialBaseText: string,
+export function extractSessionSpeechTranscript(
   results: ArrayLike<{
     isFinal?: boolean;
     0: { transcript: string };
@@ -145,6 +240,21 @@ export function buildCleanSpeechTranscript(
     sessionTranscript = mergeTranscriptSegments(sessionTranscript, piece);
   }
 
-  const combined = mergeTranscriptSegments(initialBaseText, sessionTranscript);
+  return deduplicateSpeechText(sessionTranscript);
+}
+
+/**
+ * Extracts a clean, non-duplicated transcript from a SpeechRecognitionEvent `results` list
+ * and combines it safely with any text that was already committed before the current recognition session started.
+ */
+export function buildCleanSpeechTranscript(
+  committedBaseText: string,
+  results: ArrayLike<{
+    isFinal?: boolean;
+    0: { transcript: string };
+  }>
+): string {
+  const sessionTranscript = extractSessionSpeechTranscript(results);
+  const combined = mergeTranscriptSegments(committedBaseText, sessionTranscript);
   return deduplicateSpeechText(combined);
 }

@@ -6,14 +6,10 @@ import {
   ChevronDown,
   Eye,
   FileText,
-  Loader2,
-  Mic,
-  MicOff,
   PenTool,
   Plus,
   RotateCcw,
   Save,
-  Sparkles,
   Stethoscope,
   X,
 } from 'lucide-react';
@@ -29,12 +25,7 @@ import {
   RETURN_VISIT_MARKER,
   buildPatientAccountsFromReceipts,
   findMatchingPatientAccount,
-  parseSmartReceiptWithFallback,
 } from '../utils/aiClient';
-import {
-  buildCleanSpeechTranscript,
-  deduplicateSpeechText,
-} from '../utils/speechTranscript';
 import { SignatureModal } from './SignatureModal';
 import { FdiToothModal } from './FdiToothModal';
 import { OfficialReceiptCard, ReceiptDisplayData } from './OfficialReceiptCard';
@@ -94,30 +85,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   );
   const [receiverSig, setReceiverSig] = useState<string>('');
 
-  // Smart AI input & Voice dictation
-  const [smartInput, setSmartInput] = useState<string>('');
-  const [isParsingAI, setIsParsingAI] = useState<boolean>(false);
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const recognitionRef = useRef<{ start: () => void; stop: () => void } | null>(null);
-  const shouldKeepListeningRef = useRef<boolean>(false);
-  const accumulatedTranscriptRef = useRef<string>('');
-  const currentSessionFinalRef = useRef<string>('');
-  const latestSmartInputRef = useRef<string>('');
 
-  useEffect(() => {
-    latestSmartInputRef.current = smartInput;
-  }, [smartInput]);
-
-  useEffect(() => {
-    return () => {
-      shouldKeepListeningRef.current = false;
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        // Ignore
-      }
-    };
-  }, []);
 
   // Pop-up Modals
   const [isServicesModalOpen, setIsServicesModalOpen] = useState<boolean>(false);
@@ -258,255 +226,8 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     setPaymentMethod('نقداً (Cash)');
     setNotes('');
     setIsReturnVisit(false);
-    setSmartInput('');
     setReceiverSig('');
     setAccountantSig(settings.appearance.permanentAccountantSig || '');
-  };
-
-  const applyLocalHeuristic = (raw: string) => {
-    let extractedName = '';
-    const nameMatch = raw.match(
-      /(?:للمريض|مريض|باسم|الأخ|الاخ|المريضة)\s+([^\d،,]+?)(?=\s+(?:خدمة|علاج|حشو|خلع|عصب|تنظيف|تقليح|تركيب|تقويم|كشف|أشعة|اشعة|بمبلغ|مبلغ|إجمالي|اجمالي|دفع|سدد|رقم|هاتف|جوال|$))/i
-    );
-    if (nameMatch?.[1]) {
-      extractedName = nameMatch[1].trim();
-    } else {
-      const words = raw
-        .replace(/سند|قبض|جديد|للمريض|مريض/g, '')
-        .trim()
-        .split(/\s+/)
-        .slice(0, 3)
-        .join(' ');
-      if (words && !/\d/.test(words)) extractedName = words;
-    }
-
-    const phoneMatch = raw.match(/(?:\+?967|0)?(7\d{8})/);
-    const extractedPhone = phoneMatch ? phoneMatch[0] : '';
-
-    const matchedServices: string[] = [];
-    let calculatedPrice = 0;
-    settings.services.forEach((srv) => {
-      const allTerms = [srv.name, ...(srv.keywords || [])];
-      if (allTerms.some((term) => term && raw.includes(term))) {
-        matchedServices.push(srv.name);
-        calculatedPrice += Number(srv.price) || 0;
-      }
-    });
-
-    const totalMatch = raw.match(/(?:بمبلغ|مبلغ|إجمالي|اجمالي)\s*(\d+)/);
-    const paidMatch = raw.match(/(?:دفع|سدد|المدفوع|استلمنا)\s*(\d+)/);
-
-    const finalTotal = totalMatch ? Number(totalMatch[1]) : calculatedPrice;
-    const finalPaid = paidMatch ? Number(paidMatch[1]) : finalTotal;
-
-    if (extractedName) {
-      const matchedAcc = findMatchingPatientAccount(
-        extractedName,
-        receipts,
-        settings.identity.defaultCurrency
-      );
-      if (matchedAcc) {
-        setPatientName(matchedAcc.patientName);
-        if (!extractedPhone && matchedAcc.patientPhone) {
-          setPatientPhone(matchedAcc.patientPhone);
-        }
-      } else {
-        setPatientName(extractedName);
-      }
-    }
-    if (extractedPhone) setPatientPhone(extractedPhone);
-    if (matchedServices.length > 0) setSelectedServices(matchedServices);
-    if (finalTotal > 0) setTotalAmount(finalTotal);
-    if (finalPaid >= 0 && (paidMatch || finalTotal > 0)) setPaidAmount(finalPaid);
-  };
-
-  const handleSmartParse = async (textOverride?: string) => {
-    const textToAnalyze = (textOverride ?? smartInput).trim();
-    if (!textToAnalyze) {
-      notify('اكتب أو تحدث بتفاصيل السند أولاً', 'warning');
-      return;
-    }
-
-    setIsParsingAI(true);
-    try {
-      const r = await parseSmartReceiptWithFallback(
-        textToAnalyze,
-        settings.services,
-        settings.identity.defaultCurrency,
-        receipts
-      );
-      if (!r) {
-        throw new Error('تعذر التحليل');
-      }
-
-      if (r.patientName) {
-        const matchedAcc = findMatchingPatientAccount(
-          String(r.patientName),
-          receipts,
-          settings.identity.defaultCurrency
-        );
-        if (matchedAcc) {
-          setPatientName(matchedAcc.patientName);
-          if (!r.patientPhone && matchedAcc.patientPhone) {
-            setPatientPhone(matchedAcc.patientPhone);
-          }
-        } else {
-          setPatientName(String(r.patientName));
-        }
-      }
-      if (r.patientPhone) setPatientPhone(String(r.patientPhone));
-
-      let computedServicesTotal = 0;
-      if (Array.isArray(r.services) && r.services.length > 0) {
-        setSelectedServices(r.services);
-        computedServicesTotal = r.services.reduce((sum: number, name: string) => {
-          const found = settings.services.find((s) => s.name === name);
-          return sum + (found ? Number(found.price) || 0 : 0);
-        }, 0);
-      }
-
-      if (r.toothFDI) setToothFDI(String(r.toothFDI));
-
-      const resolvedTotal =
-        Number(r.totalAmount) > 0 ? Number(r.totalAmount) : computedServicesTotal;
-      const resolvedPaid =
-        r.paidAmount !== undefined && Number(r.paidAmount) > 0
-          ? Math.min(resolvedTotal || Number(r.paidAmount), Number(r.paidAmount))
-          : resolvedTotal;
-
-      if (resolvedTotal > 0) setTotalAmount(resolvedTotal);
-      if (resolvedPaid >= 0) setPaidAmount(resolvedPaid);
-      if (r.currency && CURRENCIES.includes(r.currency as CurrencyCode)) {
-        setCurrency(r.currency as CurrencyCode);
-      }
-      if (r.paymentMethod) setPaymentMethod(String(r.paymentMethod));
-      if (r.notes) setNotes(String(r.notes));
-
-      notify('تم استخراج بيانات السند', 'success');
-    } catch {
-      applyLocalHeuristic(textToAnalyze);
-      notify('تم استخراج بيانات السند تلقائياً', 'info');
-    } finally {
-      setIsParsingAI(false);
-    }
-  };
-
-  const stopVoiceDictation = (triggerParse = false) => {
-    shouldKeepListeningRef.current = false;
-    setIsListening(false);
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      // Ignore
-    }
-    const finalText = latestSmartInputRef.current.trim();
-    if (triggerParse && finalText) {
-      handleSmartParse(finalText);
-    }
-  };
-
-  const toggleVoiceDictation = () => {
-    if (isListening || shouldKeepListeningRef.current) {
-      stopVoiceDictation(true);
-      return;
-    }
-
-    const SpeechRec =
-      (
-        window as unknown as {
-          SpeechRecognition?: new () => unknown;
-          webkitSpeechRecognition?: new () => unknown;
-        }
-      ).SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: new () => unknown })
-        .webkitSpeechRecognition;
-
-    if (!SpeechRec) {
-      notify('المتصفح لا يدعم الإملاء الصوتي المباشر', 'warning');
-      return;
-    }
-
-    try {
-      // Stop any previous active recognition instance before starting a new one
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        // Ignore
-      }
-
-      const rec = new SpeechRec() as {
-        lang: string;
-        continuous: boolean;
-        interimResults: boolean;
-        maxAlternatives?: number;
-        onresult:
-          | ((e: {
-              resultIndex?: number;
-              results: ArrayLike<{
-                isFinal?: boolean;
-                0: { transcript: string };
-              }>;
-            }) => void)
-          | null;
-        onerror: ((e: { error?: string }) => void) | null;
-        onend: (() => void) | null;
-        start: () => void;
-        stop: () => void;
-      };
-
-      const isMobileBrowser =
-        typeof navigator !== 'undefined' &&
-        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-      rec.lang = 'ar-SA';
-      // Disable continuous mode on mobile browsers to prevent Android Chrome's cumulative buffer duplication bug
-      rec.continuous = !isMobileBrowser;
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-
-      const initialBase = deduplicateSpeechText(smartInput.trim());
-      accumulatedTranscriptRef.current = initialBase;
-      currentSessionFinalRef.current = '';
-      shouldKeepListeningRef.current = true;
-
-      rec.onresult = (event) => {
-        const cleanTranscript = buildCleanSpeechTranscript(initialBase, event.results);
-        if (cleanTranscript) {
-          currentSessionFinalRef.current = cleanTranscript;
-          latestSmartInputRef.current = cleanTranscript;
-          setSmartInput(cleanTranscript);
-          applyLocalHeuristic(cleanTranscript);
-        }
-      };
-
-      rec.onerror = (event) => {
-        const errCode = String(event?.error || '');
-        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
-          shouldKeepListeningRef.current = false;
-          setIsListening(false);
-          notify('يرجى السماح بصلاحية المايكروفون في المتصفح', 'warning');
-        }
-      };
-
-      rec.onend = () => {
-        shouldKeepListeningRef.current = false;
-        setIsListening(false);
-        const finalText = deduplicateSpeechText(latestSmartInputRef.current.trim());
-        if (finalText) {
-          latestSmartInputRef.current = finalText;
-          setSmartInput(finalText);
-          applyLocalHeuristic(finalText);
-        }
-      };
-
-      recognitionRef.current = rec;
-      setIsListening(true);
-      rec.start();
-    } catch {
-      shouldKeepListeningRef.current = false;
-      setIsListening(false);
-      notify('تعذر تشغيل المايكروفون', 'error');
-    }
   };
 
   const handleSave = () => {
@@ -659,69 +380,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         </div>
       ) : (
         <>
-          {/* 1. المحلل الذكي (Smart Gemini AI Bar) */}
-          <section className="rounded-xl border border-sky-500/30 bg-white dark:bg-slate-900 p-4 shadow-xs">
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-sky-500 shrink-0" />
-                <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  الإدخال السريع
-                </h2>
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              <input
-                type="text"
-                value={smartInput}
-                onChange={(e) => setSmartInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleSmartParse();
-                  }
-                }}
-                placeholder="اكتب تفاصيل السند أو تحدث..."
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
-              />
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={toggleVoiceDictation}
-                  className={`inline-flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold rounded-lg border transition-colors ${
-                    isListening
-                      ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
-                      : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                  }`}
-                >
-                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isListening ? 'إيقاف الإملاء' : 'إملاء صوتي'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isParsingAI}
-                  onClick={() => {
-                    if (isListening || shouldKeepListeningRef.current) {
-                      stopVoiceDictation(false);
-                    }
-                    handleSmartParse();
-                  }}
-                  className="inline-flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-lg transition-colors"
-                >
-                  {isParsingAI ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                  <span>استخراج البيانات</span>
-                </button>
-              </div>
-            </div>
-          </section>
-
-          {/* 2. نموذج بيانات السند */}
+          {/* نموذج بيانات السند */}
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
