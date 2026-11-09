@@ -4,12 +4,34 @@ export type CurrencyCode = 'ريال يمني' | 'ريال سعودي' | 'دول
 
 export type PaperFormat = 'a5' | 'thermal80';
 
+export type MaterialConsumptionType =
+  | 'per_session'
+  | 'by_tooth_type'
+  | 'per_tooth_unit'
+  | 'per_arch';
+
+export interface ServiceMaterialRule {
+  materialId: string;
+  consumptionType: MaterialConsumptionType;
+  qtyFixed?: number;
+  qtyAnterior?: number;
+  qtyMolar?: number;
+}
+
 export interface DentalServiceItem {
   id: string;
   name: string;
   price: number;
   category: string;
   keywords: string[];
+  materialsRecipe?: ServiceMaterialRule[];
+}
+
+export type ServiceConfig = DentalServiceItem;
+
+export interface ConsumedMaterialEntry {
+  materialId: string;
+  amountDeducted: number;
 }
 
 export interface ReceiptRecord {
@@ -31,6 +53,7 @@ export interface ReceiptRecord {
   receiverSig: string;
   paperFormat: PaperFormat;
   createdAt?: string;
+  consumedMaterials?: ConsumedMaterialEntry[];
 }
 
 export interface InventoryItem {
@@ -44,6 +67,10 @@ export interface InventoryItem {
   linkedService: string;
   notes: string;
   updatedAt: string;
+  location?: 'clinic' | 'lab';
+  packageSize?: number;
+  usageUnit?: string;
+  remainingSubUnits?: number;
 }
 
 export interface ExpenseRecord {

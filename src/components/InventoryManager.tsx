@@ -42,18 +42,35 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   const [isFormModalOpen, setIsFormModalOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [location, setLocation] = useState<'clinic' | 'lab'>('clinic');
   const [qty, setQty] = useState<number>(10);
-  const [unit, setUnit] = useState<string>('عدد');
+  const [unit, setUnit] = useState<string>('علبة');
+  const [packageSize, setPackageSize] = useState<number>(1);
+  const [usageUnit, setUsageUnit] = useState<string>('قطعة');
+  const [remainingSubUnits, setRemainingSubUnits] = useState<number>(10);
   const [minQty, setMinQty] = useState<number>(5);
   const [unitPrice, setUnitPrice] = useState<number>(0);
   const [linkedService, setLinkedService] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [recordAsExpense, setRecordAsExpense] = useState<boolean>(false);
 
-  const [filterMode, setFilterMode] = useState<'all' | 'low'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'clinic' | 'lab' | 'low'>('all');
   const [auditReport, setAuditReport] = useState<string>('');
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const USAGE_UNIT_SUGGESTIONS = [
+    'حبة',
+    'أمبول',
+    'جرام',
+    'مل',
+    'نقطة',
+    'وحدة معمل',
+    'قطعة',
+    'شريحة',
+    'قمع',
+    'إبرة',
+  ];
 
   const totalCost = useMemo(
     () => +(Number(qty || 0) * Number(unitPrice || 0)).toFixed(2),
@@ -65,22 +82,62 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     [inventory]
   );
 
+  const clinicItemsCount = useMemo(
+    () => inventory.filter((item) => (item.location || 'clinic') === 'clinic').length,
+    [inventory]
+  );
+
+  const labItemsCount = useMemo(
+    () => inventory.filter((item) => item.location === 'lab').length,
+    [inventory]
+  );
+
   const totalInventoryValue = useMemo(
     () => inventory.reduce((sum, i) => sum + (Number(i.qty) || 0) * (Number(i.unitPrice) || 0), 0),
     [inventory]
   );
 
-  const displayedInventory = useMemo(
-    () => (filterMode === 'low' ? lowStockItems : inventory),
-    [inventory, lowStockItems, filterMode]
-  );
+  const displayedInventory = useMemo(() => {
+    if (filterMode === 'low') return lowStockItems;
+    if (filterMode === 'clinic') {
+      return inventory.filter((item) => (item.location || 'clinic') === 'clinic');
+    }
+    if (filterMode === 'lab') {
+      return inventory.filter((item) => item.location === 'lab');
+    }
+    return inventory;
+  }, [inventory, lowStockItems, filterMode]);
+
+  const handleQtyChange = (nextQty: number) => {
+    const safeQty = Math.max(0, Number(nextQty) || 0);
+    const safePkg = Math.max(0.001, Number(packageSize) || 1);
+    setQty(safeQty);
+    setRemainingSubUnits(+(safeQty * safePkg).toFixed(2));
+  };
+
+  const handlePackageSizeChange = (nextPkg: number) => {
+    const safePkg = Math.max(0.001, Number(nextPkg) || 1);
+    setPackageSize(safePkg);
+    setRemainingSubUnits(+(Math.max(0, Number(qty) || 0) * safePkg).toFixed(2));
+  };
+
+  const handleRemainingSubUnitsChange = (nextSub: number) => {
+    const safeSub = Math.max(0, Number(nextSub) || 0);
+    const safePkg = Math.max(0.001, Number(packageSize) || 1);
+    setRemainingSubUnits(safeSub);
+    setQty(+(safeSub / safePkg).toFixed(2));
+  };
 
   const openAddModal = () => {
     setEditingId(null);
     setName('');
+    setLocation(filterMode === 'lab' ? 'lab' : 'clinic');
     setQty(10);
-    setUnit('عدد');
-    setMinQty(5);
+    setUnit('علبة');
+    setPackageSize(1);
+    setUsageUnit(filterMode === 'lab' ? 'وحدة معمل' : 'قطعة');
+    setRemainingSubUnits(10);
+    setMinQty(2);
     setUnitPrice(0);
     setLinkedService('');
     setNotes('');
@@ -89,10 +146,19 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   };
 
   const openEditModal = (item: InventoryItem) => {
+    const pkg = Number(item.packageSize) > 0 ? Number(item.packageSize) : 1;
+    const sub =
+      Number.isFinite(Number(item.remainingSubUnits)) && Number(item.remainingSubUnits) >= 0
+        ? Number(item.remainingSubUnits)
+        : +(Number(item.qty || 0) * pkg).toFixed(2);
     setEditingId(item.id);
     setName(item.name);
+    setLocation(item.location === 'lab' ? 'lab' : 'clinic');
     setQty(item.qty);
-    setUnit(item.unit);
+    setUnit(item.unit || 'علبة');
+    setPackageSize(pkg);
+    setUsageUnit(item.usageUnit || item.unit || 'قطعة');
+    setRemainingSubUnits(sub);
     setMinQty(item.minQty);
     setUnitPrice(item.unitPrice);
     setLinkedService(item.linkedService || '');
@@ -108,15 +174,26 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       return;
     }
 
+    const safePkg = Math.max(0.001, Number(packageSize) || 1);
+    const safeSub =
+      Number.isFinite(Number(remainingSubUnits)) && Number(remainingSubUnits) >= 0
+        ? +Number(remainingSubUnits).toFixed(3)
+        : +(Math.max(0, Number(qty) || 0) * safePkg).toFixed(3);
+    const computedQty = +(safeSub / safePkg).toFixed(2);
+
     onSaveItem(
       {
         id: editingId || undefined,
         name: name.trim(),
-        qty: Number(qty) || 0,
-        unit,
+        location,
+        qty: computedQty,
+        unit: unit.trim() || 'علبة',
+        packageSize: safePkg,
+        usageUnit: usageUnit.trim() || unit.trim() || 'قطعة',
+        remainingSubUnits: safeSub,
         minQty: Number(minQty) || 1,
         unitPrice: Number(unitPrice) || 0,
-        totalCost,
+        totalCost: +(computedQty * (Number(unitPrice) || 0)).toFixed(2),
         linkedService,
         notes: notes.trim(),
       },
@@ -131,7 +208,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       const reply = await queryClinicAssistant({
         taskType: 'report',
         prompt:
-          'قم بإجراء جرد تحليلي للمخزون الطبي في العيادة: حدد النواقص وتكلفة إعادة التزويد وقدم توصيات عملية مختصرة.',
+          'قم بإجراء جرد تحليلي للمخزون الطبي (مواد العيادة ومواد المعمل): حدد النواقص وتكلفة إعادة التزويد وقدم توصيات عملية مختصرة.',
         clinicContext: {
           defaultCurrency,
           inventory,
@@ -150,11 +227,18 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   return (
     <div className="space-y-4">
       {/* KPI Cards */}
-      <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
         <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 text-center sm:text-right">
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">الأصناف</div>
+          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">مخزن العيادة</div>
           <div className="mt-1 text-base sm:text-xl font-black font-mono tabular-nums text-slate-900 dark:text-slate-100">
-            {inventory.length}
+            {clinicItemsCount}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 text-center sm:text-right">
+          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">مخزن المعمل</div>
+          <div className="mt-1 text-base sm:text-xl font-black font-mono tabular-nums text-indigo-600 dark:text-indigo-400">
+            {labItemsCount}
           </div>
         </div>
 
@@ -196,6 +280,28 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setFilterMode('clinic')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
+                filterMode === 'clinic'
+                  ? 'bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              مخزن العيادة ({clinicItemsCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('lab')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
+                filterMode === 'lab'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              مخزن المعمل ({labItemsCount})
+            </button>
+            <button
+              type="button"
               onClick={() => setFilterMode('low')}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
                 filterMode === 'low'
@@ -228,7 +334,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-xl"
             >
               <PackagePlus className="w-4 h-4" />
-              <span>إضافة صنف</span>
+              <span>إضافة مادة / صنف</span>
             </button>
           </div>
         </div>
@@ -237,6 +343,14 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         <div className="grid grid-cols-1 gap-3 md:hidden">
           {displayedInventory.map((item) => {
             const isLow = Number(item.qty) <= Number(item.minQty);
+            const isLab = item.location === 'lab';
+            const pkgSize = Number(item.packageSize) > 0 ? Number(item.packageSize) : 1;
+            const uUnit = item.usageUnit || item.unit || 'قطعة';
+            const subUnits =
+              Number.isFinite(Number(item.remainingSubUnits)) && Number(item.remainingSubUnits) >= 0
+                ? Number(item.remainingSubUnits)
+                : +(Number(item.qty || 0) * pkgSize).toFixed(2);
+
             return (
               <div
                 key={item.id}
@@ -244,8 +358,19 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="font-bold text-sm text-slate-900 dark:text-slate-100 break-words">
-                      {item.name}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-sm text-slate-900 dark:text-slate-100 break-words">
+                        {item.name}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded-md border ${
+                          isLab
+                            ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                            : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800'
+                        }`}
+                      >
+                        {isLab ? 'مخزن المعمل' : 'مخزن العيادة'}
+                      </span>
                     </div>
                     {item.notes && (
                       <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-words">
@@ -268,22 +393,24 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
                 <div className="grid grid-cols-2 gap-2 text-center bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
                   <div>
-                    <div className="text-[10px] text-slate-400">الكمية المتوفرة</div>
-                    <div className="font-mono tabular-nums font-bold">
+                    <div className="text-[10px] text-slate-400">العبوات المتوفرة</div>
+                    <div className="font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100">
                       {item.qty} {item.unit}
                     </div>
+                    {pkgSize > 1 && (
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        (العبوة = {pkgSize} {uUnit})
+                      </div>
+                    )}
                   </div>
                   <div>
-                    <div className="text-[10px] text-slate-400">الحد الأدنى</div>
-                    <div className="font-mono tabular-nums">
-                      {item.minQty} {item.unit}
+                    <div className="text-[10px] text-slate-400">الرصيد الجزئي الدقيق</div>
+                    <div className="font-mono tabular-nums font-bold text-sky-600 dark:text-sky-400">
+                      {subUnits} {uUnit}
                     </div>
-                  </div>
-                  <div className="col-span-2 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-right">
-                    <span className="text-[10px] text-slate-400 shrink-0">الخدمة المرتبطة:</span>
-                    <span className="font-bold text-sky-700 dark:text-sky-300 break-words">
-                      {item.linkedService || 'بدون ربط تلقائي'}
-                    </span>
+                    <div className="text-[10px] text-slate-400 mt-0.5">
+                      الحد الأدنى: {item.minQty} {item.unit}
+                    </div>
                   </div>
                 </div>
 
@@ -296,6 +423,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <button
                       type="button"
                       dir="ltr"
+                      title={`خصم 1 ${uUnit}`}
                       onClick={() => onQuickConsume(item.id, 1)}
                       className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg"
                     >
@@ -305,11 +433,12 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <button
                       type="button"
                       dir="ltr"
-                      onClick={() => onQuickRestock(item.id, 5, false)}
+                      title={`إضافة 1 ${item.unit}`}
+                      onClick={() => onQuickRestock(item.id, 1, false)}
                       className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg"
                     >
                       <Plus className="w-3 h-3" />
-                      <span>5</span>
+                      <span>1</span>
                     </button>
                     <button
                       type="button"
@@ -351,9 +480,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 dark:text-slate-400">
                 <th className="py-3 px-3">الصنف</th>
-                <th className="py-3 px-3">الكمية</th>
+                <th className="py-3 px-3">القسم</th>
+                <th className="py-3 px-3">العبوات المتوفرة</th>
+                <th className="py-3 px-3">الرصيد بالوحدة الصغرى</th>
                 <th className="py-3 px-3">الحد الأدنى</th>
-                <th className="py-3 px-3">الخدمة المرتبطة</th>
                 <th className="py-3 px-3 text-left">إجمالي القيمة</th>
                 <th className="py-3 px-3 text-left">الحالة</th>
                 <th className="py-3 px-3 text-left">الإجراءات</th>
@@ -362,19 +492,48 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs sm:text-sm">
               {displayedInventory.map((item) => {
                 const isLow = Number(item.qty) <= Number(item.minQty);
+                const isLab = item.location === 'lab';
+                const pkgSize = Number(item.packageSize) > 0 ? Number(item.packageSize) : 1;
+                const uUnit = item.usageUnit || item.unit || 'قطعة';
+                const subUnits =
+                  Number.isFinite(Number(item.remainingSubUnits)) &&
+                  Number(item.remainingSubUnits) >= 0
+                    ? Number(item.remainingSubUnits)
+                    : +(Number(item.qty || 0) * pkgSize).toFixed(2);
+
                 return (
                   <tr key={item.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
                     <td className="py-3 px-3">
                       <div className="font-bold text-slate-900 dark:text-slate-100">{item.name}</div>
                       {item.notes && <div className="text-xs text-slate-500">{item.notes}</div>}
                     </td>
+                    <td className="py-3 px-3">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 text-[11px] font-bold rounded-md border ${
+                          isLab
+                            ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                            : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800'
+                        }`}
+                      >
+                        {isLab ? 'مخزن المعمل' : 'مخزن العيادة'}
+                      </span>
+                    </td>
                     <td className="py-3 px-3 font-mono tabular-nums font-bold">
-                      {item.qty} {item.unit}
+                      <div>
+                        {item.qty} {item.unit}
+                      </div>
+                      {pkgSize > 1 && (
+                        <div className="text-[11px] font-normal text-slate-400">
+                          العبوة = {pkgSize} {uUnit}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 font-mono tabular-nums font-bold text-sky-600 dark:text-sky-400">
+                      {subUnits} {uUnit}
                     </td>
                     <td className="py-3 px-3 font-mono tabular-nums text-slate-500">
                       {item.minQty} {item.unit}
                     </td>
-                    <td className="py-3 px-3 text-xs">{item.linkedService || '—'}</td>
                     <td className="py-3 px-3 text-left font-mono tabular-nums font-bold">
                       {(Number(item.qty) * Number(item.unitPrice)).toLocaleString()}
                     </td>
@@ -396,6 +555,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         <button
                           type="button"
                           dir="ltr"
+                          title={`خصم 1 ${uUnit}`}
                           onClick={() => onQuickConsume(item.id, 1)}
                           className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg"
                         >
@@ -405,11 +565,12 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         <button
                           type="button"
                           dir="ltr"
-                          onClick={() => onQuickRestock(item.id, 5, false)}
+                          title={`تزويد 1 ${item.unit}`}
+                          onClick={() => onQuickRestock(item.id, 1, false)}
                           className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg"
                         >
                           <Plus className="w-3 h-3" />
-                          <span>5</span>
+                          <span>1</span>
                         </button>
                         <button
                           type="button"
@@ -448,7 +609,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         </div>
       </section>
 
-      {/* Pop-up Modal: Add / Edit Inventory Item with Sticky Back Header */}
+      {/* Pop-up Modal: Add / Edit Inventory Item with Sub-Units & Location */}
       {isFormModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4"
@@ -457,11 +618,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           <form
             onSubmit={handleSubmit}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[88vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+            className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                {editingId ? 'تعديل صنف' : 'إضافة صنف'}
+                {editingId ? 'تعديل مادة / صنف مخزون' : 'إضافة مادة للمخزون (العيادة أو المعمل)'}
               </h3>
               <button
                 type="button"
@@ -474,37 +635,73 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              {/* Location Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+                  القسم (مكان المادة)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLocation('clinic')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                      location === 'clinic'
+                        ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    مخزن العيادة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocation('lab')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                      location === 'lab'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    مخزن المعمل
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  اسم الصنف
+                  اسم المادة / الصنف
                 </label>
                 <input
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="مثال: أمبولات بنج Lidocaine"
+                  placeholder={
+                    location === 'lab'
+                      ? 'مثال: بلوك زيركون متعدد الطبقات / معدن / طبعة سيليكون'
+                      : 'مثال: كومبوزيت ضوئي 4 جرام / علبة بنج Lidocaine'
+                  }
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm"
                 />
               </div>
 
+              {/* Purchase Unit & Qty */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    الكمية
+                    عدد العبوات الكبرى المتوفرة
                   </label>
                   <input
                     type="number"
                     min="0"
-                    step="0.5"
+                    step="0.01"
                     value={qty}
-                    onChange={(e) => setQty(Number(e.target.value) || 0)}
+                    onChange={(e) => handleQtyChange(Number(e.target.value))}
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    الوحدة
+                    وحدة الشراء الكبرى (العبوة)
                   </label>
                   <select
                     value={unit}
@@ -516,18 +713,83 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         {u.label}
                       </option>
                     ))}
+                    <option value="قرص">قرص (Disk)</option>
+                    <option value="عبوة">عبوة (Syringe/Bottle)</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Sub-unit & Package Size Config */}
+              <div className="rounded-xl border border-sky-200/80 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/25 p-3 space-y-3">
+                <div className="text-xs font-bold text-sky-800 dark:text-sky-300">
+                  إعدادات تجزئة العبوة والاستهلاك الدقيق
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      سعة العبوة الواحدة (بالوحدة الصغرى)
+                    </label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.1"
+                      value={packageSize}
+                      onChange={(e) => handlePackageSizeChange(Number(e.target.value))}
+                      placeholder="مثال: 50 أمبول أو 4 جرام"
+                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-mono tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      وحدة الاستهلاك الجزئي (للربط بالخدمات)
+                    </label>
+                    <input
+                      type="text"
+                      list="usage-unit-options"
+                      value={usageUnit}
+                      onChange={(e) => setUsageUnit(e.target.value)}
+                      placeholder="جرام، أمبول، حبة، مل، وحدة معمل"
+                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold"
+                    />
+                    <datalist id="usage-unit-options">
+                      {USAGE_UNIT_SUGGESTIONS.map((u) => (
+                        <option key={u} value={u} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-sky-200/60 dark:border-sky-900/50">
+                  <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                    إجمالي الرصيد المتبقي بالوحدة الصغرى:
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={remainingSubUnits}
+                      onChange={(e) => handleRemainingSubUnitsChange(Number(e.target.value))}
+                      className="w-24 rounded-lg border border-sky-300 dark:border-sky-800 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-mono font-bold text-center text-sky-700 dark:text-sky-300"
+                    />
+                    <span className="text-xs font-bold text-sky-700 dark:text-sky-300">
+                      {usageUnit || unit}
+                    </span>
+                  </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    حد النواقص
+                    حد تنبيه النواقص (بالعبوة)
                   </label>
                   <input
                     type="number"
                     min="0"
+                    step="0.5"
                     value={minQty}
                     onChange={(e) => setMinQty(Number(e.target.value) || 0)}
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums"
@@ -536,7 +798,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    تكلفة الوحدة ({defaultCurrency})
+                    تكلفة العبوة الواحدة ({defaultCurrency})
                   </label>
                   <input
                     type="number"
@@ -550,30 +812,13 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  الخدمة المرتبطة (خصم تلقائي)
-                </label>
-                <select
-                  value={linkedService}
-                  onChange={(e) => setLinkedService(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold"
-                >
-                  <option value="">بدون ربط</option>
-                  {services.map((s) => (
-                    <option key={s.id} value={s.name}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  ملاحظات
+                  ملاحظات الصنف
                 </label>
                 <input
                   type="text"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
+                  placeholder="تفاصيل إضافية (اختياري)"
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
                 />
               </div>
@@ -591,12 +836,12 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               )}
             </div>
 
-            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
               <button
                 type="submit"
                 className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 transition-colors"
               >
-                حفظ
+                حفظ المادة في المخزون
               </button>
             </div>
           </form>

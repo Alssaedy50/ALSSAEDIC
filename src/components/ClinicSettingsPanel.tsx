@@ -33,7 +33,9 @@ import {
   DentalServiceItem,
   ExpenseRecord,
   InventoryItem,
+  MaterialConsumptionType,
   ReceiptRecord,
+  ServiceMaterialRule,
   TelegramBackupSettings,
   WorkspaceRole,
   DEFAULT_AI_CONFIG,
@@ -163,6 +165,10 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   const [newSrvName, setNewSrvName] = useState('');
   const [newSrvPrice, setNewSrvPrice] = useState<number>(5000);
   const [newSrvKeywords, setNewSrvKeywords] = useState('');
+
+  // Service Materials Recipe Configurator Modal State
+  const [recipeModalServiceId, setRecipeModalServiceId] = useState<string | null>(null);
+  const [editingRecipeRules, setEditingRecipeRules] = useState<ServiceMaterialRule[]>([]);
 
   // Telegram & Backup state
   const [showBotToken, setShowBotToken] = useState(false);
@@ -392,6 +398,64 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     onDeleteService?.(id);
     onSaveSettings(updated);
     setConfirmDeleteId(null);
+  };
+
+  const openServiceRecipeModal = (srv: DentalServiceItem) => {
+    setRecipeModalServiceId(srv.id);
+    setEditingRecipeRules(
+      Array.isArray(srv.materialsRecipe) ? srv.materialsRecipe.map((r) => ({ ...r })) : []
+    );
+  };
+
+  const handleAddMaterialRuleRow = () => {
+    if (inventory.length === 0) {
+      notify('يرجى إضافة مواد في قسم المخزون أولاً قبل ربطها بالخدمات', 'warning');
+      return;
+    }
+    const defaultMat = inventory[0];
+    setEditingRecipeRules((prev) => [
+      ...prev,
+      {
+        materialId: defaultMat.id,
+        consumptionType: 'per_session',
+        qtyFixed: 1,
+        qtyAnterior: 1,
+        qtyMolar: 1.5,
+      },
+    ]);
+  };
+
+  const handleUpdateMaterialRuleRow = (
+    index: number,
+    patch: Partial<ServiceMaterialRule>
+  ) => {
+    setEditingRecipeRules((prev) =>
+      prev.map((rule, i) => (i === index ? { ...rule, ...patch } : rule))
+    );
+  };
+
+  const handleRemoveMaterialRuleRow = (index: number) => {
+    setEditingRecipeRules((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveServiceRecipe = () => {
+    if (!recipeModalServiceId) return;
+    const cleanedRules = editingRecipeRules.filter((r) => Boolean(r && r.materialId));
+    const updated: ClinicSettings = {
+      ...formState,
+      services: formState.services.map((s) =>
+        s.id === recipeModalServiceId
+          ? {
+              ...s,
+              materialsRecipe: cleanedRules,
+            }
+          : s
+      ),
+    };
+    setFormState(updated);
+    onSaveSettings(updated);
+    setRecipeModalServiceId(null);
+    notify('تم حفظ وصفة المواد المستهلكة للخدمة بنجاح', 'success');
   };
 
   const recordBackupTimestamp = (isoStr: string) => {
@@ -1118,49 +1182,77 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {formState.services.map((srv) => (
-              <div
-                key={srv.id}
-                className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 flex flex-col justify-between gap-2.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
-                    {srv.name}
-                  </span>
-                  {confirmDeleteId === srv.id ? (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveService(srv.id)}
-                      className="px-2 py-0.5 text-xs font-bold text-white bg-rose-600 rounded-md"
-                    >
-                      تأكيد؟
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(srv.id)}
-                      className="p-1 text-slate-400 hover:text-rose-600"
-                      title="حذف"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
+            {formState.services.map((srv) => {
+              const recipeCount = Array.isArray(srv.materialsRecipe)
+                ? srv.materialsRecipe.length
+                : 0;
+              return (
+                <div
+                  key={srv.id}
+                  className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 flex flex-col justify-between gap-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                      {srv.name}
+                    </span>
+                    {confirmDeleteId === srv.id ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveService(srv.id)}
+                        className="px-2 py-0.5 text-xs font-bold text-white bg-rose-600 rounded-md"
+                      >
+                        تأكيد؟
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(srv.id)}
+                        className="p-1 text-slate-400 hover:text-rose-600"
+                        title="حذف"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
 
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="0"
-                    value={srv.price}
-                    onChange={(e) => handleServicePriceUpdate(srv.id, Number(e.target.value) || 0)}
-                    className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
-                  />
-                  <span className="text-xs text-slate-500 shrink-0">
-                    {formState.identity.defaultCurrency}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      value={srv.price}
+                      onChange={(e) => handleServicePriceUpdate(srv.id, Number(e.target.value) || 0)}
+                      className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
+                    />
+                    <span className="text-xs text-slate-500 shrink-0">
+                      {formState.identity.defaultCurrency}
+                    </span>
+                  </div>
+
+                  <div className="pt-1 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openServiceRecipeModal(srv)}
+                      className={`w-full py-1.5 px-2.5 rounded-lg text-xs font-bold border transition-colors flex items-center justify-between gap-2 ${
+                        recipeCount > 0
+                          ? 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800/80 hover:bg-sky-100/70'
+                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <span>إعداد المواد المستهلكة (العيادة والمعمل)</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold ${
+                          recipeCount > 0
+                            ? 'bg-sky-600 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                        }`}
+                      >
+                        {recipeCount > 0 ? `${recipeCount} مواد` : 'غير مربوط'}
+                      </span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
@@ -2075,6 +2167,255 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Modal: Dynamic Service Materials Recipe Configurator (Clinic & Lab) */}
+      {recipeModalServiceId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4"
+          onClick={() => setRecipeModalServiceId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 shrink-0">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  إعداد المواد المستهلكة (العيادة والمعمل)
+                </h3>
+                <p className="text-xs text-sky-600 dark:text-sky-400 font-bold mt-0.5">
+                  الخدمة:{' '}
+                  {formState.services.find((s) => s.id === recipeModalServiceId)?.name || ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecipeModalServiceId(null)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              <div className="rounded-xl border border-sky-200/70 dark:border-sky-900/50 bg-sky-50/50 dark:bg-sky-950/30 p-3 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                حدّد المواد التي تُستهلك تلقائياً عند إصدار سند يحتوي على هذه الخدمة. يقوم النظام
+                بتحليل أرقام الأسنان (أمامي / ضرس / عدد الأسنان / عدد الفكوك) وخصم الكميات الدقيقة
+                تلقائياً دون إظهار أي تفاصيل للمواد في سند المريض.
+              </div>
+
+              {editingRecipeRules.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center space-y-2">
+                  <div className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                    لا توجد مواد مربوطة بهذه الخدمة حالياً
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddMaterialRuleRow}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ ربط مادة من المخزون</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {editingRecipeRules.map((rule, idx) => {
+                    const selectedItem = inventory.find((i) => i.id === rule.materialId);
+                    const unitLabel =
+                      selectedItem?.usageUnit || selectedItem?.unit || 'وحدة';
+                    const isLab = selectedItem?.location === 'lab';
+
+                    return (
+                      <div
+                        key={`${rule.materialId}_${idx}`}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {/* Material Selector */}
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+                                المادة من المخزون (عيادة / معمل)
+                              </label>
+                              <select
+                                value={rule.materialId}
+                                onChange={(e) =>
+                                  handleUpdateMaterialRuleRow(idx, {
+                                    materialId: e.target.value,
+                                  })
+                                }
+                                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold"
+                              >
+                                {inventory.map((inv) => (
+                                  <option key={inv.id} value={inv.id}>
+                                    [{inv.location === 'lab' ? 'معمل' : 'عيادة'}] {inv.name} (
+                                    {inv.usageUnit || inv.unit})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Consumption Mode Selector */}
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+                                طريقة حساب الخصم التلقائي
+                              </label>
+                              <select
+                                value={rule.consumptionType}
+                                onChange={(e) =>
+                                  handleUpdateMaterialRuleRow(idx, {
+                                    consumptionType: e.target.value as MaterialConsumptionType,
+                                  })
+                                }
+                                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold"
+                              >
+                                <option value="per_session">
+                                  ثابت للجلسة (مرة واحدة)
+                                </option>
+                                <option value="by_tooth_type">
+                                  حسب نوع السن (أمامي / ضرس)
+                                </option>
+                                <option value="per_tooth_unit">
+                                  لكل سن / وحدة معملية
+                                </option>
+                                <option value="per_arch">
+                                  لكل فك (طبعة / موديل معمل)
+                                </option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMaterialRuleRow(idx)}
+                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg shrink-0 mt-5"
+                            title="حذف المادة من الوصفة"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Dynamic Quantity Fields based on consumptionType */}
+                        {rule.consumptionType === 'by_tooth_type' ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+                              <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                للسن الأمامي (1، 2، 3) — ({unitLabel})
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={rule.qtyAnterior ?? 1}
+                                  onChange={(e) =>
+                                    handleUpdateMaterialRuleRow(idx, {
+                                      qtyAnterior: Math.max(0, Number(e.target.value) || 0),
+                                    })
+                                  }
+                                  className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
+                                />
+                                <span className="text-xs font-bold text-sky-700 dark:text-sky-300 shrink-0">
+                                  {unitLabel}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+                              <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                للضرس الخلفي (4 إلى 8) — ({unitLabel})
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={rule.qtyMolar ?? 1.5}
+                                  onChange={(e) =>
+                                    handleUpdateMaterialRuleRow(idx, {
+                                      qtyMolar: Math.max(0, Number(e.target.value) || 0),
+                                    })
+                                  }
+                                  className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
+                                />
+                                <span className="text-xs font-bold text-sky-700 dark:text-sky-300 shrink-0">
+                                  {unitLabel}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+                            <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                              {rule.consumptionType === 'per_session'
+                                ? `الكمية الثابتة للجلسة الواحدة (${unitLabel})`
+                                : rule.consumptionType === 'per_tooth_unit'
+                                  ? `الكمية لكل سن / وحدة معملية (${unitLabel})`
+                                  : `الكمية لكل فك متأثر (${unitLabel})`}
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={rule.qtyFixed ?? 1}
+                                onChange={(e) =>
+                                  handleUpdateMaterialRuleRow(idx, {
+                                    qtyFixed: Math.max(0, Number(e.target.value) || 0),
+                                  })
+                                }
+                                className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
+                              />
+                              <span
+                                className={`px-2.5 py-1 rounded-md text-xs font-bold shrink-0 ${
+                                  isLab
+                                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
+                                    : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300'
+                                }`}
+                              >
+                                {unitLabel} ({isLab ? 'مخزن المعمل' : 'مخزن العيادة'})
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={handleAddMaterialRuleRow}
+                    className="w-full py-2 rounded-xl border border-dashed border-sky-400 dark:border-sky-700 text-xs font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-50/50 dark:hover:bg-sky-950/30 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ ربط مادة من المخزون</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleSaveServiceRecipe}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Save className="w-4 h-4" />
+                <span>حفظ وصفة المواد للخدمة</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecipeModalServiceId(null)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

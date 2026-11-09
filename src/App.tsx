@@ -38,7 +38,13 @@ import {
   SEED_DEMO_IDS,
   createInitialClinicSettingsForUser,
 } from './data/defaultData';
-import { numberToArabicWords } from './utils/arabicTafqeet';
+import {
+  applyMaterialDeductionsToInventory,
+  calculateReceiptMaterialsConsumption,
+  getEffectivePackageSize,
+  getEffectiveRemainingSubUnits,
+  numberToArabicWords,
+} from './utils/arabicTafqeet';
 import {
   ARCHIVE_NOTE_MARKER,
   LOCAL_API_SESSION_KEY,
@@ -1149,12 +1155,70 @@ export default function App() {
     const canonicalPatientPhone =
       (payload.patientPhone || '').trim() || matchedExistingAccount?.patientPhone || '';
 
+    const targetClinicUid = cloudTargetUid;
+    const today = new Date().toISOString().slice(0, 10);
+    const existingReceipt = isEdit ? receipts.find((r) => r.id === payload.id) : undefined;
+
+    let workingInventory = inventory;
+    const touchedInventoryMap = new Map<string, InventoryItem>();
+
+    // 1. If editing an existing receipt, first restore its previously deducted materials
+    if (isEdit && existingReceipt && settings.features.autoInventory) {
+      const previousDeductions =
+        Array.isArray(existingReceipt.consumedMaterials) &&
+        existingReceipt.consumedMaterials.length > 0
+          ? existingReceipt.consumedMaterials
+          : calculateReceiptMaterialsConsumption(
+              existingReceipt.services || [],
+              existingReceipt.toothFDI || '',
+              settings.services,
+              workingInventory
+            );
+
+      if (previousDeductions.length > 0) {
+        const restored = applyMaterialDeductionsToInventory(
+          workingInventory,
+          previousDeductions,
+          'restore',
+          today
+        );
+        workingInventory = restored.nextInventory;
+        for (const item of restored.touchedItems) {
+          touchedInventoryMap.set(item.id, validateAndNormalizeInventoryItem(item));
+        }
+      }
+    }
+
+    // 2. Calculate new material consumption for this receipt (Clinic & Lab materials)
+    const computedConsumedMaterials = settings.features.autoInventory
+      ? calculateReceiptMaterialsConsumption(
+          payload.services || [],
+          payload.toothFDI || '',
+          settings.services,
+          workingInventory
+        )
+      : [];
+
+    if (settings.features.autoInventory && computedConsumedMaterials.length > 0) {
+      const deducted = applyMaterialDeductionsToInventory(
+        workingInventory,
+        computedConsumedMaterials,
+        'deduct',
+        today
+      );
+      workingInventory = deducted.nextInventory;
+      for (const item of deducted.touchedItems) {
+        touchedInventoryMap.set(item.id, validateAndNormalizeInventoryItem(item));
+      }
+    }
+
     const record = validateAndNormalizeReceipt({
       ...payload,
       patientName: canonicalPatientName,
       patientPhone: canonicalPatientPhone,
       id: payload.id || 'rec_' + Date.now(),
-      createdAt: new Date().toISOString(),
+      createdAt: existingReceipt?.createdAt || new Date().toISOString(),
+      consumedMaterials: computedConsumedMaterials,
     });
 
     const nextReceiptsList = (() => {
@@ -1167,30 +1231,20 @@ export default function App() {
       return [record, ...receipts];
     })();
 
-    const targetClinicUid = cloudTargetUid;
     persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
     setReceipts(nextReceiptsList);
 
-    let nextInventoryList = inventory;
-    if (!isEdit && settings.features.autoInventory && record.services.length > 0) {
-      nextInventoryList = inventory.map((item) => {
-        if (item.linkedService && record.services.includes(item.linkedService) && item.qty > 0) {
-          const nextQty = Math.max(0, +(Number(item.qty) - 1).toFixed(2));
-          const updatedItem: InventoryItem = validateAndNormalizeInventoryItem({
-            ...item,
-            qty: nextQty,
-            totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
-            updatedAt: new Date().toISOString().slice(0, 10),
-          });
-          if (targetClinicUid) {
-            saveInventoryItemToCloud(targetClinicUid, updatedItem, settings).catch(() => {});
-          }
-          return updatedItem;
-        }
-        return item;
-      });
+    const nextInventoryList = workingInventory.map(
+      (item) => touchedInventoryMap.get(item.id) || item
+    );
+    if (touchedInventoryMap.size > 0) {
       persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
       setInventory(nextInventoryList);
+      if (targetClinicUid) {
+        for (const updatedItem of touchedInventoryMap.values()) {
+          saveInventoryItemToCloud(targetClinicUid, updatedItem, settings).catch(() => {});
+        }
+      }
     }
 
     setEditingReceipt(null);
@@ -1295,31 +1349,43 @@ export default function App() {
     setReceipts(nextReceiptsList);
 
     let nextInventoryList = inventory;
-    if (
-      deletedReceipt &&
-      settings.features.autoInventory &&
-      Array.isArray(deletedReceipt.services) &&
-      deletedReceipt.services.length > 0
-    ) {
+    if (deletedReceipt && settings.features.autoInventory) {
       const today = new Date().toISOString().slice(0, 10);
-      nextInventoryList = inventory.map((item) => {
-        if (item.linkedService && deletedReceipt.services.includes(item.linkedService)) {
-          const nextQty = +(Number(item.qty) + 1).toFixed(2);
-          const updatedItem = validateAndNormalizeInventoryItem({
-            ...item,
-            qty: nextQty,
-            totalCost: +(nextQty * (Number(item.unitPrice) || 0)).toFixed(2),
-            updatedAt: today,
-          });
-          if (targetClinicUid) {
-            saveInventoryItemToCloud(targetClinicUid, updatedItem, settings).catch(() => {});
+      const deductionsToRestore =
+        Array.isArray(deletedReceipt.consumedMaterials) &&
+        deletedReceipt.consumedMaterials.length > 0
+          ? deletedReceipt.consumedMaterials
+          : calculateReceiptMaterialsConsumption(
+              deletedReceipt.services || [],
+              deletedReceipt.toothFDI || '',
+              settings.services,
+              inventory
+            );
+
+      if (deductionsToRestore.length > 0) {
+        const restored = applyMaterialDeductionsToInventory(
+          inventory,
+          deductionsToRestore,
+          'restore',
+          today
+        );
+        nextInventoryList = restored.nextInventory.map((item) =>
+          restored.touchedItems.some((t) => t.id === item.id)
+            ? validateAndNormalizeInventoryItem(item)
+            : item
+        );
+        persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
+        setInventory(nextInventoryList);
+        if (targetClinicUid) {
+          for (const touched of restored.touchedItems) {
+            saveInventoryItemToCloud(
+              targetClinicUid,
+              validateAndNormalizeInventoryItem(touched),
+              settings
+            ).catch(() => {});
           }
-          return updatedItem;
         }
-        return item;
-      });
-      persistCollectionToLocal(STORAGE_KEYS.INVENTORY, nextInventoryList, targetClinicUid);
-      setInventory(nextInventoryList);
+      }
     }
 
     if (targetClinicUid) {
@@ -1458,6 +1524,40 @@ export default function App() {
     persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
     setReceipts(nextReceiptsList);
 
+    if (settings.features.autoInventory) {
+      const today = new Date().toISOString().slice(0, 10);
+      let workingInv = inventory;
+      const touchedMap = new Map<string, InventoryItem>();
+      for (const rec of targetReceipts) {
+        const entries =
+          Array.isArray(rec.consumedMaterials) && rec.consumedMaterials.length > 0
+            ? rec.consumedMaterials
+            : calculateReceiptMaterialsConsumption(
+                rec.services || [],
+                rec.toothFDI || '',
+                settings.services,
+                workingInv
+              );
+        if (entries.length > 0) {
+          const res = applyMaterialDeductionsToInventory(workingInv, entries, 'restore', today);
+          workingInv = res.nextInventory;
+          for (const t of res.touchedItems) {
+            touchedMap.set(t.id, validateAndNormalizeInventoryItem(t));
+          }
+        }
+      }
+      if (touchedMap.size > 0) {
+        const finalInv = workingInv.map((i) => touchedMap.get(i.id) || i);
+        persistCollectionToLocal(STORAGE_KEYS.INVENTORY, finalInv, targetClinicUid);
+        setInventory(finalInv);
+        if (targetClinicUid) {
+          for (const item of touchedMap.values()) {
+            saveInventoryItemToCloud(targetClinicUid, item, settings).catch(() => {});
+          }
+        }
+      }
+    }
+
     if (targetClinicUid) {
       Promise.all(Array.from(targetIds).map((id) => deleteReceiptFromCloud(targetClinicUid, id)))
         .then(() => notify('تم حذف حساب المريض وجميع سنداته سحابياً', 'info'))
@@ -1540,9 +1640,14 @@ export default function App() {
     let updatedTarget: InventoryItem | null = null;
     const nextInventoryList = inventory.map((item) => {
       if (item.id !== id) return item;
-      const nextQty = Math.max(0, +(Number(item.qty) - amount).toFixed(2));
+      const pkgSize = getEffectivePackageSize(item);
+      const currentSub = getEffectiveRemainingSubUnits(item);
+      const nextSub = Math.max(0, +(currentSub - amount).toFixed(3));
+      const nextQty = Math.max(0, +(nextSub / pkgSize).toFixed(2));
       const updated = validateAndNormalizeInventoryItem({
         ...item,
+        packageSize: pkgSize,
+        remainingSubUnits: nextSub,
         qty: nextQty,
         totalCost: +(nextQty * Number(item.unitPrice)).toFixed(2),
         updatedAt: new Date().toISOString().slice(0, 10),
@@ -1558,7 +1663,7 @@ export default function App() {
         notify('تم خصم الاستهلاك محلياً وستتم المزامنة تلقائياً', 'info');
       });
     }
-    notify('تم خصم الاستهلاك', 'info');
+    notify('تم خصم الاستهلاك من الرصيد الجزئي', 'info');
   };
 
   const handleQuickRestockInventory = (id: string, amount: number, recordExpense: boolean) => {
@@ -1575,7 +1680,10 @@ export default function App() {
 
     const nextInventoryList = inventory.map((item) => {
       if (item.id !== id) return item;
-      const nextQty = +(Number(item.qty) + amount).toFixed(2);
+      const pkgSize = getEffectivePackageSize(item);
+      const currentSub = getEffectiveRemainingSubUnits(item);
+      const nextSub = +(currentSub + amount * pkgSize).toFixed(3);
+      const nextQty = +(nextSub / pkgSize).toFixed(2);
       if (recordExpense && item.unitPrice > 0) {
         const exp = validateAndNormalizeExpense({
           id: 'exp_' + Date.now(),
@@ -1592,6 +1700,8 @@ export default function App() {
       }
       const updated = validateAndNormalizeInventoryItem({
         ...item,
+        packageSize: pkgSize,
+        remainingSubUnits: nextSub,
         qty: nextQty,
         totalCost: +(nextQty * Number(item.unitPrice)).toFixed(2),
         updatedAt: today,

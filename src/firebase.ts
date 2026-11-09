@@ -32,12 +32,15 @@ import {
 import {
   AIProviderConfig,
   ClinicSettings,
+  ConsumedMaterialEntry,
   CurrencyCode,
   DEFAULT_AI_CONFIG,
   DentalServiceItem,
   ExpenseRecord,
   InventoryItem,
+  MaterialConsumptionType,
   ReceiptRecord,
+  ServiceMaterialRule,
   TelegramBackupSettings,
   ClinicSubscription,
   WorkspaceRole,
@@ -296,6 +299,205 @@ export function sanitizeNum(val: unknown, min = 0, max = 1000000000): number {
   return Math.min(max, Math.max(min, num));
 }
 
+const SERVICE_RECIPE_PREFIX = '__mr__:';
+const INV_META_REGEX = /\s*\[\[invmeta:([^\]]+)\]\]$/;
+const REC_CM_REGEX = /\s*\[\[cm:([^\]]+)\]\]$/;
+
+function encodeServiceMaterialRulesToKeywords(
+  baseKeywords: string[],
+  serviceName: string,
+  recipe?: ServiceMaterialRule[]
+): string[] {
+  const cleanKeywords = (Array.isArray(baseKeywords) && baseKeywords.length > 0
+    ? baseKeywords
+    : [serviceName]
+  )
+    .map((k) => String(k || '').trim())
+    .filter((k) => k.length > 0 && !k.startsWith(SERVICE_RECIPE_PREFIX))
+    .slice(0, 10)
+    .map((k) => sanitizeStr(k, 80, serviceName));
+
+  const encodedRules: string[] = [];
+  if (Array.isArray(recipe)) {
+    for (const rule of recipe.slice(0, 10)) {
+      if (!rule || !rule.materialId) continue;
+      const matId = String(rule.materialId).replace(/[|\s]/g, '').slice(0, 36);
+      const cType =
+        rule.consumptionType === 'by_tooth_type' ||
+        rule.consumptionType === 'per_tooth_unit' ||
+        rule.consumptionType === 'per_arch'
+          ? rule.consumptionType
+          : 'per_session';
+      const qFix = +(Number(rule.qtyFixed) || 0).toFixed(3);
+      const qAnt = +(Number(rule.qtyAnterior) || 0).toFixed(3);
+      const qMol = +(Number(rule.qtyMolar) || 0).toFixed(3);
+      const token = `${SERVICE_RECIPE_PREFIX}${matId}|${cType}|${qFix}|${qAnt}|${qMol}`.slice(0, 80);
+      encodedRules.push(token);
+    }
+  }
+
+  const combined = [...cleanKeywords, ...encodedRules].slice(0, 20);
+  return combined.length > 0 ? combined : [sanitizeStr(serviceName, 80, 'خدمة علاجية')];
+}
+
+function decodeServiceKeywordsAndRecipe(
+  rawKeywords: unknown,
+  serviceName: string
+): { keywords: string[]; materialsRecipe: ServiceMaterialRule[] } {
+  const list = Array.isArray(rawKeywords)
+    ? rawKeywords.map((k) => String(k || '').trim()).filter(Boolean)
+    : [];
+  const keywords: string[] = [];
+  const materialsRecipe: ServiceMaterialRule[] = [];
+
+  for (const entry of list) {
+    if (entry.startsWith(SERVICE_RECIPE_PREFIX)) {
+      const payload = entry.slice(SERVICE_RECIPE_PREFIX.length);
+      const [matId, cTypeRaw, qFixRaw, qAntRaw, qMolRaw] = payload.split('|');
+      if (matId) {
+        const consumptionType: MaterialConsumptionType =
+          cTypeRaw === 'by_tooth_type' ||
+          cTypeRaw === 'per_tooth_unit' ||
+          cTypeRaw === 'per_arch'
+            ? cTypeRaw
+            : 'per_session';
+        materialsRecipe.push({
+          materialId: matId,
+          consumptionType,
+          qtyFixed: +(Number(qFixRaw) || 0).toFixed(3),
+          qtyAnterior: +(Number(qAntRaw) || 0).toFixed(3),
+          qtyMolar: +(Number(qMolRaw) || 0).toFixed(3),
+        });
+      }
+    } else {
+      keywords.push(entry);
+    }
+  }
+
+  return {
+    keywords: keywords.length > 0 ? keywords : [serviceName],
+    materialsRecipe,
+  };
+}
+
+function encodeInventoryCategoryWithMeta(item: InventoryItem): string {
+  const cleanNotes = String(item.notes || '').replace(INV_META_REGEX, '').trim();
+  const loc = item.location === 'lab' ? 'lab' : 'clinic';
+  const pkg = Math.max(0.001, +(Number(item.packageSize) || 1).toFixed(3));
+  const uUnit = String(item.usageUnit || item.unit || 'قطعة')
+    .replace(/[|\]]/g, '')
+    .trim()
+    .slice(0, 20);
+  const sub = Math.max(
+    0,
+    +(
+      Number.isFinite(Number(item.remainingSubUnits))
+        ? Number(item.remainingSubUnits)
+        : (Number(item.qty) || 0) * pkg
+    ).toFixed(3)
+  );
+  const metaSuffix = `[[invmeta:${loc}|${pkg}|${uUnit}|${sub}]]`;
+  const maxNotesLen = Math.max(10, 158 - metaSuffix.length);
+  const baseText = (cleanNotes || 'مستلزمات سنية').slice(0, maxNotesLen);
+  return `${baseText} ${metaSuffix}`.slice(0, 160);
+}
+
+function decodeInventoryCategoryWithMeta(
+  rawCategory: unknown,
+  qty: number,
+  defaultUnit: string
+): {
+  notes: string;
+  location: 'clinic' | 'lab';
+  packageSize: number;
+  usageUnit: string;
+  remainingSubUnits: number;
+} {
+  const rawStr = String(rawCategory || '').trim();
+  const match = rawStr.match(INV_META_REGEX);
+  const cleanNotes = rawStr.replace(INV_META_REGEX, '').trim();
+
+  if (!match) {
+    return {
+      notes: cleanNotes === 'مستلزمات سنية' ? '' : cleanNotes,
+      location: 'clinic',
+      packageSize: 1,
+      usageUnit: defaultUnit || 'قطعة',
+      remainingSubUnits: Math.max(0, +(qty * 1).toFixed(3)),
+    };
+  }
+
+  const [locRaw, pkgRaw, uUnitRaw, subRaw] = match[1].split('|');
+  const location: 'clinic' | 'lab' = locRaw === 'lab' ? 'lab' : 'clinic';
+  const parsedPkg = Number(pkgRaw);
+  const packageSize = Number.isFinite(parsedPkg) && parsedPkg > 0 ? +parsedPkg.toFixed(3) : 1;
+  const usageUnit = (uUnitRaw || '').trim() || defaultUnit || 'قطعة';
+  const parsedSub = Number(subRaw);
+  const remainingSubUnits =
+    Number.isFinite(parsedSub) && parsedSub >= 0
+      ? +parsedSub.toFixed(3)
+      : Math.max(0, +(qty * packageSize).toFixed(3));
+
+  return {
+    notes: cleanNotes === 'مستلزمات سنية' ? '' : cleanNotes,
+    location,
+    packageSize,
+    usageUnit,
+    remainingSubUnits,
+  };
+}
+
+function encodeReceiptNotesWithConsumedMaterials(
+  notes: string,
+  consumedMaterials?: ConsumedMaterialEntry[]
+): string {
+  const cleanNotes = String(notes || '').replace(REC_CM_REGEX, '').trim();
+  if (!Array.isArray(consumedMaterials) || consumedMaterials.length === 0) {
+    return sanitizeStr(cleanNotes, 500, '');
+  }
+  const tokens = consumedMaterials
+    .filter((c) => c && c.materialId && Number(c.amountDeducted) > 0)
+    .slice(0, 15)
+    .map(
+      (c) =>
+        `${String(c.materialId).replace(/[,=\]]/g, '').slice(0, 32)}=${+(Number(c.amountDeducted) || 0).toFixed(3)}`
+    );
+  if (tokens.length === 0) {
+    return sanitizeStr(cleanNotes, 500, '');
+  }
+  const suffix = `[[cm:${tokens.join(',')}]]`;
+  const maxBase = Math.max(0, 498 - suffix.length);
+  const trimmedNotes = cleanNotes.slice(0, maxBase);
+  return trimmedNotes ? `${trimmedNotes} ${suffix}` : suffix;
+}
+
+function decodeReceiptNotesAndConsumedMaterials(rawNotes: unknown): {
+  notes: string;
+  consumedMaterials?: ConsumedMaterialEntry[];
+} {
+  const str = String(rawNotes || '');
+  const match = str.match(REC_CM_REGEX);
+  const cleanNotes = str.replace(REC_CM_REGEX, '').trim();
+  if (!match) {
+    return { notes: cleanNotes };
+  }
+  const consumedMaterials: ConsumedMaterialEntry[] = [];
+  for (const pair of match[1].split(',')) {
+    const [matId, amtStr] = pair.split('=');
+    const amt = Number(amtStr);
+    if (matId && Number.isFinite(amt) && amt > 0) {
+      consumedMaterials.push({
+        materialId: matId.trim(),
+        amountDeducted: +amt.toFixed(3),
+      });
+    }
+  }
+  return {
+    notes: cleanNotes,
+    ...(consumedMaterials.length > 0 ? { consumedMaterials } : {}),
+  };
+}
+
 export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptRecord {
   const rawTotal = Number(receipt.totalAmount);
   const rawPaid = Number(receipt.paidAmount);
@@ -314,6 +516,16 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
   if (!patientName) {
     throw new Error('اسم المريض مطلوب لحفظ السند المالي.');
   }
+
+  const decodedNotes = decodeReceiptNotesAndConsumedMaterials(receipt.notes);
+  const normalizedConsumed = Array.isArray(receipt.consumedMaterials)
+    ? receipt.consumedMaterials
+        .filter((c) => c && c.materialId && Number(c.amountDeducted) > 0)
+        .map((c) => ({
+          materialId: String(c.materialId),
+          amountDeducted: +(Number(c.amountDeducted) || 0).toFixed(3),
+        }))
+    : decodedNotes.consumedMaterials;
 
   return {
     ...receipt,
@@ -339,7 +551,7 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
     remainingAmount,
     currency,
     paymentMethod: sanitizeStr(receipt.paymentMethod, 80, 'نقداً (Cash)'),
-    notes: sanitizeStr(receipt.notes, 500, ''),
+    notes: sanitizeStr(decodedNotes.notes, 500, ''),
     amountWords: sanitizeStr(
       receipt.amountWords || numberToArabicWords(paidAmount, currency),
       300,
@@ -349,6 +561,9 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
     receiverSig: sanitizeStr(receipt.receiverSig, 250000, ''),
     paperFormat: receipt.paperFormat === 'thermal80' ? 'thermal80' : 'a5',
     createdAt: sanitizeStr(receipt.createdAt, 40, new Date().toISOString()),
+    ...(normalizedConsumed && normalizedConsumed.length > 0
+      ? { consumedMaterials: normalizedConsumed }
+      : {}),
   };
 }
 
@@ -357,23 +572,38 @@ export function validateAndNormalizeInventoryItem(item: InventoryItem): Inventor
   if (!name) {
     throw new Error('اسم الصنف الطبي مطلوب.');
   }
+  const unit = sanitizeStr(item.unit, 50, 'قطعة');
+  const location: 'clinic' | 'lab' = item.location === 'lab' ? 'lab' : 'clinic';
+  const rawPkg = Number(item.packageSize);
+  const packageSize = Number.isFinite(rawPkg) && rawPkg > 0 ? +rawPkg.toFixed(3) : 1;
+  const usageUnit = sanitizeStr(item.usageUnit, 50, unit);
   const qty = sanitizeNum(item.qty, 0, 1000000);
+  const rawSub = Number(item.remainingSubUnits);
+  const remainingSubUnits =
+    Number.isFinite(rawSub) && rawSub >= 0
+      ? +rawSub.toFixed(3)
+      : Math.max(0, +(qty * packageSize).toFixed(3));
   const minQty = sanitizeNum(item.minQty, 0, 1000000);
   const unitPrice = sanitizeNum(item.unitPrice, 0, 100000000);
   const totalCost = sanitizeNum(+(qty * unitPrice).toFixed(2), 0, 1000000000);
+  const cleanNotes = String(item.notes || '').replace(INV_META_REGEX, '').trim();
 
   return {
     ...item,
     id: sanitizeId(item.id || `inv_${Date.now()}`),
     name,
-    notes: sanitizeStr(item.notes, 160, ''),
+    notes: sanitizeStr(cleanNotes, 160, ''),
     qty,
     minQty,
-    unit: sanitizeStr(item.unit, 50, 'قطعة'),
+    unit,
     unitPrice,
     totalCost,
     linkedService: sanitizeStr(item.linkedService, 140, ''),
     updatedAt: sanitizeStr(item.updatedAt, 30, new Date().toISOString().slice(0, 10)),
+    location,
+    packageSize,
+    usageUnit,
+    remainingSubUnits,
   };
 }
 
@@ -1226,19 +1456,20 @@ export async function saveServiceToCloud(
   const safeName = sanitizeStr(service.name, 140, 'خدمة علاجية');
   const safeCategory = sanitizeStr(service.category, 100, 'علاجات سنية');
   const safePrice = sanitizeNum(service.price, 0, 100000000);
-  const safeKeywords = (Array.isArray(service.keywords) && service.keywords.length > 0
-    ? service.keywords
-    : [safeName]
-  )
-    .slice(0, 20)
-    .map((k) => sanitizeStr(k, 80, safeName));
+  const cloudKeywords = encodeServiceMaterialRulesToKeywords(
+    service.keywords || [],
+    safeName,
+    service.materialsRecipe
+  );
+  const decodedLocal = decodeServiceKeywordsAndRecipe(cloudKeywords, safeName);
 
   const normalizedService: DentalServiceItem = {
     id: safeServiceId,
     name: safeName,
     price: safePrice,
     category: safeCategory,
-    keywords: safeKeywords,
+    keywords: decodedLocal.keywords,
+    materialsRecipe: decodedLocal.materialsRecipe,
   };
 
   markPendingUpsert(safeUid, 'services', safeServiceId, normalizedService);
@@ -1254,7 +1485,7 @@ export async function saveServiceToCloud(
         name: safeName,
         price: safePrice,
         category: safeCategory,
-        keywords: safeKeywords,
+        keywords: cloudKeywords,
         updatedAt: serverTimestamp(),
       };
       if (knownExistingDocIds.has(docId)) {
@@ -1330,7 +1561,10 @@ export async function saveReceiptToCloud(
         remainingAmount: validated.remainingAmount,
         currency: validated.currency,
         paymentMethod: validated.paymentMethod,
-        notes: validated.notes,
+        notes: encodeReceiptNotesWithConsumedMaterials(
+          validated.notes,
+          validated.consumedMaterials
+        ),
         amountWords: validated.amountWords,
         accountantSig: validated.accountantSig,
         receiverSig: validated.receiverSig,
@@ -1398,7 +1632,7 @@ export async function saveInventoryItemToCloud(
     await withCloudRetry(async () => {
       const mutableFields = {
         name: validated.name,
-        category: sanitizeStr(validated.notes, 160, 'مستلزمات سنية'),
+        category: encodeInventoryCategoryWithMeta(validated),
         qty: validated.qty,
         minQty: validated.minQty,
         unit: validated.unit,
@@ -1824,15 +2058,14 @@ async function fetchClinicCollectionsFromFirestore(
     const cloudServices: DentalServiceItem[] = servicesSnap.docs.map((docSnap) => {
       const d = docSnap.data();
       const name = String(d.name || '');
-      const rawKeywords = Array.isArray(d.keywords)
-        ? d.keywords.map((k: unknown) => String(k || '').trim()).filter(Boolean)
-        : [];
+      const decoded = decodeServiceKeywordsAndRecipe(d.keywords, name);
       return {
         id: stripPrefix(docSnap.id),
         name,
         price: Number(d.price || 0),
         category: String(d.category || 'علاجات سنية'),
-        keywords: rawKeywords.length > 0 ? rawKeywords : [name],
+        keywords: decoded.keywords,
+        materialsRecipe: decoded.materialsRecipe,
       };
     });
     const mergedServices = applyPendingQueueToItems(
@@ -1863,6 +2096,7 @@ async function fetchClinicCollectionsFromFirestore(
     })
     .map((docSnap) => {
       const d = docSnap.data();
+      const decodedRecNotes = decodeReceiptNotesAndConsumedMaterials(d.notes);
       return {
         id: stripPrefix(docSnap.id),
         receiptNo: Number(d.receiptNo || 1001),
@@ -1876,12 +2110,15 @@ async function fetchClinicCollectionsFromFirestore(
         remainingAmount: Number(d.remainingAmount || 0),
         currency: String(d.currency || 'ريال يمني') as CurrencyCode,
         paymentMethod: String(d.paymentMethod || 'نقداً (Cash)'),
-        notes: String(d.notes || ''),
+        notes: decodedRecNotes.notes,
         amountWords: String(d.amountWords || ''),
         accountantSig: String(d.accountantSig || ''),
         receiverSig: String(d.receiverSig || ''),
         paperFormat: (d.paperFormat === 'thermal80' ? 'thermal80' : 'a5') as 'a5' | 'thermal80',
         createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
+        ...(decodedRecNotes.consumedMaterials
+          ? { consumedMaterials: decodedRecNotes.consumedMaterials }
+          : {}),
       };
     });
 
@@ -1910,19 +2147,26 @@ async function fetchClinicCollectionsFromFirestore(
     })
     .map((docSnap) => {
       const d = docSnap.data();
+      const qty = Number(d.qty || 0);
+      const unit = String(d.unit || 'قطعة');
+      const decodedInvMeta = decodeInventoryCategoryWithMeta(d.category, qty, unit);
       return {
         id: stripPrefix(docSnap.id),
         name: String(d.name || ''),
-        notes: String(d.category || ''),
-        qty: Number(d.qty || 0),
+        notes: decodedInvMeta.notes,
+        qty,
         minQty: Number(d.minQty || 0),
-        unit: String(d.unit || 'قطعة'),
+        unit,
         unitPrice: Number(d.unitPrice || 0),
         totalCost: Number(d.totalCost || 0),
         linkedService: String(d.linkedService || ''),
         updatedAt: d.updatedAt?.toDate
           ? d.updatedAt.toDate().toISOString().slice(0, 10)
           : new Date().toISOString().slice(0, 10),
+        location: decodedInvMeta.location,
+        packageSize: decodedInvMeta.packageSize,
+        usageUnit: decodedInvMeta.usageUnit,
+        remainingSubUnits: decodedInvMeta.remainingSubUnits,
       };
     });
 
@@ -2110,15 +2354,14 @@ export function subscribeToClinicCloudData(
       const items: DentalServiceItem[] = snap.docs.map((docSnap) => {
         const d = docSnap.data();
         const name = String(d.name || '');
-        const rawKeywords = Array.isArray(d.keywords)
-          ? d.keywords.map((k: unknown) => String(k || '').trim()).filter(Boolean)
-          : [];
+        const decoded = decodeServiceKeywordsAndRecipe(d.keywords, name);
         return {
           id: stripPrefix(docSnap.id),
           name,
           price: Number(d.price || 0),
           category: String(d.category || 'علاجات سنية'),
-          keywords: rawKeywords.length > 0 ? rawKeywords : [name],
+          keywords: decoded.keywords,
+          materialsRecipe: decoded.materialsRecipe,
         };
       });
       const merged = applyPendingQueueToItems(safeUid, 'services', items);
@@ -2146,6 +2389,7 @@ export function subscribeToClinicCloudData(
         })
         .map((docSnap) => {
           const d = docSnap.data();
+          const decodedRecNotes = decodeReceiptNotesAndConsumedMaterials(d.notes);
           return {
             id: stripPrefix(docSnap.id),
             receiptNo: Number(d.receiptNo || 1001),
@@ -2159,12 +2403,15 @@ export function subscribeToClinicCloudData(
             remainingAmount: Number(d.remainingAmount || 0),
             currency: String(d.currency || 'ريال يمني') as CurrencyCode,
             paymentMethod: String(d.paymentMethod || 'نقداً (Cash)'),
-            notes: String(d.notes || ''),
+            notes: decodedRecNotes.notes,
             amountWords: String(d.amountWords || ''),
             accountantSig: String(d.accountantSig || ''),
             receiverSig: String(d.receiverSig || ''),
             paperFormat: (d.paperFormat === 'thermal80' ? 'thermal80' : 'a5') as 'a5' | 'thermal80',
             createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
+            ...(decodedRecNotes.consumedMaterials
+              ? { consumedMaterials: decodedRecNotes.consumedMaterials }
+              : {}),
           };
         });
 
@@ -2193,19 +2440,26 @@ export function subscribeToClinicCloudData(
         })
         .map((docSnap) => {
           const d = docSnap.data();
+          const qty = Number(d.qty || 0);
+          const unit = String(d.unit || 'قطعة');
+          const decodedInvMeta = decodeInventoryCategoryWithMeta(d.category, qty, unit);
           return {
             id: stripPrefix(docSnap.id),
             name: String(d.name || ''),
-            notes: String(d.category || ''),
-            qty: Number(d.qty || 0),
+            notes: decodedInvMeta.notes,
+            qty,
             minQty: Number(d.minQty || 0),
-            unit: String(d.unit || 'قطعة'),
+            unit,
             unitPrice: Number(d.unitPrice || 0),
             totalCost: Number(d.totalCost || 0),
             linkedService: String(d.linkedService || ''),
             updatedAt: d.updatedAt?.toDate
               ? d.updatedAt.toDate().toISOString().slice(0, 10)
               : new Date().toISOString().slice(0, 10),
+            location: decodedInvMeta.location,
+            packageSize: decodedInvMeta.packageSize,
+            usageUnit: decodedInvMeta.usageUnit,
+            remainingSubUnits: decodedInvMeta.remainingSubUnits,
           };
         });
 
