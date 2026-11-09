@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   Check,
   ChevronDown,
+  Contact,
   Eye,
   FileText,
   Layers,
@@ -525,6 +526,62 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     setAccountantSig(settings.appearance.permanentAccountantSig || '');
   };
 
+  const handlePickContactPhone = async () => {
+    type ContactSelectResult = { name?: string[]; tel?: string[] };
+    type ContactsManagerLike = {
+      select: (
+        properties: string[],
+        options?: { multiple?: boolean }
+      ) => Promise<ContactSelectResult[]>;
+      getProperties?: () => Promise<string[]>;
+    };
+
+    const nav = navigator as Navigator & { contacts?: ContactsManagerLike };
+    if (!nav.contacts || typeof nav.contacts.select !== 'function') {
+      notify('هذه الميزة تتطلب متصفح الجوال (مثل Chrome على أندرويد) للوصول لجهات الاتصال', 'warning');
+      return;
+    }
+
+    try {
+      let propsToRequest = ['tel', 'name'];
+      if (typeof nav.contacts.getProperties === 'function') {
+        try {
+          const supported = await nav.contacts.getProperties();
+          if (Array.isArray(supported) && supported.length > 0) {
+            propsToRequest = supported.includes('name') ? ['tel', 'name'] : ['tel'];
+          }
+        } catch {
+          propsToRequest = ['tel'];
+        }
+      }
+
+      const picked = await nav.contacts.select(propsToRequest, { multiple: false });
+      if (!picked || picked.length === 0) return;
+
+      const firstContact = picked[0];
+      const rawPhone = firstContact.tel?.find((t) => t && t.trim().length > 0) || '';
+      if (!rawPhone) {
+        notify('جهة الاتصال المختارة لا تحتوي على رقم هاتف', 'warning');
+        return;
+      }
+
+      const cleanedPhone = rawPhone
+        .replace(/[\s\-().]/g, '')
+        .replace(/^(?:\+967|00967)/, '');
+      setPatientPhone(cleanedPhone || rawPhone.trim());
+
+      const pickedName = firstContact.name?.find((n) => n && n.trim().length > 0)?.trim();
+      if (pickedName && !patientName.trim()) {
+        setPatientName(pickedName);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      notify('تعذر فتح جهات الاتصال من المتصفح الحالي', 'warning');
+    }
+  };
+
   const handleVisitTypeChange = (nextIsReturn: boolean) => {
     setIsReturnVisit(nextIsReturn);
     if (nextIsReturn) {
@@ -811,14 +868,25 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                   رقم الهاتف
                 </label>
-                <input
-                  type="tel"
-                  dir="ltr"
-                  value={patientPhone}
-                  onChange={(e) => setPatientPhone(e.target.value)}
-                  placeholder="777123456"
-                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums text-right text-slate-900 dark:text-slate-100"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="tel"
+                    dir="ltr"
+                    value={patientPhone}
+                    onChange={(e) => setPatientPhone(e.target.value)}
+                    placeholder="777123456"
+                    className="flex-1 min-w-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums text-right text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={handlePickContactPhone}
+                    title="اختيار من جهات الاتصال"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shrink-0 transition-colors"
+                  >
+                    <Contact className="w-4 h-4" />
+                    <span>جهات الاتصال</span>
+                  </button>
+                </div>
               </div>
             </div>
 
