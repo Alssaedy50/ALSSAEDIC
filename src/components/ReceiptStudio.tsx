@@ -676,16 +676,19 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <input
                   type="number"
                   min="0"
+                  step="any"
+                  placeholder="0"
                   value={totalAmount === 0 ? '' : totalAmount}
                   onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => {
-                    const val = Number(e.target.value) || 0;
-                    setTotalAmount(val);
+                    const rawVal = e.target.value;
+                    const val = rawVal === '' ? 0 : Number(rawVal);
+                    const safeVal = isNaN(val) ? 0 : Math.max(0, val);
+                    setTotalAmount(safeVal);
                     if (paidAmount === 0 || paidAmount === totalAmount) {
-                      setPaidAmount(val);
+                      setPaidAmount(safeVal);
                     }
                   }}
-                  placeholder="0"
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-2 text-sm font-mono tabular-nums font-black text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -697,11 +700,16 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <input
                   type="number"
                   min="0"
+                  step="any"
+                  placeholder="0"
                   max={totalAmount || undefined}
                   value={paidAmount === 0 ? '' : paidAmount}
                   onFocus={(e) => e.currentTarget.select()}
-                  onChange={(e) => setPaidAmount(Number(e.target.value) || 0)}
-                  placeholder="0"
+                  onChange={(e) => {
+                    const rawVal = e.target.value;
+                    const val = rawVal === '' ? 0 : Number(rawVal);
+                    setPaidAmount(isNaN(val) ? 0 : Math.max(0, val));
+                  }}
                   className={`w-full rounded-lg border px-2.5 py-2 text-sm font-mono tabular-nums font-black ${
                     paidAmount > totalAmount
                       ? 'border-rose-500 bg-rose-50/30 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300'

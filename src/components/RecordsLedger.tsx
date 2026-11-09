@@ -899,10 +899,12 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               <div className="flex items-center gap-1.5">
                 <input
                   type="number"
+                  min="0"
+                  step="any"
                   value={accountSettleAmount}
                   onChange={(e) => setAccountSettleAmount(e.target.value)}
                   className="w-32 rounded-lg border border-amber-400 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
-                  placeholder="المبلغ المسدد..."
+                  placeholder="0"
                 />
                 <button
                   type="button"
@@ -1092,10 +1094,12 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     <div className="pt-2 flex items-center gap-1.5">
                       <input
                         type="number"
+                        min="0"
+                        step="any"
                         value={settleAmount}
                         onChange={(e) => setSettleAmount(e.target.value)}
                         className="w-32 rounded-lg border border-amber-400 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-mono tabular-nums font-bold"
-                        placeholder="مبلغ التسديد..."
+                        placeholder="0"
                       />
                       <button
                         type="button"

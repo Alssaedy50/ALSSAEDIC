@@ -273,8 +273,22 @@ export function calculateReceiptMaterialsConsumption(
 
   const servicesToDeduct: ServiceToDeductInfo[] = [];
 
-  for (const rawSrvName of servicesNames) {
-    const cleanName = String(rawSrvName || '').trim();
+  const flattenedServices: string[] = [];
+  for (const raw of servicesNames) {
+    if (typeof raw === 'string') {
+      const parts = raw
+        .split(/\s*(?:[-–—+]|،|,|\band\b)\s*/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (parts.length > 0) {
+        flattenedServices.push(...parts);
+      } else if (raw.trim()) {
+        flattenedServices.push(raw.trim());
+      }
+    }
+  }
+
+  for (const cleanName of flattenedServices) {
     if (!cleanName) continue;
 
     // Check if already billed in previous receipts for this patient
@@ -299,7 +313,12 @@ export function calculateReceiptMaterialsConsumption(
         ? analyzeFDITeethForConsumption(check.unbilledTeeth.join(' - '))
         : fullTeethAnalysis;
 
-    const totalSessions = Math.max(1, matchedService?.totalSessions || 1);
+    const totalSessions = Math.max(
+      1,
+      Number((matchedService as any)?.sessionsCount) ||
+        Number(matchedService?.totalSessions) ||
+        1
+    );
 
     if (matchedService) {
       servicesToDeduct.push({

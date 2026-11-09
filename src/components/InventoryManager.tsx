@@ -41,18 +41,36 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 }) => {
   const [isFormModalOpen, setIsFormModalOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [location, setLocation] = useState<'clinic' | 'lab'>('clinic');
-  const [qty, setQty] = useState<number>(10);
-  const [unit, setUnit] = useState<string>('علبة');
-  const [packageSize, setPackageSize] = useState<number>(1);
-  const [usageUnit, setUsageUnit] = useState<string>('قطعة');
-  const [remainingSubUnits, setRemainingSubUnits] = useState<number>(10);
-  const [minQty, setMinQty] = useState<number>(5);
-  const [unitPrice, setUnitPrice] = useState<number>(0);
-  const [linkedService, setLinkedService] = useState<string>('');
-  const [notes, setNotes] = useState<string>('');
-  const [recordAsExpense, setRecordAsExpense] = useState<boolean>(false);
+
+  interface InventoryFormData {
+    name: string;
+    location: 'clinic' | 'lab';
+    quantity: number;
+    unit: string;
+    packageSize: number;
+    usageUnit: string;
+    remainingSubUnits: number;
+    minThreshold: number;
+    costPerUnit: number;
+    linkedService: string;
+    notes: string;
+    recordAsExpense: boolean;
+  }
+
+  const [formData, setFormData] = useState<InventoryFormData>({
+    name: '',
+    location: 'clinic',
+    quantity: 10,
+    unit: 'علبة',
+    packageSize: 1,
+    usageUnit: 'قطعة',
+    remainingSubUnits: 10,
+    minThreshold: 2,
+    costPerUnit: 0,
+    linkedService: '',
+    notes: '',
+    recordAsExpense: false,
+  });
 
   const [filterMode, setFilterMode] = useState<'all' | 'clinic' | 'lab' | 'low'>('all');
   const [auditReport, setAuditReport] = useState<string>('');
@@ -73,8 +91,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   ];
 
   const totalCost = useMemo(
-    () => +(Number(qty || 0) * Number(unitPrice || 0)).toFixed(2),
-    [qty, unitPrice]
+    () => +(Number(formData.quantity || 0) * Number(formData.costPerUnit || 0)).toFixed(2),
+    [formData.quantity, formData.costPerUnit]
   );
 
   const lowStockItems = useMemo(
@@ -108,98 +126,174 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     return inventory;
   }, [inventory, lowStockItems, filterMode]);
 
-  const handleQtyChange = (nextQty: number) => {
-    const safeQty = Math.max(0, Number(nextQty) || 0);
-    const safePkg = Math.max(0.001, Number(packageSize) || 1);
-    setQty(safeQty);
-    setRemainingSubUnits(+(safeQty * safePkg).toFixed(2));
+  const handleQuantityChange = (valStr: string) => {
+    const nextQty = valStr === '' ? 0 : Number(valStr);
+    const safeQty = isNaN(nextQty) ? 0 : Math.max(0, nextQty);
+    const pkgSize =
+      formData.packageSize && formData.packageSize > 0 ? Number(formData.packageSize) : 1;
+    setFormData((prev) => ({
+      ...prev,
+      quantity: safeQty,
+      remainingSubUnits: Number((safeQty * pkgSize).toFixed(2)),
+    }));
   };
 
-  const handlePackageSizeChange = (nextPkg: number) => {
-    const safePkg = Math.max(0.001, Number(nextPkg) || 1);
-    setPackageSize(safePkg);
-    setRemainingSubUnits(+(Math.max(0, Number(qty) || 0) * safePkg).toFixed(2));
+  const handlePackageSizeChange = (valStr: string) => {
+    const nextPkg = valStr === '' ? 0 : Number(valStr);
+    const safePkg = isNaN(nextPkg) ? 0 : Math.max(0, nextPkg);
+    setFormData((prev) => {
+      const updatedSub =
+        safePkg > 0
+          ? Number(((prev.quantity || 0) * safePkg).toFixed(2))
+          : prev.remainingSubUnits;
+      return {
+        ...prev,
+        packageSize: safePkg,
+        remainingSubUnits: updatedSub,
+      };
+    });
   };
 
-  const handleRemainingSubUnitsChange = (nextSub: number) => {
-    const safeSub = Math.max(0, Number(nextSub) || 0);
-    const safePkg = Math.max(0.001, Number(packageSize) || 1);
-    setRemainingSubUnits(safeSub);
-    setQty(+(safeSub / safePkg).toFixed(2));
+  const handleRemainingSubUnitsChange = (valStr: string) => {
+    const nextSub = valStr === '' ? 0 : Number(valStr);
+    const safeSub = isNaN(nextSub) ? 0 : Math.max(0, nextSub);
+    const pkgSize = Math.max(1, formData.packageSize || 1);
+    const computedQty = Number((safeSub / pkgSize).toFixed(2));
+    setFormData((prev) => ({
+      ...prev,
+      remainingSubUnits: safeSub,
+      quantity: computedQty,
+    }));
+  };
+
+  const handleMinThresholdChange = (valStr: string) => {
+    const nextVal = valStr === '' ? 0 : Number(valStr);
+    setFormData((prev) => ({
+      ...prev,
+      minThreshold: isNaN(nextVal) ? 0 : Math.max(0, nextVal),
+    }));
+  };
+
+  const handleCostPerUnitChange = (valStr: string) => {
+    const nextVal = valStr === '' ? 0 : Number(valStr);
+    setFormData((prev) => ({
+      ...prev,
+      costPerUnit: isNaN(nextVal) ? 0 : Math.max(0, nextVal),
+    }));
   };
 
   const openAddModal = () => {
     setEditingId(null);
-    setName('');
-    setLocation(filterMode === 'lab' ? 'lab' : 'clinic');
-    setQty(10);
-    setUnit('علبة');
-    setPackageSize(1);
-    setUsageUnit(filterMode === 'lab' ? 'وحدة معمل' : 'قطعة');
-    setRemainingSubUnits(10);
-    setMinQty(2);
-    setUnitPrice(0);
-    setLinkedService('');
-    setNotes('');
-    setRecordAsExpense(false);
+    setFormData({
+      name: '',
+      location: filterMode === 'lab' ? 'lab' : 'clinic',
+      quantity: 10,
+      unit: 'علبة',
+      packageSize: 1,
+      usageUnit: filterMode === 'lab' ? 'وحدة معمل' : 'قطعة',
+      remainingSubUnits: 10,
+      minThreshold: 2,
+      costPerUnit: 0,
+      linkedService: '',
+      notes: '',
+      recordAsExpense: false,
+    });
     setIsFormModalOpen(true);
   };
 
   const openEditModal = (item: InventoryItem) => {
     const pkg = Number(item.packageSize) > 0 ? Number(item.packageSize) : 1;
+    const itemQty = Number(item.qty !== undefined ? item.qty : (item as any).quantity || 0);
     const sub =
-      Number.isFinite(Number(item.remainingSubUnits)) && Number(item.remainingSubUnits) >= 0
+      item.remainingSubUnits !== undefined && Number(item.remainingSubUnits) >= 0
         ? Number(item.remainingSubUnits)
-        : +(Number(item.qty || 0) * pkg).toFixed(2);
+        : Number((itemQty * pkg).toFixed(2));
     setEditingId(item.id);
-    setName(item.name);
-    setLocation(item.location === 'lab' ? 'lab' : 'clinic');
-    setQty(item.qty);
-    setUnit(item.unit || 'علبة');
-    setPackageSize(pkg);
-    setUsageUnit(item.usageUnit || item.unit || 'قطعة');
-    setRemainingSubUnits(sub);
-    setMinQty(item.minQty);
-    setUnitPrice(item.unitPrice);
-    setLinkedService(item.linkedService || '');
-    setNotes(item.notes || '');
-    setRecordAsExpense(false);
+    setFormData({
+      name: item.name,
+      location: item.location === 'lab' ? 'lab' : 'clinic',
+      quantity: itemQty,
+      unit: item.unit || 'علبة',
+      packageSize: pkg,
+      usageUnit: item.usageUnit || item.unit || 'قطعة',
+      remainingSubUnits: sub,
+      minThreshold: Number(item.minQty !== undefined ? item.minQty : 2),
+      costPerUnit: Number(item.unitPrice !== undefined ? item.unitPrice : 0),
+      linkedService: item.linkedService || '',
+      notes: item.notes || '',
+      recordAsExpense: false,
+    });
     setIsFormModalOpen(true);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) {
+    if (!formData.name.trim()) {
       notify('يرجى إدخال اسم الصنف', 'warning');
       return;
     }
 
-    const safePkg = Math.max(0.001, Number(packageSize) || 1);
+    const finalPkgSize =
+      formData.packageSize && formData.packageSize > 0 ? Number(formData.packageSize) : 1;
+    const finalUnit = formData.unit.trim() || 'علبة';
+    let finalUsageUnit = formData.usageUnit.trim();
+    if (!finalUsageUnit && finalPkgSize === 1) {
+      finalUsageUnit = finalUnit;
+    }
+    if (!finalUsageUnit) {
+      finalUsageUnit = finalUnit;
+    }
+
+    const safeQty = Math.max(0, Number(formData.quantity) || 0);
     const safeSub =
-      Number.isFinite(Number(remainingSubUnits)) && Number(remainingSubUnits) >= 0
-        ? +Number(remainingSubUnits).toFixed(3)
-        : +(Math.max(0, Number(qty) || 0) * safePkg).toFixed(3);
-    const computedQty = +(safeSub / safePkg).toFixed(2);
+      formData.remainingSubUnits !== undefined && formData.remainingSubUnits >= 0
+        ? Number(formData.remainingSubUnits)
+        : Number((safeQty * finalPkgSize).toFixed(2));
+    const cost = Math.max(0, Number(formData.costPerUnit) || 0);
+    const totalCost = Math.round(cost * safeQty);
 
     onSaveItem(
       {
         id: editingId || undefined,
-        name: name.trim(),
-        location,
-        qty: computedQty,
-        unit: unit.trim() || 'علبة',
-        packageSize: safePkg,
-        usageUnit: usageUnit.trim() || unit.trim() || 'قطعة',
+        name: formData.name.trim(),
+        location: formData.location,
+        qty: safeQty,
+        unit: finalUnit,
+        packageSize: finalPkgSize,
+        usageUnit: finalUsageUnit,
         remainingSubUnits: safeSub,
-        minQty: Number(minQty) || 1,
-        unitPrice: Number(unitPrice) || 0,
-        totalCost: +(computedQty * (Number(unitPrice) || 0)).toFixed(2),
-        linkedService,
-        notes: notes.trim(),
+        minQty: Number(formData.minThreshold) || 1,
+        unitPrice: cost,
+        totalCost,
+        linkedService: formData.linkedService,
+        notes: formData.notes.trim(),
       },
-      !editingId && recordAsExpense
+      !editingId && formData.recordAsExpense
     );
     setIsFormModalOpen(false);
+  };
+
+  const handleQuickAdjust = (item: InventoryItem, deltaPackages: number) => {
+    const pkgSize = item.packageSize && item.packageSize > 0 ? Number(item.packageSize) : 1;
+    const currentItemQty = Number(item.qty !== undefined ? item.qty : (item as any).quantity || 0);
+    const currentSub =
+      item.remainingSubUnits !== undefined
+        ? Number(item.remainingSubUnits)
+        : Number((currentItemQty * pkgSize).toFixed(2));
+    const newSub = Math.max(0, Number((currentSub + deltaPackages * pkgSize).toFixed(2)));
+    const newQty = Number((newSub / pkgSize).toFixed(2));
+
+    const { updatedAt: _unused, ...itemWithoutUpdatedAt } = item;
+    onSaveItem(
+      {
+        ...itemWithoutUpdatedAt,
+        packageSize: pkgSize,
+        remainingSubUnits: newSub,
+        qty: newQty,
+        totalCost: Number((newQty * Number(item.unitPrice || 0)).toFixed(2)),
+      },
+      false
+    );
   };
 
   const handleRunGeminiAudit = async () => {
@@ -423,9 +517,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <button
                       type="button"
                       dir="ltr"
-                      title={`خصم 1 ${uUnit}`}
-                      onClick={() => onQuickConsume(item.id, 1)}
-                      className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg"
+                      title={`خصم 1 ${item.unit}`}
+                      onClick={() => handleQuickAdjust(item, -1)}
+                      className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg hover:bg-amber-100/70 transition-colors"
                     >
                       <Minus className="w-3 h-3" />
                       <span>1</span>
@@ -434,8 +528,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       type="button"
                       dir="ltr"
                       title={`إضافة 1 ${item.unit}`}
-                      onClick={() => onQuickRestock(item.id, 1, false)}
-                      className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg"
+                      onClick={() => handleQuickAdjust(item, 1)}
+                      className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg hover:bg-emerald-100/70 transition-colors"
                     >
                       <Plus className="w-3 h-3" />
                       <span>1</span>
@@ -555,9 +649,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         <button
                           type="button"
                           dir="ltr"
-                          title={`خصم 1 ${uUnit}`}
-                          onClick={() => onQuickConsume(item.id, 1)}
-                          className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg"
+                          title={`خصم 1 ${item.unit}`}
+                          onClick={() => handleQuickAdjust(item, -1)}
+                          className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg hover:bg-amber-100/70 transition-colors"
                         >
                           <Minus className="w-3 h-3" />
                           <span>1</span>
@@ -566,8 +660,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                           type="button"
                           dir="ltr"
                           title={`تزويد 1 ${item.unit}`}
-                          onClick={() => onQuickRestock(item.id, 1, false)}
-                          className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg"
+                          onClick={() => handleQuickAdjust(item, 1)}
+                          className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg hover:bg-emerald-100/70 transition-colors"
                         >
                           <Plus className="w-3 h-3" />
                           <span>1</span>
@@ -643,9 +737,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setLocation('clinic')}
+                    onClick={() => setFormData((prev) => ({ ...prev, location: 'clinic' }))}
                     className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      location === 'clinic'
+                      formData.location === 'clinic'
                         ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
                         : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
                     }`}
@@ -654,9 +748,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setLocation('lab')}
+                    onClick={() => setFormData((prev) => ({ ...prev, location: 'lab' }))}
                     className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      location === 'lab'
+                      formData.location === 'lab'
                         ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                         : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
                     }`}
@@ -672,10 +766,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  value={formData.name}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                   placeholder={
-                    location === 'lab'
+                    formData.location === 'lab'
                       ? 'مثال: بلوك زيركون متعدد الطبقات / معدن / طبعة سيليكون'
                       : 'مثال: كومبوزيت ضوئي 4 جرام / علبة بنج Lidocaine'
                   }
@@ -692,10 +786,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <input
                     type="number"
                     min="0"
-                    step="0.01"
-                    value={qty}
-                    onChange={(e) => handleQtyChange(Number(e.target.value))}
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums"
+                    step="any"
+                    value={formData.quantity === 0 ? '' : formData.quantity}
+                    onChange={(e) => handleQuantityChange(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />
                 </div>
 
@@ -704,8 +799,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     وحدة الشراء الكبرى (العبوة)
                   </label>
                   <select
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
+                    value={formData.unit}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, unit: e.target.value }))}
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold"
                   >
                     {INVENTORY_UNITS.map((u) => (
@@ -732,12 +827,12 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     </label>
                     <input
                       type="number"
-                      min="0.01"
-                      step="0.1"
-                      value={packageSize}
-                      onChange={(e) => handlePackageSizeChange(Number(e.target.value))}
-                      placeholder="مثال: 50 أمبول أو 4 جرام"
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-mono tabular-nums"
+                      min="0"
+                      step="any"
+                      value={formData.packageSize === 0 ? '' : formData.packageSize}
+                      onChange={(e) => handlePackageSizeChange(e.target.value)}
+                      placeholder="1"
+                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-mono tabular-nums font-bold"
                     />
                   </div>
 
@@ -748,8 +843,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <input
                       type="text"
                       list="usage-unit-options"
-                      value={usageUnit}
-                      onChange={(e) => setUsageUnit(e.target.value)}
+                      value={formData.usageUnit}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, usageUnit: e.target.value }))
+                      }
                       placeholder="جرام، أمبول، حبة، مل، وحدة معمل"
                       className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold"
                     />
@@ -769,13 +866,16 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <input
                       type="number"
                       min="0"
-                      step="0.1"
-                      value={remainingSubUnits}
-                      onChange={(e) => handleRemainingSubUnitsChange(Number(e.target.value))}
+                      step="any"
+                      value={
+                        formData.remainingSubUnits === 0 ? '' : formData.remainingSubUnits
+                      }
+                      onChange={(e) => handleRemainingSubUnitsChange(e.target.value)}
+                      placeholder="0"
                       className="w-24 rounded-lg border border-sky-300 dark:border-sky-800 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-mono font-bold text-center text-sky-700 dark:text-sky-300"
                     />
                     <span className="text-xs font-bold text-sky-700 dark:text-sky-300">
-                      {usageUnit || unit}
+                      {formData.usageUnit || formData.unit}
                     </span>
                   </div>
                 </div>
@@ -789,10 +889,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <input
                     type="number"
                     min="0"
-                    step="0.5"
-                    value={minQty}
-                    onChange={(e) => setMinQty(Number(e.target.value) || 0)}
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums"
+                    step="any"
+                    value={formData.minThreshold === 0 ? '' : formData.minThreshold}
+                    onChange={(e) => handleMinThresholdChange(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />
                 </div>
 
@@ -803,9 +904,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <input
                     type="number"
                     min="0"
-                    value={unitPrice}
-                    onChange={(e) => setUnitPrice(Number(e.target.value) || 0)}
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums"
+                    step="any"
+                    value={formData.costPerUnit === 0 ? '' : formData.costPerUnit}
+                    onChange={(e) => handleCostPerUnitChange(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />
                 </div>
               </div>
@@ -816,8 +919,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
+                  value={formData.notes}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
                   placeholder="تفاصيل إضافية (اختياري)"
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
                 />
@@ -827,8 +930,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={recordAsExpense}
-                    onChange={(e) => setRecordAsExpense(e.target.checked)}
+                    checked={formData.recordAsExpense}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, recordAsExpense: e.target.checked }))
+                    }
                     className="rounded border-slate-300 text-sky-600"
                   />
                   <span>تسجيل التكلفة ({totalCost.toLocaleString()}) كمصروف شراء</span>

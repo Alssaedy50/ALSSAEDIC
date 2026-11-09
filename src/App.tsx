@@ -1167,6 +1167,40 @@ export default function App() {
     let workingInventory = inventory;
     const touchedInventoryMap = new Map<string, InventoryItem>();
 
+    // Extract all selected services even if merged in serviceType and separated by " - ", "، ", ",", or "+"
+    const rawServices = payload.services || [];
+    const rawServiceType = (payload as any).serviceType;
+    const extractedServices: string[] = [];
+    const addCleanService = (s: string) => {
+      const parts = String(s || '')
+        .split(/\s*(?:[-–—+]|،|,|\band\b)\s*/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      for (const p of parts) {
+        if (!extractedServices.includes(p)) {
+          extractedServices.push(p);
+        }
+      }
+    };
+
+    if (Array.isArray(rawServices)) {
+      rawServices.forEach((s) => {
+        if (typeof s === 'string') addCleanService(s);
+      });
+    } else if (typeof rawServices === 'string') {
+      addCleanService(rawServices);
+    }
+    if (typeof rawServiceType === 'string') {
+      addCleanService(rawServiceType);
+    }
+
+    const effectiveServices =
+      extractedServices.length > 0
+        ? extractedServices
+        : Array.isArray(rawServices) && rawServices.length > 0
+          ? rawServices
+          : ['خدمات علاجية للأسنان'];
+
     // 1. If editing an existing receipt, first restore its previously deducted materials
     if (isEdit && existingReceipt && settings.features.autoInventory) {
       const previousDeductions =
@@ -1199,7 +1233,7 @@ export default function App() {
     // Only deducts if this service is new for this patient, and deduplicates shared materials
     const computedConsumedMaterials = settings.features.autoInventory
       ? calculateReceiptMaterialsConsumption(
-          payload.services || [],
+          effectiveServices,
           payload.toothFDI || '',
           settings.services,
           workingInventory,
@@ -1222,6 +1256,7 @@ export default function App() {
 
     const record = validateAndNormalizeReceipt({
       ...payload,
+      services: effectiveServices,
       patientName: canonicalPatientName,
       patientPhone: canonicalPatientPhone,
       id: payload.id || 'rec_' + Date.now(),
@@ -1609,7 +1644,9 @@ export default function App() {
       const exp = validateAndNormalizeExpense({
         id: 'exp_' + Date.now(),
         title: `شراء مخزون: ${newItem.name}`,
-        amount: newItem.totalCost,
+        amount:
+          Math.round(Number(newItem.unitPrice || 0) * Number(newItem.qty || 0)) ||
+          Math.round(newItem.totalCost),
         category: 'مشتريات مخزون',
         currency: settings.identity.defaultCurrency,
         date: today,

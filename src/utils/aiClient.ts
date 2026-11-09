@@ -37,24 +37,18 @@ export const GROQ_TEXT_MODELS = [
   'allam-2-7b',
   'openai/gpt-oss-safeguard-20b',
   'llama-3.3-70b-versatile',
-  'meta-llama/llama-4-maverick-17b-128e-instruct',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'qwen/qwen3-32b',
+  'llama-3.1-8b-instant',
   'deepseek-r1-distill-llama-70b',
   'qwen-qwq-32b',
   'mistral-saba-24b',
-  'compound-beta',
-  'llama-3.1-8b-instant',
   'gemma2-9b-it',
 ] as const;
 
-// Dedicated Vision Models (At least 4 models per provider reserved for image analysis)
+// Dedicated Vision Models (Only real multi-modal vision models supported by Groq)
 export const GROQ_VISION_MODELS = [
   'qwen/qwen3.8-27b',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'meta-llama/llama-4-maverick-17b-128e-instruct',
-  'llama-3.2-90b-vision-preview',
   'llama-3.2-11b-vision-preview',
+  'llama-3.2-90b-vision-preview',
 ] as const;
 
 export const GEMINI_VISION_MODELS = [

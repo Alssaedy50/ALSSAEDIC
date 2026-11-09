@@ -459,9 +459,14 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
                 <input
                   type="number"
                   min="0"
-                  value={expAmount || ''}
-                  onChange={(e) => setExpAmount(Number(e.target.value) || 0)}
+                  step="any"
                   placeholder="0"
+                  value={expAmount === 0 ? '' : expAmount}
+                  onChange={(e) => {
+                    const rawVal = e.target.value;
+                    const val = rawVal === '' ? 0 : Number(rawVal);
+                    setExpAmount(isNaN(val) ? 0 : Math.max(0, val));
+                  }}
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                 />
               </div>

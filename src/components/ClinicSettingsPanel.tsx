@@ -445,7 +445,16 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   const handleSaveServiceRecipe = () => {
     if (!recipeModalServiceId) return;
-    const cleanedRules = editingRecipeRules.filter((r) => Boolean(r && r.materialId));
+    const cleanedRules = editingRecipeRules
+      .filter((r) => Boolean(r && r.materialId))
+      .map((r) => ({
+        materialId: r.materialId,
+        consumptionType: r.consumptionType,
+        qtyFixed: Number(r.qtyFixed ?? 0),
+        qtyAnterior: Number(r.qtyAnterior ?? 0),
+        qtyMolar: Number(r.qtyMolar ?? 0),
+        sessionNumber: r.sessionNumber ?? 'all',
+      }));
     const finalTotalSessions = Math.max(1, editingServiceTotalSessions || 1);
     const updated: ClinicSettings = {
       ...formState,
@@ -454,6 +463,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
           ? {
               ...s,
               totalSessions: finalTotalSessions,
+              sessionsCount: finalTotalSessions,
               materialsRecipe: cleanedRules,
             }
           : s
@@ -1226,7 +1236,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     <input
                       type="number"
                       min="0"
-                      value={srv.price}
+                      step="any"
+                      placeholder="0"
+                      value={srv.price === 0 || srv.price === undefined ? '' : srv.price}
                       onChange={(e) => handleServicePriceUpdate(srv.id, Number(e.target.value) || 0)}
                       className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
                     />
@@ -2153,7 +2165,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <input
                 type="number"
                 min="0"
-                value={newSrvPrice}
+                step="any"
+                placeholder="0"
+                value={newSrvPrice === 0 || newSrvPrice === undefined ? '' : newSrvPrice}
                 onChange={(e) => setNewSrvPrice(Number(e.target.value) || 0)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
               />
@@ -2214,7 +2228,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             entry = {
               material: mat,
               isLab: mat.location === 'lab',
-              unit: mat.usageUnit || mat.unit || 'وحدة',
+              unit: mat.usageUnit?.trim() || mat.unit?.trim() || 'قطعة',
               fixedTotal: 0,
               anteriorTotal: 0,
               molarTotal: 0,
@@ -2328,8 +2342,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                         <input
                           type="number"
                           min="1"
-                          max="20"
-                          value={editingServiceTotalSessions}
+                          step="1"
+                          placeholder="1"
+                          value={editingServiceTotalSessions === 0 ? '' : editingServiceTotalSessions}
                           onChange={(e) =>
                             setEditingServiceTotalSessions(Math.max(1, Number(e.target.value) || 1))
                           }
@@ -2406,7 +2421,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   <div className="space-y-3">
                     {visibleRules.map(({ rule, origIndex }) => {
                       const selectedItem = inventory.find((i) => i.id === rule.materialId);
-                      const unitLabel = selectedItem?.usageUnit || selectedItem?.unit || 'وحدة';
+                      const unitLabel =
+                        selectedItem?.usageUnit?.trim() || selectedItem?.unit?.trim() || 'قطعة';
                       const isLab = selectedItem?.location === 'lab';
 
                       return (
@@ -2433,7 +2449,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                   {inventory.map((inv) => (
                                     <option key={inv.id} value={inv.id}>
                                       [{inv.location === 'lab' ? 'معمل' : 'عيادة'}] {inv.name} (
-                                      {inv.usageUnit || inv.unit})
+                                      {inv.usageUnit?.trim() || inv.unit?.trim() || 'قطعة'})
                                     </option>
                                   ))}
                                 </select>
@@ -2506,8 +2522,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                   <input
                                     type="number"
                                     min="0"
-                                    step="0.1"
-                                    value={rule.qtyAnterior ?? 1}
+                                    step="any"
+                                    placeholder="0"
+                                    value={
+                                      rule.qtyAnterior === 0 || rule.qtyAnterior === undefined
+                                        ? ''
+                                        : rule.qtyAnterior
+                                    }
                                     onChange={(e) =>
                                       handleUpdateMaterialRuleRow(origIndex, {
                                         qtyAnterior: Math.max(0, Number(e.target.value) || 0),
@@ -2529,8 +2550,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                   <input
                                     type="number"
                                     min="0"
-                                    step="0.1"
-                                    value={rule.qtyMolar ?? 1.5}
+                                    step="any"
+                                    placeholder="0"
+                                    value={
+                                      rule.qtyMolar === 0 || rule.qtyMolar === undefined
+                                        ? ''
+                                        : rule.qtyMolar
+                                    }
                                     onChange={(e) =>
                                       handleUpdateMaterialRuleRow(origIndex, {
                                         qtyMolar: Math.max(0, Number(e.target.value) || 0),
@@ -2557,8 +2583,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                 <input
                                   type="number"
                                   min="0"
-                                  step="0.1"
-                                  value={rule.qtyFixed ?? 1}
+                                  step="any"
+                                  placeholder="0"
+                                  value={
+                                    rule.qtyFixed === 0 || rule.qtyFixed === undefined
+                                      ? ''
+                                      : rule.qtyFixed
+                                  }
                                   onChange={(e) =>
                                     handleUpdateMaterialRuleRow(origIndex, {
                                       qtyFixed: Math.max(0, Number(e.target.value) || 0),
