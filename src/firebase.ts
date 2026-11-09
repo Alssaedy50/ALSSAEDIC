@@ -336,9 +336,9 @@ function encodeServiceMaterialRulesToKeywords(
         rule.consumptionType === 'per_arch'
           ? rule.consumptionType
           : 'per_session';
-      const qFix = +(Number(rule.qtyFixed) || 0).toFixed(3);
-      const qAnt = +(Number(rule.qtyAnterior) || 0).toFixed(3);
-      const qMol = +(Number(rule.qtyMolar) || 0).toFixed(3);
+      const qFix = +(Number(rule.qtyFixed) || 0).toFixed(4);
+      const qAnt = +(Number(rule.qtyAnterior) || 0).toFixed(4);
+      const qMol = +(Number(rule.qtyMolar) || 0).toFixed(4);
       const sNum =
         rule.sessionNumber === 'all'
           ? 'all'
@@ -386,9 +386,9 @@ function decodeServiceKeywordsAndRecipe(
         materialsRecipe.push({
           materialId: matId,
           consumptionType,
-          qtyFixed: +(Number(qFixRaw) || 0).toFixed(3),
-          qtyAnterior: +(Number(qAntRaw) || 0).toFixed(3),
-          qtyMolar: +(Number(qMolRaw) || 0).toFixed(3),
+          qtyFixed: +(Number(qFixRaw) || 0).toFixed(4),
+          qtyAnterior: +(Number(qAntRaw) || 0).toFixed(4),
+          qtyMolar: +(Number(qMolRaw) || 0).toFixed(4),
           sessionNumber,
         });
       }
@@ -407,7 +407,7 @@ function decodeServiceKeywordsAndRecipe(
 function encodeInventoryCategoryWithMeta(item: InventoryItem): string {
   const cleanNotes = String(item.notes || '').replace(INV_META_REGEX, '').trim();
   const loc = item.location === 'lab' ? 'lab' : 'clinic';
-  const pkg = Math.max(0.001, +(Number(item.packageSize) || 1).toFixed(3));
+  const pkg = Math.max(0.0001, +(Number(item.packageSize) || 1).toFixed(4));
   const uUnit = String(item.usageUnit || item.unit || 'قطعة')
     .replace(/[|\]]/g, '')
     .trim()
@@ -418,7 +418,7 @@ function encodeInventoryCategoryWithMeta(item: InventoryItem): string {
       Number.isFinite(Number(item.remainingSubUnits))
         ? Number(item.remainingSubUnits)
         : (Number(item.qty) || 0) * pkg
-    ).toFixed(3)
+    ).toFixed(4)
   );
   const metaSuffix = `[[invmeta:${loc}|${pkg}|${uUnit}|${sub}]]`;
   const maxNotesLen = Math.max(10, 158 - metaSuffix.length);
@@ -447,20 +447,20 @@ function decodeInventoryCategoryWithMeta(
       location: 'clinic',
       packageSize: 1,
       usageUnit: defaultUnit || 'قطعة',
-      remainingSubUnits: Math.max(0, +(qty * 1).toFixed(3)),
+      remainingSubUnits: Math.max(0, +(qty * 1).toFixed(4)),
     };
   }
 
   const [locRaw, pkgRaw, uUnitRaw, subRaw] = match[1].split('|');
   const location: 'clinic' | 'lab' = locRaw === 'lab' ? 'lab' : 'clinic';
   const parsedPkg = Number(pkgRaw);
-  const packageSize = Number.isFinite(parsedPkg) && parsedPkg > 0 ? +parsedPkg.toFixed(3) : 1;
+  const packageSize = Number.isFinite(parsedPkg) && parsedPkg > 0 ? +parsedPkg.toFixed(4) : 1;
   const usageUnit = (uUnitRaw || '').trim() || defaultUnit || 'قطعة';
   const parsedSub = Number(subRaw);
   const remainingSubUnits =
     Number.isFinite(parsedSub) && parsedSub >= 0
-      ? +parsedSub.toFixed(3)
-      : Math.max(0, +(qty * packageSize).toFixed(3));
+      ? +parsedSub.toFixed(4)
+      : Math.max(0, +(qty * packageSize).toFixed(4));
 
   return {
     notes: cleanNotes === 'مستلزمات سنية' ? '' : cleanNotes,
@@ -484,7 +484,7 @@ function encodeReceiptNotesWithConsumedMaterials(
     .slice(0, 15)
     .map(
       (c) =>
-        `${String(c.materialId).replace(/[,=\]]/g, '').slice(0, 32)}=${+(Number(c.amountDeducted) || 0).toFixed(3)}`
+        `${String(c.materialId).replace(/[,=\]]/g, '').slice(0, 32)}=${+(Number(c.amountDeducted) || 0).toFixed(4)}`
     );
   if (tokens.length === 0) {
     return sanitizeStr(cleanNotes, 500, '');

@@ -18,6 +18,7 @@ import {
 } from '../types/clinic';
 import { CURRENCIES } from '../data/defaultData';
 import { queryClinicAssistant } from '../utils/aiClient';
+import { SmartNumberInput } from './SmartNumberInput';
 
 interface FinanceDashboardProps {
   receipts: ReceiptRecord[];
@@ -456,16 +457,12 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                   المبلغ
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
+                <SmartNumberInput
                   placeholder="0"
-                  value={expAmount === 0 ? '' : expAmount}
-                  onChange={(e) => {
-                    const rawVal = e.target.value;
-                    const val = rawVal === '' ? 0 : Number(rawVal);
-                    setExpAmount(isNaN(val) ? 0 : Math.max(0, val));
+                  emptyWhenZero
+                  value={expAmount}
+                  onValueChange={(val) => {
+                    setExpAmount(Math.max(0, val));
                   }}
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                 />

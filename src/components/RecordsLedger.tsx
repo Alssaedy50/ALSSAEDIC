@@ -37,6 +37,7 @@ import {
   stripArchiveMarkerFromNotes,
 } from '../utils/aiClient';
 import { OfficialReceiptCard } from './OfficialReceiptCard';
+import { SmartNumberInput } from './SmartNumberInput';
 
 interface RecordsLedgerProps {
   settings: ClinicSettings;
@@ -897,12 +898,10 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
+                <SmartNumberInput
+                  emptyWhenZero={false}
                   value={accountSettleAmount}
-                  onChange={(e) => setAccountSettleAmount(e.target.value)}
+                  onValueChange={(_val, raw) => setAccountSettleAmount(raw)}
                   className="w-32 rounded-lg border border-amber-400 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
                   placeholder="0"
                 />
@@ -1092,12 +1091,10 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                   {/* Inline Single-Receipt Settle Input */}
                   {isSettlingThis && (
                     <div className="pt-2 flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
+                      <SmartNumberInput
+                        emptyWhenZero={false}
                         value={settleAmount}
-                        onChange={(e) => setSettleAmount(e.target.value)}
+                        onValueChange={(_val, raw) => setSettleAmount(raw)}
                         className="w-32 rounded-lg border border-amber-400 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-mono tabular-nums font-bold"
                         placeholder="0"
                       />

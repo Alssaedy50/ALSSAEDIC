@@ -51,6 +51,7 @@ import {
 } from '../types/clinic';
 import { isPlatformDeveloperUser } from '../data/defaultData';
 import { auth } from '../firebase';
+import { SmartNumberInput } from './SmartNumberInput';
 import {
   findMatchingPatientAccount,
   isDestructiveSystemIntent,
@@ -1554,11 +1555,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
                 الإجمالي ({rec.currency}) *
               </label>
-              <input
-                type="number"
+              <SmartNumberInput
                 disabled={currentStatus !== 'pending'}
                 value={rec.totalAmount}
-                onChange={(e) => updateRecField('totalAmount', Number(e.target.value) || 0)}
+                onValueChange={(val) => updateRecField('totalAmount', Math.max(0, val))}
                 className={`w-full rounded-lg border bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100 ${
                   !isTotalValid && currentStatus === 'pending'
                     ? 'border-rose-500'
@@ -1571,11 +1571,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
                 المدفوع ({rec.currency}) — المتبقي: {rec.remainingAmount.toLocaleString()}
               </label>
-              <input
-                type="number"
+              <SmartNumberInput
                 disabled={currentStatus !== 'pending'}
                 value={rec.paidAmount}
-                onChange={(e) => updateRecField('paidAmount', Number(e.target.value) || 0)}
+                onValueChange={(val) => updateRecField('paidAmount', Math.max(0, val))}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-emerald-600 dark:text-emerald-400"
               />
             </div>
@@ -1619,7 +1618,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         inv.operation === 'consume' &&
         (!matchedStockItem || (Number(inv.qty) || 0) > Number(matchedStockItem.qty));
       const isInvReadyToApprove =
-        cleanItemName.length >= 2 && (Number(inv.qty) || 0) >= 1 && !isConsumeInvalid;
+        cleanItemName.length >= 2 && (Number(inv.qty) || 0) > 0 && !isConsumeInvalid;
 
       const updateInvField = <K extends keyof PendingInventoryEntryData>(
         field: K,
@@ -1718,11 +1717,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
                 الكمية ({inv.unit}) *
               </label>
-              <input
-                type="number"
+              <SmartNumberInput
                 disabled={currentStatus !== 'pending'}
                 value={inv.qty}
-                onChange={(e) => updateInvField('qty', Math.max(1, Number(e.target.value) || 1))}
+                onValueChange={(val) => updateInvField('qty', Math.max(0, val))}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
               />
             </div>
@@ -1731,11 +1729,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
                 سعر الوحدة — الإجمالي: {inv.totalCost.toLocaleString()}
               </label>
-              <input
-                type="number"
+              <SmartNumberInput
                 disabled={currentStatus !== 'pending'}
                 value={inv.unitPrice}
-                onChange={(e) => updateInvField('unitPrice', Math.max(0, Number(e.target.value) || 0))}
+                onValueChange={(val) => updateInvField('unitPrice', Math.max(0, val))}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
               />
             </div>

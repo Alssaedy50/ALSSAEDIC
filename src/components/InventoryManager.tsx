@@ -14,6 +14,7 @@ import {
 import { DentalServiceItem, InventoryItem } from '../types/clinic';
 import { INVENTORY_UNITS } from '../data/defaultData';
 import { queryClinicAssistant } from '../utils/aiClient';
+import { SmartNumberInput } from './SmartNumberInput';
 
 interface InventoryManagerProps {
   inventory: InventoryItem[];
@@ -126,25 +127,21 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     return inventory;
   }, [inventory, lowStockItems, filterMode]);
 
-  const handleQuantityChange = (valStr: string) => {
-    const nextQty = valStr === '' ? 0 : Number(valStr);
-    const safeQty = isNaN(nextQty) ? 0 : Math.max(0, nextQty);
+  const handleQuantityChange = (safeQty: number) => {
     const pkgSize =
       formData.packageSize && formData.packageSize > 0 ? Number(formData.packageSize) : 1;
     setFormData((prev) => ({
       ...prev,
       quantity: safeQty,
-      remainingSubUnits: Number((safeQty * pkgSize).toFixed(2)),
+      remainingSubUnits: Number((safeQty * pkgSize).toFixed(4)),
     }));
   };
 
-  const handlePackageSizeChange = (valStr: string) => {
-    const nextPkg = valStr === '' ? 0 : Number(valStr);
-    const safePkg = isNaN(nextPkg) ? 0 : Math.max(0, nextPkg);
+  const handlePackageSizeChange = (safePkg: number) => {
     setFormData((prev) => {
       const updatedSub =
         safePkg > 0
-          ? Number(((prev.quantity || 0) * safePkg).toFixed(2))
+          ? Number(((prev.quantity || 0) * safePkg).toFixed(4))
           : prev.remainingSubUnits;
       return {
         ...prev,
@@ -154,11 +151,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     });
   };
 
-  const handleRemainingSubUnitsChange = (valStr: string) => {
-    const nextSub = valStr === '' ? 0 : Number(valStr);
-    const safeSub = isNaN(nextSub) ? 0 : Math.max(0, nextSub);
-    const pkgSize = Math.max(1, formData.packageSize || 1);
-    const computedQty = Number((safeSub / pkgSize).toFixed(2));
+  const handleRemainingSubUnitsChange = (safeSub: number) => {
+    const pkgSize =
+      formData.packageSize && formData.packageSize > 0 ? Number(formData.packageSize) : 1;
+    const computedQty = Number((safeSub / pkgSize).toFixed(4));
     setFormData((prev) => ({
       ...prev,
       remainingSubUnits: safeSub,
@@ -166,19 +162,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     }));
   };
 
-  const handleMinThresholdChange = (valStr: string) => {
-    const nextVal = valStr === '' ? 0 : Number(valStr);
+  const handleMinThresholdChange = (safeVal: number) => {
     setFormData((prev) => ({
       ...prev,
-      minThreshold: isNaN(nextVal) ? 0 : Math.max(0, nextVal),
+      minThreshold: safeVal,
     }));
   };
 
-  const handleCostPerUnitChange = (valStr: string) => {
-    const nextVal = valStr === '' ? 0 : Number(valStr);
+  const handleCostPerUnitChange = (safeVal: number) => {
     setFormData((prev) => ({
       ...prev,
-      costPerUnit: isNaN(nextVal) ? 0 : Math.max(0, nextVal),
+      costPerUnit: safeVal,
     }));
   };
 
@@ -248,9 +242,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     const safeSub =
       formData.remainingSubUnits !== undefined && formData.remainingSubUnits >= 0
         ? Number(formData.remainingSubUnits)
-        : Number((safeQty * finalPkgSize).toFixed(2));
+        : Number((safeQty * finalPkgSize).toFixed(4));
     const cost = Math.max(0, Number(formData.costPerUnit) || 0);
-    const totalCost = Math.round(cost * safeQty);
+    const totalCost = +((cost * safeQty).toFixed(2));
 
     onSaveItem(
       {
@@ -262,7 +256,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         packageSize: finalPkgSize,
         usageUnit: finalUsageUnit,
         remainingSubUnits: safeSub,
-        minQty: Number(formData.minThreshold) || 1,
+        minQty: formData.minThreshold !== undefined ? Number(formData.minThreshold) : 1,
         unitPrice: cost,
         totalCost,
         linkedService: formData.linkedService,
@@ -783,12 +777,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                     عدد العبوات الكبرى المتوفرة
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={formData.quantity === 0 ? '' : formData.quantity}
-                    onChange={(e) => handleQuantityChange(e.target.value)}
+                  <SmartNumberInput
+                    min={0}
+                    value={formData.quantity}
+                    onValueChange={(val) => handleQuantityChange(val)}
                     placeholder="0"
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />
@@ -825,12 +817,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
                       سعة العبوة الواحدة (بالوحدة الصغرى)
                     </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={formData.packageSize === 0 ? '' : formData.packageSize}
-                      onChange={(e) => handlePackageSizeChange(e.target.value)}
+                    <SmartNumberInput
+                      min={0}
+                      value={formData.packageSize}
+                      onValueChange={(val) => handlePackageSizeChange(val)}
                       placeholder="1"
                       className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-mono tabular-nums font-bold"
                     />
@@ -863,14 +853,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     إجمالي الرصيد المتبقي بالوحدة الصغرى:
                   </span>
                   <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={
-                        formData.remainingSubUnits === 0 ? '' : formData.remainingSubUnits
-                      }
-                      onChange={(e) => handleRemainingSubUnitsChange(e.target.value)}
+                    <SmartNumberInput
+                      min={0}
+                      value={formData.remainingSubUnits}
+                      onValueChange={(val) => handleRemainingSubUnitsChange(val)}
                       placeholder="0"
                       className="w-24 rounded-lg border border-sky-300 dark:border-sky-800 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-mono font-bold text-center text-sky-700 dark:text-sky-300"
                     />
@@ -886,12 +872,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                     حد تنبيه النواقص (بالعبوة)
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={formData.minThreshold === 0 ? '' : formData.minThreshold}
-                    onChange={(e) => handleMinThresholdChange(e.target.value)}
+                  <SmartNumberInput
+                    min={0}
+                    value={formData.minThreshold}
+                    onValueChange={(val) => handleMinThresholdChange(val)}
                     placeholder="0"
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />
@@ -901,12 +885,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                     تكلفة العبوة الواحدة ({defaultCurrency})
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={formData.costPerUnit === 0 ? '' : formData.costPerUnit}
-                    onChange={(e) => handleCostPerUnitChange(e.target.value)}
+                  <SmartNumberInput
+                    min={0}
+                    value={formData.costPerUnit}
+                    onValueChange={(val) => handleCostPerUnitChange(val)}
                     placeholder="0"
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />

@@ -72,6 +72,7 @@ import {
   testAIProviderConnection,
 } from '../utils/aiClient';
 import { WorkspaceTeamPanel } from './WorkspaceTeamModal';
+import { SmartNumberInput } from './SmartNumberInput';
 
 interface ClinicSettingsPanelProps {
   settings: ClinicSettings;
@@ -1233,13 +1234,11 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
+                    <SmartNumberInput
+                      min={0}
                       placeholder="0"
-                      value={srv.price === 0 || srv.price === undefined ? '' : srv.price}
-                      onChange={(e) => handleServicePriceUpdate(srv.id, Number(e.target.value) || 0)}
+                      value={srv.price}
+                      onValueChange={(val) => handleServicePriceUpdate(srv.id, val)}
                       className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
                     />
                     <span className="text-xs text-slate-500 shrink-0">
@@ -2162,13 +2161,11 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                 السعر ({formState.identity.defaultCurrency})
               </label>
-              <input
-                type="number"
-                min="0"
-                step="any"
+              <SmartNumberInput
+                min={0}
                 placeholder="0"
-                value={newSrvPrice === 0 || newSrvPrice === undefined ? '' : newSrvPrice}
-                onChange={(e) => setNewSrvPrice(Number(e.target.value) || 0)}
+                value={newSrvPrice}
+                onValueChange={(val) => setNewSrvPrice(val)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
               />
             </div>
@@ -2243,18 +2240,18 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             rule.sessionNumber === 'all' || !rule.sessionNumber ? totalSessions : 1;
 
           if (rule.consumptionType === 'by_tooth_type') {
-            const ant = (rule.qtyAnterior ?? 1) * ruleSessionsMultiplier;
-            const mol = (rule.qtyMolar ?? 1.5) * ruleSessionsMultiplier;
-            entry.anteriorTotal += ant;
-            entry.molarTotal += mol;
+            const ant = +((rule.qtyAnterior ?? 1) * ruleSessionsMultiplier).toFixed(4);
+            const mol = +((rule.qtyMolar ?? 1.5) * ruleSessionsMultiplier).toFixed(4);
+            entry.anteriorTotal = +(entry.anteriorTotal + ant).toFixed(4);
+            entry.molarTotal = +(entry.molarTotal + mol).toFixed(4);
             entry.sessionBreakdown.push(
               rule.sessionNumber === 'all' || !rule.sessionNumber
                 ? `كل الجلسات (${totalSessions}): ${ant} أمامي / ${mol} ضرس`
                 : `الجلسة ${rule.sessionNumber}: ${rule.qtyAnterior ?? 1} أمامي / ${rule.qtyMolar ?? 1.5} ضرس`
             );
           } else {
-            const qty = (rule.qtyFixed ?? 1) * ruleSessionsMultiplier;
-            entry.fixedTotal += qty;
+            const qty = +((rule.qtyFixed ?? 1) * ruleSessionsMultiplier).toFixed(4);
+            entry.fixedTotal = +(entry.fixedTotal + qty).toFixed(4);
             const typeLabel =
               rule.consumptionType === 'per_session'
                 ? 'جلسات'
@@ -2339,14 +2336,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                       ))}
 
                       <div className="flex items-center gap-1 mr-1">
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
+                        <SmartNumberInput
+                          min={1}
+                          allowDecimal={false}
+                          emptyFallbackValue={1}
                           placeholder="1"
-                          value={editingServiceTotalSessions === 0 ? '' : editingServiceTotalSessions}
-                          onChange={(e) =>
-                            setEditingServiceTotalSessions(Math.max(1, Number(e.target.value) || 1))
+                          value={editingServiceTotalSessions}
+                          onValueChange={(val) =>
+                            setEditingServiceTotalSessions(Math.max(1, Math.round(val) || 1))
                           }
                           className="w-14 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-mono font-bold text-center"
                         />
@@ -2519,19 +2516,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                   للسن الأمامي (1، 2، 3) — ({unitLabel})
                                 </label>
                                 <div className="flex items-center gap-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="any"
+                                  <SmartNumberInput
+                                    min={0}
                                     placeholder="0"
-                                    value={
-                                      rule.qtyAnterior === 0 || rule.qtyAnterior === undefined
-                                        ? ''
-                                        : rule.qtyAnterior
-                                    }
-                                    onChange={(e) =>
+                                    value={rule.qtyAnterior}
+                                    onValueChange={(val) =>
                                       handleUpdateMaterialRuleRow(origIndex, {
-                                        qtyAnterior: Math.max(0, Number(e.target.value) || 0),
+                                        qtyAnterior: Math.max(0, val),
                                       })
                                     }
                                     className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
@@ -2547,19 +2538,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                   للضرس الخلفي (4 إلى 8) — ({unitLabel})
                                 </label>
                                 <div className="flex items-center gap-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="any"
+                                  <SmartNumberInput
+                                    min={0}
                                     placeholder="0"
-                                    value={
-                                      rule.qtyMolar === 0 || rule.qtyMolar === undefined
-                                        ? ''
-                                        : rule.qtyMolar
-                                    }
-                                    onChange={(e) =>
+                                    value={rule.qtyMolar}
+                                    onValueChange={(val) =>
                                       handleUpdateMaterialRuleRow(origIndex, {
-                                        qtyMolar: Math.max(0, Number(e.target.value) || 0),
+                                        qtyMolar: Math.max(0, val),
                                       })
                                     }
                                     className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
@@ -2580,19 +2565,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                                     : `الكمية لكل فك متأثر (${unitLabel})`}
                               </label>
                               <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="any"
+                                <SmartNumberInput
+                                  min={0}
                                   placeholder="0"
-                                  value={
-                                    rule.qtyFixed === 0 || rule.qtyFixed === undefined
-                                      ? ''
-                                      : rule.qtyFixed
-                                  }
-                                  onChange={(e) =>
+                                  value={rule.qtyFixed}
+                                  onValueChange={(val) =>
                                     handleUpdateMaterialRuleRow(origIndex, {
-                                      qtyFixed: Math.max(0, Number(e.target.value) || 0),
+                                      qtyFixed: Math.max(0, val),
                                     })
                                   }
                                   className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"

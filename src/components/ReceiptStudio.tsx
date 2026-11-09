@@ -33,6 +33,7 @@ import {
 import { SignatureModal } from './SignatureModal';
 import { FdiToothModal } from './FdiToothModal';
 import { OfficialReceiptCard, ReceiptDisplayData } from './OfficialReceiptCard';
+import { SmartNumberInput } from './SmartNumberInput';
 
 interface ReceiptStudioProps {
   settings: ClinicSettings;
@@ -470,10 +471,10 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                   رقم السند
                 </label>
-                <input
-                  type="number"
+                <SmartNumberInput
+                  allowDecimal={false}
                   value={receiptNo}
-                  onChange={(e) => setReceiptNo(Number(e.target.value) || 1)}
+                  onValueChange={(val) => setReceiptNo(val > 0 ? Math.round(val) : 1)}
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -673,17 +674,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                   الإجمالي
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
+                <SmartNumberInput
                   placeholder="0"
-                  value={totalAmount === 0 ? '' : totalAmount}
+                  emptyWhenZero
+                  value={totalAmount}
                   onFocus={(e) => e.currentTarget.select()}
-                  onChange={(e) => {
-                    const rawVal = e.target.value;
-                    const val = rawVal === '' ? 0 : Number(rawVal);
-                    const safeVal = isNaN(val) ? 0 : Math.max(0, val);
+                  onValueChange={(val) => {
+                    const safeVal = Math.max(0, val);
                     setTotalAmount(safeVal);
                     if (paidAmount === 0 || paidAmount === totalAmount) {
                       setPaidAmount(safeVal);
@@ -697,18 +694,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 <label className="block text-xs font-bold text-emerald-600 dark:text-emerald-400 mb-1">
                   المقبوض
                 </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
+                <SmartNumberInput
                   placeholder="0"
-                  max={totalAmount || undefined}
-                  value={paidAmount === 0 ? '' : paidAmount}
+                  emptyWhenZero
+                  value={paidAmount}
                   onFocus={(e) => e.currentTarget.select()}
-                  onChange={(e) => {
-                    const rawVal = e.target.value;
-                    const val = rawVal === '' ? 0 : Number(rawVal);
-                    setPaidAmount(isNaN(val) ? 0 : Math.max(0, val));
+                  onValueChange={(val) => {
+                    setPaidAmount(Math.max(0, val));
                   }}
                   className={`w-full rounded-lg border px-2.5 py-2 text-sm font-mono tabular-nums font-black ${
                     paidAmount > totalAmount
