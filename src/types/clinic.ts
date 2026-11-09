@@ -193,6 +193,10 @@ export interface PendingReceiptEntryData {
   currency: CurrencyCode | string;
   paymentMethod: string;
   notes: string;
+  matchedAccountName?: string;
+  previousDebtAmount?: number;
+  previousVisitsCount?: number;
+  isReturnVisit?: boolean;
 }
 
 export interface PendingInventoryEntryData {

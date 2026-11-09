@@ -838,11 +838,98 @@ export function buildClinicalSystemPrompt(
 بيانات العيادة الحالية المتاحة لديك:
 ${contextSnippet || '- لا توجد بيانات إضافية محددة.'}
 
-إرشادات العمل:
+إرشادات العمل الصارمة:
 1. قدّم إجابات إكلينيكية، مالية، ومحاسبية دقيقة واحترافية باللغة العربية.
-2. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات وموانع الاستعمال.
-3. عند تحليل صور الأشعة أو الحالات السريرية المرفقة، بيّن الملاحظات التشخيصية وخطة العلاج التقديرية بدقة.
-4. حافظ على الأسلوب المباشر والمهني والمنسق بنقاط واضحة دون حشو.`;
+2. يُمنع منعاً باتاً تكرار الجمل أو الفقرات أو إعادة صياغة نفس الإجابة مرتين في الرسالة الواحدة. اكتب الإجابة مرة واحدة فقط بشكل مركز ومرتب.
+3. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات وموانع الاستعمال باختصار واضح.
+4. عند تحليل صور الأشعة أو الحالات السريرية المرفقة، بيّن الملاحظات التشخيصية وخطة العلاج التقديرية بدقة.`;
+}
+
+/**
+ * Strips internal reasoning tags (<think>...</think>) and eliminates repeated paragraphs,
+ * echoed blocks, and consecutive duplicate sentences within a single assistant message.
+ */
+export function cleanAndDeduplicateAssistantReply(rawText: string): string {
+  if (!rawText) return '';
+
+  // 1. Strip closed and unclosed <think> / <reasoning> blocks
+  let text = String(rawText)
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+    .trim();
+
+  if (!text) return '';
+
+  // Helper to normalize a line/sentence for duplicate comparison
+  const normalizeForCompare = (s: string): string =>
+    s
+      .replace(/[\u064B-\u065F\u0640]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .toLowerCase();
+
+  // 2. Check if the entire message was echoed twice back-to-back
+  const halfLen = Math.floor(text.length / 2);
+  if (text.length > 80) {
+    const firstHalf = text.slice(0, halfLen).trim();
+    const secondHalf = text.slice(halfLen).trim();
+    const normFirst = normalizeForCompare(firstHalf);
+    const normSecond = normalizeForCompare(secondHalf);
+    if (normFirst.length > 35 && (normFirst === normSecond || normSecond.startsWith(normFirst.slice(0, Math.min(80, normFirst.length))))) {
+      text = firstHalf;
+    }
+  }
+
+  // 3. Deduplicate lines and paragraphs while preserving clean formatting
+  const rawLines = text.split(/\r?\n/);
+  const seenLineSignatures = new Set<string>();
+  const dedupedLines: string[] = [];
+
+  for (const rawLine of rawLines) {
+    const trimmedLine = rawLine.trim();
+    if (!trimmedLine) {
+      if (dedupedLines.length > 0 && dedupedLines[dedupedLines.length - 1] !== '') {
+        dedupedLines.push('');
+      }
+      continue;
+    }
+
+    // Deduplicate consecutive repeated sentences inside the same line/paragraph
+    const sentenceParts = trimmedLine.split(/(?<=[.!\u061F؟\n])\s+/);
+    const cleanSentences: string[] = [];
+    const seenInParagraph = new Set<string>();
+
+    for (const part of sentenceParts) {
+      const sTrim = part.trim();
+      if (!sTrim) continue;
+      const sig = normalizeForCompare(sTrim);
+      if (sig.length >= 12 && seenInParagraph.has(sig)) {
+        continue;
+      }
+      if (sig.length >= 12) {
+        seenInParagraph.add(sig);
+      }
+      cleanSentences.push(sTrim);
+    }
+
+    const reconstructedLine = cleanSentences.join(' ').trim();
+    const lineSig = normalizeForCompare(reconstructedLine);
+
+    // Skip if this exact substantial line/bullet/paragraph already appeared in the same message
+    if (lineSig.length >= 14 && seenLineSignatures.has(lineSig)) {
+      continue;
+    }
+    if (lineSig.length >= 14) {
+      seenLineSignatures.add(lineSig);
+    }
+
+    dedupedLines.push(reconstructedLine);
+  }
+
+  return dedupedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function extractCleanBase64(dataUrl: string): { base64: string; mimeType: string } {
@@ -957,12 +1044,18 @@ async function callGeminiDirect(
     if (res.ok) {
       const data = await res.json();
       const candidate = data?.candidates?.[0];
-      const replyParts = candidate?.content?.parts || [];
-      const textReply = replyParts
+      const replyParts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+      // Filter out internal thought parts (`p.thought === true`) so thinking models don't duplicate draft + final answer
+      const nonThoughtParts = replyParts.filter(
+        (p: Record<string, unknown>) => !p?.thought && typeof p?.text === 'string'
+      );
+      const effectiveParts = nonThoughtParts.length > 0 ? nonThoughtParts : replyParts;
+      const rawReply = effectiveParts
         .map((p: Record<string, unknown>) => (typeof p.text === 'string' ? p.text : ''))
         .filter(Boolean)
         .join('\n\n')
         .trim();
+      const textReply = cleanAndDeduplicateAssistantReply(rawReply);
 
       if (textReply) {
         if (!hasImage && targetModel !== config.geminiModel) {
@@ -1229,15 +1322,17 @@ async function callGroqDirect(
         model: targetModel,
         messages,
         temperature: 0.25,
-        max_tokens: 1024,
+        max_tokens: 900,
+        frequency_penalty: 0.35,
+        presence_penalty: 0.2,
       }),
       signal,
     });
 
     if (res.ok) {
       const data = await res.json();
-      let reply = String(data?.choices?.[0]?.message?.content || '').trim();
-      reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      const rawReply = String(data?.choices?.[0]?.message?.content || '').trim();
+      const reply = cleanAndDeduplicateAssistantReply(rawReply);
       if (reply) {
         if (!hasImage && targetModel !== config.groqTextModel) {
           config.groqTextModel = targetModel;
@@ -1357,13 +1452,16 @@ async function callOpenRouterDirect(
         model: targetModel,
         messages,
         temperature: 0.3,
+        frequency_penalty: 0.35,
+        presence_penalty: 0.2,
       }),
       signal,
     });
 
     if (res.ok) {
       const data = await res.json();
-      const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+      const rawReply = String(data?.choices?.[0]?.message?.content || '').trim();
+      const reply = cleanAndDeduplicateAssistantReply(rawReply);
       if (reply) {
         if (!hasImage && targetModel !== config.openrouterModel) {
           config.openrouterModel = targetModel;
@@ -2036,7 +2134,7 @@ export async function queryClinicAssistantDetailed(
       const modelLabel =
         failoverCount > 0 ? `${baseLabel} — (خادم العيادة الاحتياطي)` : baseLabel;
       return {
-        reply: String(parsed.data.reply).trim(),
+        reply: cleanAndDeduplicateAssistantReply(String(parsed.data.reply).trim()),
         model,
         modelLabel,
         providerUsed: 'server',
@@ -2056,7 +2154,9 @@ export async function queryClinicAssistantDetailed(
 
   // Final Ultra-Safe Fallback: Local Clinical Intelligence Engine (Runs purely in browser)
   return {
-    reply: generateLocalClinicalResponse(payload.prompt, payload.clinicContext),
+    reply: cleanAndDeduplicateAssistantReply(
+      generateLocalClinicalResponse(payload.prompt, payload.clinicContext)
+    ),
     model: 'local-clinical-engine',
     modelLabel:
       failoverCount > 0
@@ -2072,13 +2172,250 @@ export async function queryClinicAssistant(payload: AssistantRequestPayload): Pr
   return result.reply;
 }
 
+// ==================== 5B. PATIENT ACCOUNT GROUPING & NORMALIZATION ENGINE ====================
+export const ARCHIVE_NOTE_MARKER = '[مؤرشف]';
+export const RETURN_VISIT_MARKER = '[عودة]';
+
+export function normalizePatientNameKey(rawName: string): string {
+  return String(rawName || '')
+    .trim()
+    .replace(/^(?:المريض|المريضة|مريض|مريضة|الاخ|الأخ|الاخت|الأخت)\s+/i, '')
+    .replace(/[\u064B-\u065F\u0640]/g, '') // remove diacritics & tatweel
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+export function isReceiptArchived(r: ReceiptRecord): boolean {
+  return String(r?.notes || '').includes(ARCHIVE_NOTE_MARKER);
+}
+
+export function isReceiptReturnVisit(r: ReceiptRecord): boolean {
+  const notes = String(r?.notes || '');
+  const srv = Array.isArray(r?.services) ? r.services.join(' ') : '';
+  return (
+    notes.includes(RETURN_VISIT_MARKER) ||
+    /(?:^|\s)(?:عودة|عوده|مراجعة|مراجعه|جلسة متابعة)(?:\s|$)/i.test(notes) ||
+    /(?:عودة|عوده|مراجعة|مراجعه|جلسة متابعة)/i.test(srv)
+  );
+}
+
+export function stripArchiveMarkerFromNotes(notes: string): string {
+  return String(notes || '')
+    .replace(/\[مؤرشف\]\s*\|?\s*/g, '')
+    .replace(/\s*\|\s*\[مؤرشف\]/g, '')
+    .trim();
+}
+
+export interface PatientAccountSummary {
+  accountKey: string;
+  patientName: string;
+  patientPhone: string;
+  receipts: ReceiptRecord[];
+  visitsCount: number;
+  returnVisitsCount: number;
+  totalBilled: number;
+  totalPaid: number;
+  totalRemaining: number;
+  currency: string;
+  lastVisitDate: string;
+  firstVisitDate: string;
+  allServices: string[];
+  allTeethFDI: string[];
+  isArchived: boolean;
+  hasDebt: boolean;
+}
+
+export function buildPatientAccountsFromReceipts(
+  receipts: ReceiptRecord[],
+  defaultCurrency = 'ريال يمني'
+): PatientAccountSummary[] {
+  const map = new Map<string, PatientAccountSummary>();
+
+  // Sort chronologically newest first so canonical name/phone comes from latest active record
+  const sorted = [...receipts].sort((a, b) => {
+    const dateCmp = String(b.date || '').localeCompare(String(a.date || ''));
+    if (dateCmp !== 0) return dateCmp;
+    return (Number(b.receiptNo) || 0) - (Number(a.receiptNo) || 0);
+  });
+
+  for (const r of sorted) {
+    if (!r || !r.patientName) continue;
+    const key = normalizePatientNameKey(r.patientName);
+    if (!key) continue;
+
+    let acc = map.get(key);
+    if (!acc) {
+      acc = {
+        accountKey: key,
+        patientName: r.patientName.trim(),
+        patientPhone: (r.patientPhone || '').trim(),
+        receipts: [],
+        visitsCount: 0,
+        returnVisitsCount: 0,
+        totalBilled: 0,
+        totalPaid: 0,
+        totalRemaining: 0,
+        currency: String(r.currency || defaultCurrency),
+        lastVisitDate: r.date || '',
+        firstVisitDate: r.date || '',
+        allServices: [],
+        allTeethFDI: [],
+        isArchived: true, // stays true only if ALL receipts for this patient are archived
+        hasDebt: false,
+      };
+      map.set(key, acc);
+    }
+
+    if (!acc.patientPhone && r.patientPhone && r.patientPhone.trim()) {
+      acc.patientPhone = r.patientPhone.trim();
+    }
+
+    acc.receipts.push(r);
+    acc.visitsCount += 1;
+    if (isReceiptReturnVisit(r)) {
+      acc.returnVisitsCount += 1;
+    }
+
+    acc.totalBilled += Number(r.totalAmount) || 0;
+    acc.totalPaid += Number(r.paidAmount) || 0;
+    acc.totalRemaining += Number(r.remainingAmount) || 0;
+
+    if (r.date && (!acc.lastVisitDate || r.date > acc.lastVisitDate)) {
+      acc.lastVisitDate = r.date;
+    }
+    if (r.date && (!acc.firstVisitDate || r.date < acc.firstVisitDate)) {
+      acc.firstVisitDate = r.date;
+    }
+
+    if (Array.isArray(r.services)) {
+      for (const s of r.services) {
+        const cleanS = String(s || '').trim();
+        if (cleanS && !acc.allServices.includes(cleanS)) {
+          acc.allServices.push(cleanS);
+        }
+      }
+    }
+
+    if (r.toothFDI) {
+      const teeth = String(r.toothFDI)
+        .split(/[,،;\s-]+/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+      for (const t of teeth) {
+        if (!acc.allTeethFDI.includes(t)) {
+          acc.allTeethFDI.push(t);
+        }
+      }
+    }
+
+    if (!isReceiptArchived(r)) {
+      acc.isArchived = false;
+    }
+  }
+
+  return Array.from(map.values()).map((acc) => ({
+    ...acc,
+    totalBilled: +acc.totalBilled.toFixed(2),
+    totalPaid: +acc.totalPaid.toFixed(2),
+    totalRemaining: Math.max(0, +acc.totalRemaining.toFixed(2)),
+    hasDebt: acc.totalRemaining > 0,
+  }));
+}
+
+export function findMatchingPatientAccount(
+  candidateName: string,
+  receipts: ReceiptRecord[],
+  defaultCurrency = 'ريال يمني'
+): PatientAccountSummary | null {
+  const normCandidate = normalizePatientNameKey(candidateName);
+  if (!normCandidate || normCandidate.length < 2) return null;
+
+  const accounts = buildPatientAccountsFromReceipts(receipts, defaultCurrency);
+  // 1. Exact normalized match
+  const exact = accounts.find((a) => a.accountKey === normCandidate);
+  if (exact) return exact;
+
+  // 2. If candidate has at least 2 words (e.g., "محمد احمد") and uniquely prefixes an existing account
+  const words = normCandidate.split(' ').filter(Boolean);
+  if (words.length >= 2) {
+    const partialMatches = accounts.filter(
+      (a) => a.accountKey.startsWith(normCandidate + ' ') || normCandidate.startsWith(a.accountKey + ' ')
+    );
+    if (partialMatches.length === 1) {
+      return partialMatches[0];
+    }
+  }
+
+  return null;
+}
+
+export async function sendPatientAccountPdfToTelegram(params: {
+  botToken: string;
+  chatId: string;
+  pdfBlob: Blob;
+  fileName: string;
+  caption: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const cleanToken = String(params.botToken || '').trim();
+  const cleanChatId = String(params.chatId || '').trim();
+  if (!cleanToken || !cleanChatId) {
+    return {
+      ok: false,
+      error: 'يرجى إعداد رمز البوت (Bot Token) ومعرّف قناة الأرشيف (Chat ID) في قسم الإعدادات > النسخ الاحتياطي أولاً.',
+    };
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', cleanChatId);
+    formData.append('document', params.pdfBlob, params.fileName);
+    formData.append('caption', params.caption.slice(0, 1000));
+    formData.append('parse_mode', 'HTML');
+
+    const res = await fetch(`https://api.telegram.org/bot${cleanToken}/sendDocument`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      error: data?.description || `تعذر إرسال ملف PDF إلى قناة تليجرام (${res.status})`,
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'تعذر الاتصال بخدمة تليجرام لإرسال ملف PDF.',
+    };
+  }
+}
+
 export async function parseSmartReceiptWithFallback(
   text: string,
   availableServices: DentalServiceItem[],
-  defaultCurrency: string
+  defaultCurrency: string,
+  existingReceipts?: ReceiptRecord[]
 ): Promise<SmartReceiptParseResult | null> {
   const cleanText = String(text || '').trim();
   if (!cleanText) return null;
+
+  // Prepare read-only summary of existing patient accounts for accurate name/phone matching
+  const accounts = existingReceipts
+    ? buildPatientAccountsFromReceipts(existingReceipts, defaultCurrency).slice(0, 40)
+    : [];
+  const knownPatientsStr = accounts
+    .map(
+      (a) =>
+        `${a.patientName} (هاتف: ${a.patientPhone || '—'}، المتبقي: ${a.totalRemaining} ${a.currency})`
+    )
+    .join(' | ');
 
   // 1. Try server endpoint (/api/gemini/parse-receipt) which also uses X-Gemini-Api-Key header if set
   try {
@@ -2097,7 +2434,21 @@ export async function parseSmartReceiptWithFallback(
       error?: string;
     }>(response);
     if (parsed.ok && parsed.data?.result) {
-      return parsed.data.result;
+      const resObj = parsed.data.result;
+      if (resObj.patientName && existingReceipts) {
+        const matchedAcc = findMatchingPatientAccount(
+          resObj.patientName,
+          existingReceipts,
+          defaultCurrency
+        );
+        if (matchedAcc) {
+          resObj.patientName = matchedAcc.patientName;
+          if (!resObj.patientPhone && matchedAcc.patientPhone) {
+            resObj.patientPhone = matchedAcc.patientPhone;
+          }
+        }
+      }
+      return resObj;
     }
   } catch {
     // Continue to client-side fallback
@@ -2114,7 +2465,9 @@ export async function parseSmartReceiptWithFallback(
       const jsonPrompt = `استخرج بيانات سند القبض من النص التالي بصيغة JSON فقط بدون أي شرح:
 النص: "${cleanText}"
 الخدمات المتاحة: ${serviceNames}
+حسابات المرضى المسجلين حالياً (للمطابقة الدقيقة للاسم والهاتف): ${knownPatientsStr || 'لا يوجد'}
 العملة الافتراضية: ${defaultCurrency}
+قواعد صارمة: إذا تطابق اسم المريض مع حساب مسجل مسبقاً، استخدم نفس الاسم الكامل ورقم الهاتف المسجلين له.
 الحقول المطلوبة في JSON: patientName, patientPhone, services (مصفوفة نصوص), toothFDI, totalAmount (رقم), paidAmount (رقم), currency, paymentMethod, notes.`;
 
       const res = await queryClinicAssistantDetailed({
@@ -2125,6 +2478,19 @@ export async function parseSmartReceiptWithFallback(
       if (jsonMatch) {
         const parsedObj = JSON.parse(jsonMatch[0]) as SmartReceiptParseResult;
         if (parsedObj && (parsedObj.patientName || (parsedObj.services && parsedObj.services.length > 0))) {
+          if (parsedObj.patientName && existingReceipts) {
+            const matchedAcc = findMatchingPatientAccount(
+              parsedObj.patientName,
+              existingReceipts,
+              defaultCurrency
+            );
+            if (matchedAcc) {
+              parsedObj.patientName = matchedAcc.patientName;
+              if (!parsedObj.patientPhone && matchedAcc.patientPhone) {
+                parsedObj.patientPhone = matchedAcc.patientPhone;
+              }
+            }
+          }
           return parsedObj;
         }
       }
@@ -2140,7 +2506,7 @@ export async function parseSmartReceiptWithFallback(
 export function isDestructiveSystemIntent(promptText: string): boolean {
   const norm = String(promptText || '').trim();
   if (!norm) return false;
-  return /(احذف سند|حذف سند|امسح سند|مسح سند|إلغاء سند|الغاء سند|احذف مريض|حذف مريض|احذف من المخزون|حذف صنف|امسح المخزون|تصفير السندات|تصفير الحسابات|حذف كل البيانات|مسح كل البيانات|تغيير إعدادات النظام)/i.test(
+  return /(احذف سند|حذف سند|امسح سند|مسح سند|إلغاء سند|الغاء سند|احذف مريض|حذف مريض|احذف حساب|حذف حساب|احذف من المخزون|حذف صنف|امسح المخزون|تصفير السندات|تصفير الحسابات|حذف كل البيانات|مسح كل البيانات|تغيير إعدادات النظام)/i.test(
     norm
   );
 }
@@ -2156,13 +2522,13 @@ export function isDirectDataEntryIntent(
   if (isDestructiveSystemIntent(norm)) return null;
   if (
     /(كشف|تقرير|ملخص|كم عدد|اعرض|استعلام|بحث عن|ما هي|قائمة|هل يوجد|كيف)/i.test(norm) &&
-    !/^(سجل|أضف|اضف|ادخل|أدخل|اصدر|أصدر|انشئ|أنشئ|توريد|تزويد|خصم من المخزون|صرف من المخزون)/i.test(norm)
+    !/^(سجل|أضف|اضف|ادخل|أدخل|اصدر|أصدر|انشئ|أنشئ|عودة للمريض|مراجعة للمريض|توريد|تزويد|خصم من المخزون|صرف من المخزون)/i.test(norm)
   ) {
     return null;
   }
 
   const receiptActionRegex =
-    /^(سجل سند|أضف سند|اضف سند|إصدار سند|اصدر سند|أصدر سند|انشئ سند|أنشئ سند|سند قبض للمريض|سند جديد للمريض|ادخل سند|أدخل سند|فاتورة للمريض|سند للمريض)/i;
+    /^(سجل سند|أضف سند|اضف سند|إصدار سند|اصدر سند|أصدر سند|انشئ سند|أنشئ سند|سند قبض للمريض|سند جديد للمريض|ادخل سند|أدخل سند|فاتورة للمريض|سند للمريض|عودة للمريض|سجل عودة|سجل مراجعة)/i;
   const inventoryActionRegex =
     /^(أضف للمخزون|اضف للمخزون|إضافة للمخزون|اضافة للمخزون|أضف صنف|اضف صنف|ادخل في المخزون|أدخل في المخزون|توريد مخزون|تزويد مخزون|سحب من المخزون|خصم من المخزون|صرف من المخزون)/i;
 
@@ -2186,7 +2552,8 @@ export async function parseDirectDataEntryProposal(
     allowReceipt?: boolean;
     allowInventory?: boolean;
     strictCatalogValidation?: boolean;
-  }
+  },
+  existingReceipts?: ReceiptRecord[]
 ): Promise<PendingDataEntryProposal | null> {
   const detectedType =
     forcedType ||
@@ -2211,15 +2578,31 @@ export async function parseDirectDataEntryProposal(
     .map((i) => `${i.name} [المتوفر: ${i.qty} ${i.unit}، السعر: ${i.unitPrice}]`)
     .join('، ');
 
+  const patientAccounts = existingReceipts
+    ? buildPatientAccountsFromReceipts(existingReceipts, defaultCurrency).slice(0, 35)
+    : [];
+  const patientAccountsStr = patientAccounts
+    .map(
+      (a) =>
+        `${a.patientName} [هاتف: ${a.patientPhone || '—'}، زيارات: ${a.visitsCount}، دين متبقٍ: ${a.totalRemaining} ${a.currency}، أسنان سابقة: ${a.allTeethFDI.join('-') || '—'}]`
+    )
+    .join(' | ');
+
+  const isReturnIntent = /(?:عودة|عوده|مراجعة|مراجعه|جلسة متابعة)/i.test(promptText);
+
   const extractionPrompt =
     detectedType === 'receipt'
       ? `استخرج بيانات سند القبض من النص التالي بدقة صارمة بصيغة JSON فقط دون تأليف أي بيانات غير مذكورة:
 النص: "${promptText}"
 خدمات العيادة المعتمدة: ${servicesCatalogStr}
+حسابات المرضى المسجلين في النظام (لربط السند بنفس حساب المريض إذا تطابق الاسم): ${patientAccountsStr || 'لا توجد حسابات سابقة'}
 العملة: ${defaultCurrency}
-قواعد صارمة: إذا لم يُذكر اسم المريض اجعل patientName نصاً فارغاً "". اختر الخدمة المطابقة من خدمات العيادة.
+قواعد صارمة:
+1. إذا تطابق اسم المريض في النص مع أحد حسابات المرضى المسجلين أعلاه، يجب كتابة نفس الاسم الكامل المعتمد في patientName ونفس رقم الهاتف في patientPhone ليدرج السند تحت حسابه مباشرة.
+2. إذا لم يُذكر اسم المريض اجعل patientName نصاً فارغاً "".
+3. اختر الخدمة المطابقة من خدمات العيادة المعتمدة.
 JSON المطلوب فقط:
-{"type":"receipt","patientName":"","patientPhone":"","services":[],"toothFDI":"","totalAmount":0,"paidAmount":0,"currency":"${defaultCurrency}","paymentMethod":"نقداً","notes":""}`
+{"type":"receipt","patientName":"","patientPhone":"","services":[],"toothFDI":"","totalAmount":0,"paidAmount":0,"currency":"${defaultCurrency}","paymentMethod":"نقداً","isReturnVisit":${isReturnIntent},"notes":""}`
       : `استخرج بيانات عملية المخزون من النص التالي بدقة صارمة بصيغة JSON فقط دون تأليف أي بيانات غير مذكورة:
 النص: "${promptText}"
 أصناف المخزون الحالية: ${inventoryCatalogStr || 'لا توجد أصناف'}
@@ -2248,7 +2631,7 @@ JSON المطلوب فقط:
             model: m,
             messages: [{ role: 'user', content: extractionPrompt }],
             temperature: 0.05,
-            max_tokens: 320,
+            max_tokens: 340,
           }),
         });
         if (res.ok) {
@@ -2311,8 +2694,8 @@ JSON المطلوب فقط:
         }, 0);
 
         const parsedTotal = Math.max(0, Number(parsed.totalAmount) || 0);
-        const totalAmount = parsedTotal > 0 ? parsedTotal : catalogSum;
-        if (totalAmount <= 0) {
+        const totalAmount = parsedTotal > 0 ? parsedTotal : isReturnIntent ? 0 : catalogSum;
+        if (totalAmount <= 0 && !isReturnIntent) {
           warnings.push('يرجى تحديد المبلغ الإجمالي للسند قبل الاعتماد.');
         }
 
@@ -2331,22 +2714,57 @@ JSON المطلوب فقط:
         ) {
           cleanPatientName = '';
         }
+
+        // Match against existing patient accounts so new receipt links directly to the same account
+        const matchedAccount =
+          cleanPatientName && existingReceipts
+            ? findMatchingPatientAccount(cleanPatientName, existingReceipts, defaultCurrency)
+            : null;
+
+        let cleanPhone = String(parsed.patientPhone || '').replace(/[^\d+]/g, '').slice(0, 20);
+        let cleanToothFDI = String(parsed.toothFDI || '').trim().slice(0, 20);
+
+        if (matchedAccount) {
+          cleanPatientName = matchedAccount.patientName;
+          if (!cleanPhone && matchedAccount.patientPhone) {
+            cleanPhone = matchedAccount.patientPhone;
+          }
+          if (!cleanToothFDI && isReturnIntent && matchedAccount.allTeethFDI.length > 0) {
+            cleanToothFDI = matchedAccount.allTeethFDI.join(' - ').slice(0, 20);
+          }
+        }
+
         if (cleanPatientName.length < 2) {
           warnings.push('اسم المريض مطلوب — يرجى كتابة اسم المريض في البطاقة قبل الحفظ.');
         }
 
+        const effectiveReturnVisit = Boolean(parsed.isReturnVisit || isReturnIntent);
+        const baseNotes = String(parsed.notes || 'إدخال مراجع عبر المساعد').trim().slice(0, 180);
+        const finalNotes =
+          effectiveReturnVisit && !baseNotes.includes(RETURN_VISIT_MARKER)
+            ? `${RETURN_VISIT_MARKER} ${baseNotes}`
+            : baseNotes;
+
         const receiptData: PendingReceiptEntryData = {
           patientName: cleanPatientName,
-          patientPhone: String(parsed.patientPhone || '').replace(/[^\d+]/g, '').slice(0, 20),
+          patientPhone: cleanPhone,
           services: finalServices,
-          toothFDI: String(parsed.toothFDI || '').trim().slice(0, 20),
+          toothFDI: cleanToothFDI,
           totalAmount,
           paidAmount,
           remainingAmount,
-          currency: String(parsed.currency || defaultCurrency).trim(),
+          currency: String(parsed.currency || matchedAccount?.currency || defaultCurrency).trim(),
           paymentMethod: String(parsed.paymentMethod || 'نقداً').trim(),
-          notes: String(parsed.notes || 'إدخال مراجع عبر المساعد').trim().slice(0, 200),
+          notes: finalNotes,
+          matchedAccountName: matchedAccount?.patientName,
+          previousDebtAmount: matchedAccount?.totalRemaining,
+          previousVisitsCount: matchedAccount?.visitsCount,
+          isReturnVisit: effectiveReturnVisit,
         };
+
+        const accountBadgeText = matchedAccount
+          ? ` (مرتبط بحساب المريض المسجل: ${matchedAccount.visitsCount} زيارة سابقة — الدين السابق: ${matchedAccount.totalRemaining.toLocaleString()} ${matchedAccount.currency})`
+          : '';
 
         return {
           id: 'prop_rec_' + Date.now(),
@@ -2354,7 +2772,7 @@ JSON المطلوب فقط:
           status: 'pending',
           modelUsed: modelUsedLabel,
           validationWarnings: warnings.length > 0 ? warnings : undefined,
-          summaryText: `مسودة سند قبض جاهزة للمراجعة (${receiptData.patientName || 'يرجى إدخال اسم المريض'}) — لن يتم حفظ أي بيانات في النظام إلا بعد مراجعتك وموافقتك:`,
+          summaryText: `مسودة ${effectiveReturnVisit ? 'عودة / مراجعة' : 'سند قبض'} جاهزة للمراجعة (${receiptData.patientName || 'يرجى إدخال اسم المريض'})${accountBadgeText} — لن يتم الحفظ إلا بعد موافقتك:`,
           receiptData,
         };
       } else {

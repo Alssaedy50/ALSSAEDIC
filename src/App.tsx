@@ -39,7 +39,13 @@ import {
   createInitialClinicSettingsForUser,
 } from './data/defaultData';
 import { numberToArabicWords } from './utils/arabicTafqeet';
-import { LOCAL_API_SESSION_KEY } from './utils/aiClient';
+import {
+  ARCHIVE_NOTE_MARKER,
+  LOCAL_API_SESSION_KEY,
+  findMatchingPatientAccount,
+  normalizePatientNameKey,
+  stripArchiveMarkerFromNotes,
+} from './utils/aiClient';
 import { ReceiptStudio } from './components/ReceiptStudio';
 import { RecordsLedger } from './components/RecordsLedger';
 import { InventoryManager } from './components/InventoryManager';
@@ -270,6 +276,12 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [editingReceipt, setEditingReceipt] = useState<ReceiptRecord | null>(null);
   const [settlingReceiptIdFromStudio, setSettlingReceiptIdFromStudio] = useState<string | null>(null);
+  const [selectedAccountKeyFromStudio, setSelectedAccountKeyFromStudio] = useState<string | null>(null);
+  const [prefillPatientForStudio, setPrefillPatientForStudio] = useState<{
+    patientName: string;
+    patientPhone: string;
+    isReturnVisit?: boolean;
+  } | null>(null);
 
   const [toast, setToast] = useState<{
     id: number;
@@ -1126,8 +1138,21 @@ export default function App() {
       }
     }
 
+    const matchedExistingAccount = findMatchingPatientAccount(
+      payload.patientName,
+      receipts,
+      settings.identity.defaultCurrency
+    );
+    const canonicalPatientName = matchedExistingAccount
+      ? matchedExistingAccount.patientName
+      : payload.patientName;
+    const canonicalPatientPhone =
+      (payload.patientPhone || '').trim() || matchedExistingAccount?.patientPhone || '';
+
     const record = validateAndNormalizeReceipt({
       ...payload,
+      patientName: canonicalPatientName,
+      patientPhone: canonicalPatientPhone,
       id: payload.id || 'rec_' + Date.now(),
       createdAt: new Date().toISOString(),
     });
@@ -1307,6 +1332,138 @@ export default function App() {
         });
     } else {
       notify('تم حذف السند واسترجاع المواد المرتبطة للمخزون', 'info');
+    }
+  };
+
+  const handleSettlePatientAccountDebt = (accountKey: string, amountPaidNow: number) => {
+    if (!currentPermissions.canEditReceipt && currentRole !== 'owner') {
+      notify('ليس لديك صلاحية تسجيل تسديدات أو تعديل السندات.', 'error');
+      return;
+    }
+    if (!Number.isFinite(amountPaidNow) || amountPaidNow <= 0) {
+      notify('يرجى إدخال مبلغ سداد صحيح أكبر من الصفر.', 'error');
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    let remainingToDistribute = amountPaidNow;
+    const updatedCloudRecords: ReceiptRecord[] = [];
+
+    // Sort patient's unpaid receipts oldest first so oldest debts are settled first
+    const unpaidIdsOrdered = receipts
+      .filter(
+        (r) =>
+          normalizePatientNameKey(r.patientName) === accountKey &&
+          (Number(r.remainingAmount) || 0) > 0
+      )
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .map((r) => r.id);
+
+    const nextReceiptsList = receipts.map((r) => {
+      if (!unpaidIdsOrdered.includes(r.id) || remainingToDistribute <= 0) return r;
+      const currentRem = Number(r.remainingAmount) || 0;
+      const payHere = Math.min(remainingToDistribute, currentRem);
+      if (payHere <= 0) return r;
+
+      remainingToDistribute = Math.max(0, +(remainingToDistribute - payHere).toFixed(2));
+      const nextPaid = Math.min(r.totalAmount, Number(r.paidAmount) + payHere);
+      const nextRem = Math.max(0, +(Number(r.totalAmount) - nextPaid).toFixed(2));
+      const settlementNote = `تم سداد دفعة ${payHere.toLocaleString()} ${r.currency} بتاريخ ${today}`;
+      const nextNotes = r.notes
+        ? `${r.notes} | ${settlementNote}`.slice(0, 500)
+        : settlementNote;
+
+      const updated = validateAndNormalizeReceipt({
+        ...r,
+        paidAmount: nextPaid,
+        remainingAmount: nextRem,
+        notes: nextNotes,
+        amountWords: numberToArabicWords(nextPaid, String(r.currency)),
+      });
+      updatedCloudRecords.push(updated);
+      return updated;
+    });
+
+    const targetClinicUid = cloudTargetUid;
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
+    setReceipts(nextReceiptsList);
+
+    if (targetClinicUid && updatedCloudRecords.length > 0) {
+      Promise.all(updatedCloudRecords.map((rec) => saveReceiptToCloud(targetClinicUid, rec, settings)))
+        .then(() => notify('تم تسديد الدفعة من حساب المريض ومزامنتها سحابياً', 'success'))
+        .catch(() => notify('تم تسديد الدفعة محلياً وستتم المزامنة تلقائياً', 'info'));
+    } else {
+      notify('تم تسديد الدفعة من حساب المريض بنجاح', 'success');
+    }
+  };
+
+  const handleArchivePatientAccount = (accountKey: string, archive: boolean) => {
+    if (!currentPermissions.canEditReceipt && currentRole !== 'owner') {
+      notify('غير مصرح لك بأرشفة الحسابات.', 'error');
+      return;
+    }
+
+    const updatedCloudRecords: ReceiptRecord[] = [];
+    const nextReceiptsList = receipts.map((r) => {
+      if (normalizePatientNameKey(r.patientName) !== accountKey) return r;
+      const cleanNotes = stripArchiveMarkerFromNotes(r.notes || '');
+      const nextNotes = archive
+        ? cleanNotes
+          ? `${ARCHIVE_NOTE_MARKER} | ${cleanNotes}`.slice(0, 500)
+          : ARCHIVE_NOTE_MARKER
+        : cleanNotes;
+      const updated = validateAndNormalizeReceipt({
+        ...r,
+        notes: nextNotes,
+      });
+      updatedCloudRecords.push(updated);
+      return updated;
+    });
+
+    const targetClinicUid = cloudTargetUid;
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
+    setReceipts(nextReceiptsList);
+
+    if (targetClinicUid && updatedCloudRecords.length > 0) {
+      Promise.all(updatedCloudRecords.map((rec) => saveReceiptToCloud(targetClinicUid, rec, settings)))
+        .then(() =>
+          notify(
+            archive ? 'تمت أرشفة حساب المريض ومزامنته سحابياً' : 'تمت استعادة حساب المريض من الأرشيف',
+            'success'
+          )
+        )
+        .catch(() =>
+          notify(archive ? 'تمت أرشفة حساب المريض محلياً' : 'تمت استعادة حساب المريض محلياً', 'info')
+        );
+    } else {
+      notify(archive ? 'تمت أرشفة حساب المريض' : 'تمت استعادة حساب المريض من الأرشيف', 'info');
+    }
+  };
+
+  const handleDeletePatientAccount = (accountKey: string) => {
+    if (!currentPermissions.canDeleteReceipt && currentRole !== 'owner') {
+      notify('غير مصرح لك بحذف حسابات المرضى (يتطلب صلاحية المالك).', 'error');
+      return;
+    }
+
+    const targetReceipts = receipts.filter(
+      (r) => normalizePatientNameKey(r.patientName) === accountKey
+    );
+    if (targetReceipts.length === 0) return;
+
+    const targetIds = new Set(targetReceipts.map((r) => r.id));
+    const nextReceiptsList = receipts.filter((r) => !targetIds.has(r.id));
+    const targetClinicUid = cloudTargetUid;
+
+    persistCollectionToLocal(STORAGE_KEYS.RECEIPTS, nextReceiptsList, targetClinicUid);
+    setReceipts(nextReceiptsList);
+
+    if (targetClinicUid) {
+      Promise.all(Array.from(targetIds).map((id) => deleteReceiptFromCloud(targetClinicUid, id)))
+        .then(() => notify('تم حذف حساب المريض وجميع سنداته سحابياً', 'info'))
+        .catch(() => notify('تم حذف حساب المريض محلياً — تعذر المزامنة السحابية حالياً', 'warning'));
+    } else {
+      notify('تم حذف حساب المريض وجميع سنداته', 'info');
     }
   };
 
@@ -1709,11 +1866,17 @@ export default function App() {
             settings={settings}
             receipts={receipts}
             editingReceipt={editingReceipt}
+            prefillPatient={prefillPatientForStudio}
+            onClearPrefillPatient={() => setPrefillPatientForStudio(null)}
             nextReceiptNo={nextReceiptNo}
             onSaveReceipt={handleSaveReceipt}
             onClearEditing={() => setEditingReceipt(null)}
             onJumpToSettleDebt={(receiptId) => {
               setSettlingReceiptIdFromStudio(receiptId);
+              navigateToSection('records');
+            }}
+            onOpenPatientAccount={(accountKey) => {
+              setSelectedAccountKeyFromStudio(accountKey);
               navigateToSection('records');
             }}
             onUpdatePermanentSig={(sig) => {
@@ -1738,16 +1901,26 @@ export default function App() {
             receipts={receipts}
             defaultCurrency={settings.identity.defaultCurrency}
             initialSettleReceiptId={settlingReceiptIdFromStudio}
+            initialSelectedAccountKey={selectedAccountKeyFromStudio}
             onClearInitialSettle={() => setSettlingReceiptIdFromStudio(null)}
+            onClearInitialAccount={() => setSelectedAccountKeyFromStudio(null)}
             onEditReceipt={(rec) => {
               setEditingReceipt(rec);
               navigateToSection('receipt');
               notify(`تم فتح السند #${rec.receiptNo}`, 'info');
             }}
             onSettleDebt={handleSettleDebt}
+            onSettlePatientAccountDebt={handleSettlePatientAccountDebt}
+            onArchivePatientAccount={handleArchivePatientAccount}
+            onDeletePatientAccount={handleDeletePatientAccount}
             onDeleteReceipt={handleDeleteReceipt}
-            onGoToNewReceipt={() => {
+            onGoToNewReceipt={(prefill) => {
               setEditingReceipt(null);
+              if (prefill) {
+                setPrefillPatientForStudio(prefill);
+              } else {
+                setPrefillPatientForStudio(null);
+              }
               navigateToSection('receipt');
             }}
             notify={notify}
@@ -1861,7 +2034,11 @@ export default function App() {
                 const cleanPatient = (recData.patientName || '').trim();
                 const totalAmount = Math.max(0, Number(recData.totalAmount) || 0);
                 const paidAmount = Math.max(0, Number(recData.paidAmount) || 0);
-                if (cleanPatient.length < 2 || totalAmount <= 0 || paidAmount > totalAmount) {
+                if (
+                  cleanPatient.length < 2 ||
+                  (totalAmount <= 0 && !recData.isReturnVisit) ||
+                  paidAmount > totalAmount
+                ) {
                   notify('بيانات السند غير مكتملة أو غير صالحة للحفظ', 'warning');
                   return;
                 }
@@ -1878,7 +2055,7 @@ export default function App() {
                     Array.isArray(recData.services) && recData.services.length > 0
                       ? recData.services
                       : ['كشفية طبية'],
-                  toothFDI: '',
+                  toothFDI: (recData.toothFDI || '').trim(),
                   totalAmount,
                   paidAmount,
                   remainingAmount,

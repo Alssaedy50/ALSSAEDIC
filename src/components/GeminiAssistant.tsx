@@ -52,6 +52,7 @@ import {
 import { isPlatformDeveloperUser } from '../data/defaultData';
 import { auth } from '../firebase';
 import {
+  findMatchingPatientAccount,
   isDestructiveSystemIntent,
   isDirectDataEntryIntent,
   loadAIProviderConfig,
@@ -960,7 +961,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       }
       const total = Number(data.totalAmount) || 0;
       const paid = Number(data.paidAmount) || 0;
-      if (total <= 0) {
+      if (total < 0 || (total === 0 && !data.isReturnVisit)) {
         notify('يرجى تحديد المبلغ الإجمالي للسند (أكبر من صفر)', 'warning');
         return;
       }
@@ -1130,7 +1131,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             strictCatalogValidation: appearance.strictCatalogValidation,
             allowReceipt: appearance.allowAiReceiptEntry,
             allowInventory: appearance.allowAiInventoryEntry,
-          }
+          },
+          receipts
         );
 
         if (proposal && !userInitiatedAbortRef.current) {
@@ -1331,11 +1333,21 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       if (!rec) return null;
 
       const isPatientValid = String(rec.patientName || '').trim().length >= 2;
-      const isTotalValid = (Number(rec.totalAmount) || 0) > 0;
+      const isTotalValid =
+        (Number(rec.totalAmount) || 0) > 0 || Boolean(rec.isReturnVisit && Number(rec.totalAmount) === 0);
       const isPaidValid =
         (Number(rec.paidAmount) || 0) >= 0 &&
         (Number(rec.paidAmount) || 0) <= (Number(rec.totalAmount) || 0);
       const isReceiptReadyToApprove = isPatientValid && isTotalValid && isPaidValid;
+
+      const liveMatchedAccount =
+        rec.patientName && rec.patientName.trim().length >= 2
+          ? findMatchingPatientAccount(
+              rec.patientName,
+              receipts,
+              settings.identity.defaultCurrency
+            )
+          : null;
 
       const updateRecField = <K extends keyof PendingReceiptEntryData>(
         field: K,
@@ -1347,6 +1359,21 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             ...base,
             [field]: val,
           };
+          if (field === 'patientName' && typeof val === 'string') {
+            const matchedAcc = findMatchingPatientAccount(
+              val,
+              receipts,
+              settings.identity.defaultCurrency
+            );
+            if (matchedAcc) {
+              updated.matchedAccountName = matchedAcc.patientName;
+              updated.previousDebtAmount = matchedAcc.totalRemaining;
+              updated.previousVisitsCount = matchedAcc.visitsCount;
+              if (!updated.patientPhone && matchedAcc.patientPhone) {
+                updated.patientPhone = matchedAcc.patientPhone;
+              }
+            }
+          }
           if (field === 'totalAmount' || field === 'paidAmount') {
             updated.remainingAmount = Math.max(
               0,
@@ -1368,7 +1395,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-1.5 font-black text-emerald-700 dark:text-emerald-400">
               <FilePlus2 className="w-4 h-4 shrink-0" />
-              <span>مراجعة واعتماد سند قبض</span>
+              <span>{rec.isReturnVisit ? 'مراجعة واعتماد عودة / مراجعة' : 'مراجعة واعتماد سند قبض'}</span>
             </div>
             {currentStatus === 'pending' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[10px]">
@@ -1388,6 +1415,25 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               </span>
             )}
           </div>
+
+          {liveMatchedAccount && (
+            <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold text-sky-900 dark:text-sky-200">
+              <span>
+                مرتبط بحساب المريض المسجل: <strong>{liveMatchedAccount.patientName}</strong> (زيارات سابقة: {liveMatchedAccount.visitsCount})
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded ${
+                  liveMatchedAccount.totalRemaining > 0
+                    ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300'
+                    : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                }`}
+              >
+                {liveMatchedAccount.totalRemaining > 0
+                  ? `عليه دين: ${liveMatchedAccount.totalRemaining.toLocaleString()} ${liveMatchedAccount.currency}`
+                  : 'مسدد كامل'}
+              </span>
+            </div>
+          )}
 
           {proposal.validationWarnings && proposal.validationWarnings.length > 0 && currentStatus === 'pending' && (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 space-y-1 text-[11px] font-bold text-amber-800 dark:text-amber-200">

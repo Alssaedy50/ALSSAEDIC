@@ -25,7 +25,12 @@ import {
 } from '../types/clinic';
 import { CURRENCIES, PAYMENT_METHODS } from '../data/defaultData';
 import { numberToArabicWords, parseFDIToothNumbers } from '../utils/arabicTafqeet';
-import { parseSmartReceiptWithFallback } from '../utils/aiClient';
+import {
+  RETURN_VISIT_MARKER,
+  buildPatientAccountsFromReceipts,
+  findMatchingPatientAccount,
+  parseSmartReceiptWithFallback,
+} from '../utils/aiClient';
 import {
   buildCleanSpeechTranscript,
   deduplicateSpeechText,
@@ -38,10 +43,17 @@ interface ReceiptStudioProps {
   settings: ClinicSettings;
   receipts: ReceiptRecord[];
   editingReceipt: ReceiptRecord | null;
+  prefillPatient?: {
+    patientName: string;
+    patientPhone: string;
+    isReturnVisit?: boolean;
+  } | null;
+  onClearPrefillPatient?: () => void;
   nextReceiptNo: number;
   onSaveReceipt: (payload: Omit<ReceiptRecord, 'id'> & { id?: string }) => ReceiptRecord;
   onClearEditing: () => void;
   onJumpToSettleDebt?: (receiptId: string) => void;
+  onOpenPatientAccount?: (accountKey: string) => void;
   onUpdatePermanentSig: (sigDataUrl: string) => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
@@ -50,10 +62,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   settings,
   receipts,
   editingReceipt,
+  prefillPatient,
+  onClearPrefillPatient,
   nextReceiptNo,
   onSaveReceipt,
   onClearEditing,
   onJumpToSettleDebt,
+  onOpenPatientAccount,
   onUpdatePermanentSig,
   notify,
 }) => {
@@ -72,6 +87,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   );
   const [paymentMethod, setPaymentMethod] = useState<string>('نقداً (Cash)');
   const [notes, setNotes] = useState<string>('');
+  const [isReturnVisit, setIsReturnVisit] = useState<boolean>(false);
   const [paperFormat, setPaperFormat] = useState<PaperFormat>('a5');
   const [accountantSig, setAccountantSig] = useState<string>(
     settings.appearance.permanentAccountantSig || ''
@@ -121,16 +137,35 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       setCurrency(editingReceipt.currency || settings.identity.defaultCurrency);
       setPaymentMethod(editingReceipt.paymentMethod || 'نقداً (Cash)');
       setNotes(editingReceipt.notes || '');
+      setIsReturnVisit(String(editingReceipt.notes || '').includes(RETURN_VISIT_MARKER));
       setPaperFormat(editingReceipt.paperFormat || 'a5');
       setAccountantSig(
         editingReceipt.accountantSig || settings.appearance.permanentAccountantSig || ''
       );
       setReceiverSig(editingReceipt.receiverSig || '');
+      setSubTab('form');
+    } else if (prefillPatient) {
+      setReceiptNo(nextReceiptNo);
+      setDate(new Date().toISOString().slice(0, 10));
+      setPatientName(prefillPatient.patientName);
+      setPatientPhone(prefillPatient.patientPhone || '');
+      setIsReturnVisit(Boolean(prefillPatient.isReturnVisit));
+      if (prefillPatient.isReturnVisit) {
+        setNotes(`${RETURN_VISIT_MARKER} جلسة متابعة / مراجعة`);
+      } else {
+        setNotes('');
+      }
+      setSubTab('form');
+      if (onClearPrefillPatient) {
+        onClearPrefillPatient();
+      }
     } else {
       setReceiptNo(nextReceiptNo);
     }
   }, [
     editingReceipt,
+    prefillPatient,
+    onClearPrefillPatient,
     nextReceiptNo,
     settings.identity.defaultCurrency,
     settings.appearance.permanentAccountantSig,
@@ -142,27 +177,39 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     [paidAmount, currency]
   );
 
-  const uniquePatients = useMemo(() => {
-    const map = new Map<string, string>();
-    receipts.forEach((r) => {
-      if (r.patientName && !map.has(r.patientName)) {
-        map.set(r.patientName, r.patientPhone || '');
-      }
-    });
-    return Array.from(map.entries()).map(([name, phone]) => ({ name, phone }));
-  }, [receipts]);
+  const patientAccounts = useMemo(
+    () => buildPatientAccountsFromReceipts(receipts, settings.identity.defaultCurrency),
+    [receipts, settings.identity.defaultCurrency]
+  );
+
+  const matchedPatientAccount = useMemo(
+    () =>
+      patientName.trim().length >= 2
+        ? findMatchingPatientAccount(patientName, receipts, settings.identity.defaultCurrency)
+        : null,
+    [patientName, receipts, settings.identity.defaultCurrency]
+  );
+
+  const uniquePatients = useMemo(
+    () =>
+      patientAccounts.map((acc) => ({
+        name: acc.patientName,
+        phone: acc.patientPhone,
+        accountKey: acc.accountKey,
+        totalRemaining: acc.totalRemaining,
+        visitsCount: acc.visitsCount,
+      })),
+    [patientAccounts]
+  );
 
   const patientUnpaidReceipts = useMemo(() => {
-    const cleanName = patientName.trim();
-    if (!cleanName || !settings.features.debtAlert) return [];
-    return receipts.filter(
+    if (!matchedPatientAccount || !settings.features.debtAlert) return [];
+    return matchedPatientAccount.receipts.filter(
       (r) =>
-        r.patientName.trim() === cleanName &&
         (!editingReceipt || r.id !== editingReceipt.id) &&
-        String(r.currency || 'ريال يمني') === String(currency || 'ريال يمني') &&
         (Number(r.remainingAmount) || 0) > 0
     );
-  }, [patientName, receipts, editingReceipt, currency, settings.features.debtAlert]);
+  }, [matchedPatientAccount, editingReceipt, settings.features.debtAlert]);
 
   const patientPreviousDebt = useMemo(
     () =>
@@ -210,6 +257,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     setCurrency(settings.identity.defaultCurrency || 'ريال يمني');
     setPaymentMethod('نقداً (Cash)');
     setNotes('');
+    setIsReturnVisit(false);
     setSmartInput('');
     setReceiverSig('');
     setAccountantSig(settings.appearance.permanentAccountantSig || '');
@@ -251,7 +299,21 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     const finalTotal = totalMatch ? Number(totalMatch[1]) : calculatedPrice;
     const finalPaid = paidMatch ? Number(paidMatch[1]) : finalTotal;
 
-    if (extractedName) setPatientName(extractedName);
+    if (extractedName) {
+      const matchedAcc = findMatchingPatientAccount(
+        extractedName,
+        receipts,
+        settings.identity.defaultCurrency
+      );
+      if (matchedAcc) {
+        setPatientName(matchedAcc.patientName);
+        if (!extractedPhone && matchedAcc.patientPhone) {
+          setPatientPhone(matchedAcc.patientPhone);
+        }
+      } else {
+        setPatientName(extractedName);
+      }
+    }
     if (extractedPhone) setPatientPhone(extractedPhone);
     if (matchedServices.length > 0) setSelectedServices(matchedServices);
     if (finalTotal > 0) setTotalAmount(finalTotal);
@@ -270,13 +332,28 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       const r = await parseSmartReceiptWithFallback(
         textToAnalyze,
         settings.services,
-        settings.identity.defaultCurrency
+        settings.identity.defaultCurrency,
+        receipts
       );
       if (!r) {
         throw new Error('تعذر التحليل');
       }
 
-      if (r.patientName) setPatientName(String(r.patientName));
+      if (r.patientName) {
+        const matchedAcc = findMatchingPatientAccount(
+          String(r.patientName),
+          receipts,
+          settings.identity.defaultCurrency
+        );
+        if (matchedAcc) {
+          setPatientName(matchedAcc.patientName);
+          if (!r.patientPhone && matchedAcc.patientPhone) {
+            setPatientPhone(matchedAcc.patientPhone);
+          }
+        } else {
+          setPatientName(String(r.patientName));
+        }
+      }
       if (r.patientPhone) setPatientPhone(String(r.patientPhone));
 
       let computedServicesTotal = 0;
@@ -465,28 +542,52 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       return null;
     }
 
+    // Group under the exact canonical patient account if a matching account exists
+    const canonicalName = matchedPatientAccount
+      ? matchedPatientAccount.patientName
+      : patientName.trim();
+    const canonicalPhone =
+      patientPhone.trim() || matchedPatientAccount?.patientPhone || '';
+
+    const rawNotes = notes.trim();
+    const finalNotes = isReturnVisit
+      ? rawNotes.includes(RETURN_VISIT_MARKER)
+        ? rawNotes
+        : `${RETURN_VISIT_MARKER} ${rawNotes || 'جلسة متابعة / مراجعة'}`.trim()
+      : rawNotes;
+
     const saved = onSaveReceipt({
       id: editingReceipt?.id,
       receiptNo,
       date,
-      patientName: patientName.trim(),
-      patientPhone: patientPhone.trim(),
-      services: selectedServices.map((s) =>
-        s.replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة').replace(/تجليح/g, 'تقليح')
-      ),
+      patientName: canonicalName,
+      patientPhone: canonicalPhone,
+      services:
+        selectedServices.length > 0
+          ? selectedServices.map((s) =>
+              s
+                .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
+                .replace(/تجليح/g, 'تقليح')
+            )
+          : isReturnVisit
+            ? ['عودة / مراجعة علاجية']
+            : ['كشف ومعاينة'],
       toothFDI: parsedFdi.values.join(' - '),
       totalAmount: numericTotal,
       paidAmount: numericPaid,
       remainingAmount,
       currency,
       paymentMethod,
-      notes: notes.trim(),
+      notes: finalNotes,
       amountWords,
       accountantSig,
       receiverSig,
       paperFormat,
     });
 
+    setPatientName(canonicalName);
+    setPatientPhone(canonicalPhone);
+    setNotes(finalNotes);
     setSubTab('preview');
     return saved;
   };
@@ -494,8 +595,8 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   const receiptDisplayData: ReceiptDisplayData = {
     receiptNo,
     date,
-    patientName,
-    patientPhone,
+    patientName: matchedPatientAccount ? matchedPatientAccount.patientName : patientName,
+    patientPhone: patientPhone || matchedPatientAccount?.patientPhone || '',
     services: selectedServices,
     toothFDI,
     totalAmount,
@@ -622,10 +723,34 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
           {/* 2. نموذج بيانات السند */}
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
-            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
-              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                {editingReceipt ? `تعديل سند #${receiptNo}` : 'بيانات السند'}
-              </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                  {editingReceipt ? `تعديل سند #${receiptNo}` : 'بيانات السند'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !isReturnVisit;
+                    setIsReturnVisit(nextVal);
+                    if (nextVal && !notes.includes(RETURN_VISIT_MARKER)) {
+                      setNotes((prev) =>
+                        prev ? `${RETURN_VISIT_MARKER} ${prev}` : `${RETURN_VISIT_MARKER} جلسة متابعة / مراجعة`
+                      );
+                    } else if (!nextVal && notes.includes(RETURN_VISIT_MARKER)) {
+                      setNotes((prev) => prev.replace(RETURN_VISIT_MARKER, '').trim());
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
+                    isReturnVisit
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {isReturnVisit ? '✓ عودة / مراجعة' : '+ تسجيل كعودة'}
+                </button>
+              </div>
+
               <button
                 type="button"
                 onClick={resetForm}
@@ -675,9 +800,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   onChange={(e) => {
                     const val = e.target.value;
                     setPatientName(val);
-                    const found = uniquePatients.find((p) => p.name === val);
-                    if (found && found.phone && !patientPhone) {
-                      setPatientPhone(found.phone);
+                    const matched = findMatchingPatientAccount(
+                      val,
+                      receipts,
+                      settings.identity.defaultCurrency
+                    );
+                    if (matched && matched.patientPhone && !patientPhone) {
+                      setPatientPhone(matched.patientPhone);
                     }
                   }}
                   placeholder="الاسم الثلاثي للمريض..."
@@ -685,8 +814,10 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 />
                 <datalist id="clinic-patients-datalist">
                   {uniquePatients.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.phone}
+                    <option key={p.accountKey} value={p.name}>
+                      {p.totalRemaining > 0
+                        ? `عليه دين: ${p.totalRemaining.toLocaleString()} (${p.visitsCount} زيارة)`
+                        : `مسدد كامل (${p.visitsCount} زيارة)`}
                     </option>
                   ))}
                 </datalist>
@@ -707,32 +838,55 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               </div>
             </div>
 
-            {/* تنبيه الديون السابقة بنفس العملة المختارة */}
-            {patientPreviousDebt > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>
-                    دين سابق على المريض بعملة ({currency}):{' '}
-                    <strong className="font-mono tabular-nums">
-                      {patientPreviousDebt.toLocaleString()} {currency}
-                    </strong>{' '}
-                    (في سند رقم{' '}
-                    <span dir="ltr" className="font-mono font-black">
-                      #{patientUnpaidReceipts[0]?.receiptNo}
+            {/* شريط ربط الحساب التلقائي بنفس اسم المريض */}
+            {matchedPatientAccount && (
+              <div className="rounded-xl border border-sky-500/30 bg-sky-50/70 dark:bg-sky-950/30 p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-black text-sky-900 dark:text-sky-200">
+                      سيُدرج السند في حساب: {matchedPatientAccount.patientName}
                     </span>
-                    )
-                  </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                        matchedPatientAccount.totalRemaining > 0
+                          ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30'
+                          : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                      }`}
+                    >
+                      {matchedPatientAccount.totalRemaining > 0
+                        ? `عليه دين: ${matchedPatientAccount.totalRemaining.toLocaleString()} ${matchedPatientAccount.currency}`
+                        : 'مسدد كامل'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                    إجمالي الزيارات السابقة: {matchedPatientAccount.visitsCount}
+                    {matchedPatientAccount.returnVisitsCount > 0
+                      ? ` (منها ${matchedPatientAccount.returnVisitsCount} عودة)`
+                      : ''}{' '}
+                    • آخر زيارة: {matchedPatientAccount.lastVisitDate}
+                  </div>
                 </div>
-                {onJumpToSettleDebt && patientUnpaidReceipts[0] && (
-                  <button
-                    type="button"
-                    onClick={() => onJumpToSettleDebt(patientUnpaidReceipts[0].id)}
-                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold transition-colors shrink-0"
-                  >
-                    تسديد من السجل
-                  </button>
-                )}
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {onOpenPatientAccount && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPatientAccount(matchedPatientAccount.accountKey)}
+                      className="px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold transition-colors"
+                    >
+                      صفحة الحساب
+                    </button>
+                  )}
+                  {patientPreviousDebt > 0 && onJumpToSettleDebt && patientUnpaidReceipts[0] && (
+                    <button
+                      type="button"
+                      onClick={() => onJumpToSettleDebt(patientUnpaidReceipts[0].id)}
+                      className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold transition-colors"
+                    >
+                      تسديد الدين
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
