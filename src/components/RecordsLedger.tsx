@@ -648,27 +648,14 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors"
             >
               <ArrowRight className="w-4 h-4 text-sky-500" />
-              <span>رجوع لحسابات المرضى</span>
+              <span>رجوع</span>
             </button>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              {selectedAccount.isArchived && (
-                <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-xs font-bold">
-                  حساب مؤرشف
-                </span>
-              )}
-              <span
-                className={`px-3 py-1 rounded-lg text-xs font-black border ${
-                  selectedAccount.hasDebt
-                    ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30'
-                    : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
-                }`}
-              >
-                {selectedAccount.hasDebt
-                  ? `عليه دين: ${selectedAccount.totalRemaining.toLocaleString()} ${selectedAccount.currency}`
-                  : 'مسدد كامل'}
+            {selectedAccount.isArchived && (
+              <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-xs font-bold">
+                مؤرشف
               </span>
-            </div>
+            )}
           </div>
 
           {/* Patient Name & Metadata */}
@@ -682,15 +669,17 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                   <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100">
                     {selectedAccount.patientName}
                   </h2>
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                  <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-500 dark:text-slate-400">
                     {selectedAccount.patientPhone && (
                       <span dir="ltr" className="inline-flex items-center gap-1 font-mono font-bold">
                         <Phone className="w-3.5 h-3.5 text-sky-500" />
                         {selectedAccount.patientPhone}
                       </span>
                     )}
-                    <span>إجمالي السندات: {selectedAccount.visitsCount}</span>
-                    <span>العودات / المراجعات: {selectedAccount.returnVisitsCount}</span>
+                    <span>السندات: {selectedAccount.visitsCount}</span>
+                    {selectedAccount.returnVisitsCount > 0 && (
+                      <span>العودات: {selectedAccount.returnVisitsCount}</span>
+                    )}
                     <span>آخر زيارة: {selectedAccount.lastVisitDate}</span>
                   </div>
                 </div>
@@ -728,138 +717,15 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                 </button>
               )}
 
-              {/* Unified Dropdown Menu for all secondary account actions */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setIsAccountMenuOpen((v) => !v)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors"
-                >
-                  <span>إجراءات الحساب</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-                </button>
-
-                {isAccountMenuOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-30"
-                      onClick={() => setIsAccountMenuOpen(false)}
-                    />
-                    <div className="absolute left-0 top-full mt-1.5 w-60 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl py-1.5 z-40 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsAccountMenuOpen(false);
-                          onGoToNewReceipt({
-                            patientName: selectedAccount.patientName,
-                            patientPhone: selectedAccount.patientPhone,
-                            isReturnVisit: true,
-                          });
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      >
-                        <RotateCcw className="w-4 h-4 shrink-0" />
-                        <span>تسجيل عودة / مراجعة</span>
-                      </button>
-
-                      <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-
-                      <button
-                        type="button"
-                        disabled={busyPdfAction !== null}
-                        onClick={() => {
-                          setIsAccountMenuOpen(false);
-                          handleSendAccountPdfToTelegram(selectedAccount);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-                      >
-                        {busyPdfAction === 'telegram' ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-sky-500 shrink-0" />
-                        ) : (
-                          <Send className="w-4 h-4 text-sky-500 shrink-0" />
-                        )}
-                        <span>إرسال PDF لقناة الأرشيف</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={busyPdfAction !== null}
-                        onClick={() => {
-                          setIsAccountMenuOpen(false);
-                          handleShareAccountPdf(selectedAccount);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-                      >
-                        {busyPdfAction === 'share' ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-emerald-500 shrink-0" />
-                        ) : (
-                          <Share2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                        )}
-                        <span>مشاركة كشف الحساب (PDF)</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={busyPdfAction !== null}
-                        onClick={() => {
-                          setIsAccountMenuOpen(false);
-                          handleDownloadAccountPdf(selectedAccount);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-                      >
-                        {busyPdfAction === 'download' ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-sky-500 shrink-0" />
-                        ) : (
-                          <FileDown className="w-4 h-4 text-sky-500 shrink-0" />
-                        )}
-                        <span>تحميل كشف الحساب (PDF)</span>
-                      </button>
-
-                      <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-
-                      {onArchivePatientAccount && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsAccountMenuOpen(false);
-                            onArchivePatientAccount(
-                              selectedAccount.accountKey,
-                              !selectedAccount.isArchived
-                            );
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        >
-                          {selectedAccount.isArchived ? (
-                            <>
-                              <ArchiveRestore className="w-4 h-4 text-emerald-500 shrink-0" />
-                              <span>استعادة الحساب من الأرشيف</span>
-                            </>
-                          ) : (
-                            <>
-                              <Archive className="w-4 h-4 text-amber-500 shrink-0" />
-                              <span>أرشفة الحساب</span>
-                            </>
-                          )}
-                        </button>
-                      )}
-
-                      {onDeletePatientAccount && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsAccountMenuOpen(false);
-                            setConfirmDeleteAccount(true);
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                        >
-                          <Trash2 className="w-4 h-4 shrink-0" />
-                          <span>حذف الحساب نهائياً</span>
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+              {/* Centered Pop-up Modal Trigger for Account Actions */}
+              <button
+                type="button"
+                onClick={() => setIsAccountMenuOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors"
+              >
+                <span>إجراءات</span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+              </button>
             </div>
           </div>
 
@@ -867,7 +733,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
           <div className="grid grid-cols-3 gap-2.5 pt-1">
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3">
               <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                إجمالي الحساب
+                الإجمالي
               </div>
               <div className="text-sm sm:text-base font-mono tabular-nums font-black text-slate-900 dark:text-slate-100 mt-0.5">
                 {selectedAccount.totalBilled.toLocaleString()}{' '}
@@ -879,7 +745,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
 
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
               <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                إجمالي المسدد
+                المسدد
               </div>
               <div className="text-sm sm:text-base font-mono tabular-nums font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
                 {selectedAccount.totalPaid.toLocaleString()}{' '}
@@ -903,7 +769,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     : 'text-slate-500 dark:text-slate-400'
                 }`}
               >
-                المتبقي (الدين)
+                المتبقي
               </div>
               <div
                 className={`text-sm sm:text-base font-mono tabular-nums font-black mt-0.5 ${
@@ -986,17 +852,12 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
           )}
         </div>
 
-        {/* 2. Chronological List of All Receipts & Return Visits (السندات والعودات) */}
+        {/* 2. Chronological List of All Receipts & Return Visits */}
         <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
             <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">
-              سجل السندات والعودات ({selectedAccount.receipts.length})
+              سجل السندات ({selectedAccount.receipts.length})
             </h3>
-            {selectedAccount.allTeethFDI.length > 0 && (
-              <span className="text-xs font-mono font-bold text-sky-600 dark:text-sky-400">
-                الأسنان المعالجة (FDI): {selectedAccount.allTeethFDI.join(' - ')}
-              </span>
-            )}
           </div>
 
           <div className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -1005,6 +866,12 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
               const isSettlingThis = settlingId === rec.id;
               const isReturn = isReceiptReturnVisit(rec);
               const cleanNotes = stripArchiveMarkerFromNotes(rec.notes);
+              const isZeroReturn =
+                isReturn && Number(rec.totalAmount) === 0 && Number(rec.paidAmount) === 0;
+              const serviceText = ((rec.services || []).join(' + ') || 'كشف ومعاينة').replace(
+                /عودة\s*\/\s*مراجعة\s*علاجية/g,
+                'عودة / مراجعة'
+              );
 
               return (
                 <div
@@ -1034,46 +901,54 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                       </span>
                       {rec.toothFDI && (
                         <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
-                          سن FDI: {rec.toothFDI}
+                          سن: {rec.toothFDI}
                         </span>
                       )}
                     </div>
 
                     {/* Financial Badges for this Receipt */}
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums">
-                      <span className="text-slate-600 dark:text-slate-400">
-                        الإجمالي: <strong>{Number(rec.totalAmount).toLocaleString()}</strong>
+                    {isZeroReturn ? (
+                      <span className="px-2.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[11px] font-bold">
+                        مراجعة (بدون رسوم)
                       </span>
-                      <span className="text-emerald-600 dark:text-emerald-400">
-                        المسدد: <strong>{Number(rec.paidAmount).toLocaleString()}</strong>
-                      </span>
-                      {rem > 0 ? (
-                        <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold">
-                          المتبقي: {rem.toLocaleString()} {rec.currency}
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums">
+                        <span className="text-slate-600 dark:text-slate-400">
+                          الإجمالي: <strong>{Number(rec.totalAmount).toLocaleString()}</strong>
                         </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-sans font-bold text-[11px]">
-                          مسدد
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          المسدد: <strong>{Number(rec.paidAmount).toLocaleString()}</strong>
                         </span>
-                      )}
-                    </div>
+                        {rem > 0 ? (
+                          <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold">
+                            المتبقي: {rem.toLocaleString()}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-sans font-bold text-[11px]">
+                            مسدد
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Services & Notes */}
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="space-y-0.5">
-                      <div className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
-                        {(rec.services || []).join(' + ') || 'كشف ومعاينة'}
-                      </div>
+                      {(!isReturn || serviceText !== 'عودة / مراجعة') && (
+                        <div className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                          {serviceText}
+                        </div>
+                      )}
                       {cleanNotes && (
                         <div className="text-xs text-slate-500 dark:text-slate-400">
-                          ملاحظات: {cleanNotes}
+                          {cleanNotes}
                         </div>
                       )}
                     </div>
 
-                    {/* Per-Receipt Actions with Clean Dropdown */}
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Per-Receipt Actions */}
+                    <div className="flex items-center gap-1.5 shrink-0 mr-auto">
                       <button
                         type="button"
                         onClick={() => {
@@ -1087,65 +962,14 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                         <span>معاينة</span>
                       </button>
 
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenReceiptMenuId((prev) => (prev === rec.id ? null : rec.id))
-                          }
-                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:border-sky-500"
-                        >
-                          <span>خيارات</span>
-                          <MoreVertical className="w-3.5 h-3.5" />
-                        </button>
-
-                        {openReceiptMenuId === rec.id && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-30"
-                              onClick={() => setOpenReceiptMenuId(null)}
-                            />
-                            <div className="absolute left-0 top-full mt-1 w-44 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1 z-40 text-xs">
-                              {rem > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenReceiptMenuId(null);
-                                    setSettlingId(isSettlingThis ? null : rec.id);
-                                    setSettleAmount(String(rem));
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                >
-                                  <CreditCard className="w-3.5 h-3.5" />
-                                  <span>تسديد دفعة</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenReceiptMenuId(null);
-                                  onEditReceipt(rec);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span>تعديل السند</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenReceiptMenuId(null);
-                                  onDeleteReceipt(rec.id);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>حذف السند</span>
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOpenReceiptMenuId(rec.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:border-sky-500"
+                      >
+                        <span>خيارات</span>
+                        <MoreVertical className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
@@ -1228,6 +1052,217 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
             </div>
           </div>
         )}
+
+        {/* Centered Mobile-Safe Account Actions Modal */}
+        {isAccountMenuOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs no-print"
+            onClick={() => setIsAccountMenuOpen(false)}
+          >
+            <div
+              className="w-full max-w-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden text-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
+                <span className="font-black text-slate-900 dark:text-slate-100 truncate">
+                  إجراءات الحساب — {selectedAccount.patientName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsAccountMenuOpen(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-1.5 space-y-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    onGoToNewReceipt({
+                      patientName: selectedAccount.patientName,
+                      patientPhone: selectedAccount.patientPhone,
+                      isReturnVisit: true,
+                    });
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-indigo-600 dark:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <RotateCcw className="w-4 h-4 shrink-0" />
+                  <span>تسجيل عودة / مراجعة</span>
+                </button>
+
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                <button
+                  type="button"
+                  disabled={busyPdfAction !== null}
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    handleSendAccountPdfToTelegram(selectedAccount);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {busyPdfAction === 'telegram' ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-sky-500 shrink-0" />
+                  ) : (
+                    <Send className="w-4 h-4 text-sky-500 shrink-0" />
+                  )}
+                  <span>إرسال PDF لقناة الأرشيف</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={busyPdfAction !== null}
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    handleShareAccountPdf(selectedAccount);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {busyPdfAction === 'share' ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-emerald-500 shrink-0" />
+                  ) : (
+                    <Share2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  )}
+                  <span>مشاركة كشف الحساب (PDF)</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={busyPdfAction !== null}
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    handleDownloadAccountPdf(selectedAccount);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {busyPdfAction === 'download' ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-sky-500 shrink-0" />
+                  ) : (
+                    <FileDown className="w-4 h-4 text-sky-500 shrink-0" />
+                  )}
+                  <span>تحميل كشف الحساب (PDF)</span>
+                </button>
+
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                {onArchivePatientAccount && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAccountMenuOpen(false);
+                      onArchivePatientAccount(
+                        selectedAccount.accountKey,
+                        !selectedAccount.isArchived
+                      );
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    {selectedAccount.isArchived ? (
+                      <>
+                        <ArchiveRestore className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span>استعادة من الأرشيف</span>
+                      </>
+                    ) : (
+                      <>
+                        <Archive className="w-4 h-4 text-amber-500 shrink-0" />
+                        <span>أرشفة الحساب</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {onDeletePatientAccount && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAccountMenuOpen(false);
+                      setConfirmDeleteAccount(true);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                  >
+                    <Trash2 className="w-4 h-4 shrink-0" />
+                    <span>حذف الحساب نهائياً</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Centered Mobile-Safe Single Receipt Options Modal */}
+        {openReceiptMenuId && (() => {
+          const targetRec = selectedAccount.receipts.find((r) => r.id === openReceiptMenuId);
+          if (!targetRec) return null;
+          const targetRem = Number(targetRec.remainingAmount) || 0;
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs no-print"
+              onClick={() => setOpenReceiptMenuId(null)}
+            >
+              <div
+                className="w-full max-w-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden text-xs"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
+                  <span className="font-black text-slate-900 dark:text-slate-100">
+                    خيارات السند #{targetRec.receiptNo}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOpenReceiptMenuId(null)}
+                    className="p-1 rounded-lg text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-1.5 space-y-0.5">
+                  {targetRem > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenReceiptMenuId(null);
+                        setSettlingId(settlingId === targetRec.id ? null : targetRec.id);
+                        setSettleAmount(String(targetRem));
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <CreditCard className="w-4 h-4 shrink-0" />
+                      <span>تسديد دفعة ({targetRem.toLocaleString()})</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenReceiptMenuId(null);
+                      onEditReceipt(targetRec);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <Edit3 className="w-4 h-4 shrink-0" />
+                    <span>تعديل السند</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenReceiptMenuId(null);
+                      onDeleteReceipt(targetRec.id);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                  >
+                    <Trash2 className="w-4 h-4 shrink-0" />
+                    <span>حذف السند</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }

@@ -551,6 +551,31 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
         }))
     : decodedNotes.consumedMaterials;
 
+  const cleanedServices = (() => {
+    const cleaned = (Array.isArray(receipt.services) ? receipt.services : [])
+      .map((s) =>
+        sanitizeStr(s, 140, '')
+          .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
+          .replace(/تجليح/g, 'تقليح')
+      )
+      .filter(Boolean)
+      .slice(0, 25);
+    return cleaned.length > 0 ? cleaned : ['كشف ومعاينة'];
+  })();
+
+  const isCarryoverReturnPlaceholder =
+    cleanedServices.length === 1 &&
+    /^(?:عودة|عوده|مراجعة|جلسة متابعة)(?:\s*\/\s*(?:مراجعة|عودة))?(?:\s*علاجية)?$/i.test(
+      cleanedServices[0].trim()
+    ) &&
+    totalAmount > 0 &&
+    totalAmount === paidAmount &&
+    remainingAmount === 0;
+
+  const finalTotal = isCarryoverReturnPlaceholder ? 0 : totalAmount;
+  const finalPaid = isCarryoverReturnPlaceholder ? 0 : paidAmount;
+  const finalRemaining = isCarryoverReturnPlaceholder ? 0 : remainingAmount;
+
   return {
     ...receipt,
     id: sanitizeId(receipt.id || `rec_${Date.now()}`),
@@ -558,26 +583,18 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
     date: sanitizeStr(receipt.date, 30, new Date().toISOString().slice(0, 10)),
     patientName,
     patientPhone: sanitizeStr(receipt.patientPhone, 50, ''),
-    services: (() => {
-      const cleaned = (Array.isArray(receipt.services) ? receipt.services : [])
-        .map((s) =>
-          sanitizeStr(s, 140, '')
-            .replace(/تجليح\s*لثة|تجليح\s*اللثة/g, 'تقليح اللثة')
-            .replace(/تجليح/g, 'تقليح')
-        )
-        .filter(Boolean)
-        .slice(0, 25);
-      return cleaned.length > 0 ? cleaned : ['كشف ومعاينة'];
-    })(),
+    services: cleanedServices,
     toothFDI: sanitizeStr(receipt.toothFDI, 200, ''),
-    totalAmount,
-    paidAmount,
-    remainingAmount,
+    totalAmount: finalTotal,
+    paidAmount: finalPaid,
+    remainingAmount: finalRemaining,
     currency,
     paymentMethod: sanitizeStr(receipt.paymentMethod, 80, 'نقداً (Cash)'),
     notes: sanitizeStr(decodedNotes.notes, 500, ''),
     amountWords: sanitizeStr(
-      receipt.amountWords || numberToArabicWords(paidAmount, currency),
+      finalPaid === 0
+        ? 'صفر ريال يمني فقط لا غير'
+        : receipt.amountWords || numberToArabicWords(finalPaid, currency),
       300,
       'صفر ريال يمني فقط لا غير'
     ),

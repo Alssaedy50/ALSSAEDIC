@@ -314,66 +314,55 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-black text-emerald-700 dark:text-emerald-300">
                 <Wallet className="w-3.5 h-3.5" />
-                <span>الحساب المالي الموحد: ريال يمني</span>
+                <span>الحساب الموحد: ريال يمني</span>
               </span>
-              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                (السعودي = {rates.sarToYerRate} | الدولار = {rates.usdToYerRate})
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                السندات: {activeSummary.receiptsCount} | الفواتير: {activeSummary.totalBilledAmount.toLocaleString()}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsExpenseModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
-              >
-                <PlusCircle className="w-4 h-4 text-rose-500" />
-                <span>تسجيل مصروف</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={isGeneratingReport}
-                onClick={handleGenerateFinancialReport}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-xl transition-colors"
-              >
-                {isGeneratingReport ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Sparkles className="w-4 h-4" />
-                )}
-                <span>تقرير مالي</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={isGeneratingReport}
+              onClick={handleGenerateFinancialReport}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-xl transition-colors"
+            >
+              {isGeneratingReport ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>تقرير مالي</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>الإيراد المقبوض</span>
+                <span>المقبوض</span>
                 <TrendingUp className="w-4 h-4 text-emerald-500" />
               </div>
               <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
                 {activeSummary.totalCollectedRevenue.toLocaleString()}
               </div>
               <div className="mt-1 text-[11px] text-slate-400">
-                ريال يمني · التحصيل: {collectionRate}%
+                التحصيل: {collectionRate}%
               </div>
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>ديون المرضى</span>
+                <span>الديون</span>
                 <Wallet className="w-4 h-4 text-amber-500" />
               </div>
               <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
                 {activeSummary.totalPendingDebts.toLocaleString()}
               </div>
               <div className="mt-1 text-[11px] text-slate-400">
-                ريال يمني · {activeSummary.debtorsCount} حالة آجلة
+                {activeSummary.debtorsCount} حالة آجلة
               </div>
             </div>
 
@@ -385,12 +374,12 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
                 {activeSummary.totalExpenses.toLocaleString()}
               </div>
-              <div className="mt-1 text-[11px] text-slate-400">ريال يمني · نفقات مسجلة</div>
+              <div className="mt-1 text-[11px] text-slate-400">ريال يمني</div>
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>صافي الربح النقدي</span>
+                <span>صافي الربح</span>
                 <Wallet className="w-4 h-4 text-sky-500" />
               </div>
               <div
@@ -405,37 +394,6 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               <div className="mt-1 text-[11px] text-slate-400">ريال يمني</div>
             </div>
           </div>
-
-          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                كشف الحساب المالي الموحد (ريال يمني)
-              </h3>
-              <span className="text-xs font-mono font-bold text-slate-500">
-                إجمالي السندات: {activeSummary.receiptsCount} سند
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 flex items-center justify-between">
-                <span className="text-slate-500">إجمالي قيمة الفواتير:</span>
-                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                  {activeSummary.totalBilledAmount.toLocaleString()} ريال يمني
-                </span>
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 flex items-center justify-between">
-                <span className="text-slate-500">المقبوض الفعلي:</span>
-                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                  {activeSummary.totalCollectedRevenue.toLocaleString()} ريال يمني
-                </span>
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 flex items-center justify-between">
-                <span className="text-slate-500">صافي الخزينة (المقبوض - المصروفات):</span>
-                <span className="font-mono font-black text-sky-600 dark:text-sky-400">
-                  {activeSummary.netCashProfit.toLocaleString()} ريال يمني
-                </span>
-              </div>
-            </div>
-          </section>
         </>
       )}
 

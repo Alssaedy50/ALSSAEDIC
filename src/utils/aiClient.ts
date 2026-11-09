@@ -2394,10 +2394,24 @@ export function isReceiptReturnVisit(r: ReceiptRecord): boolean {
   );
 }
 
+export function isPureDefaultReturnVisitWithCarryoverAmount(r: ReceiptRecord): boolean {
+  if (!isReceiptReturnVisit(r)) return false;
+  const srvs = Array.isArray(r.services) ? r.services.map((s) => String(s || '').trim()).filter(Boolean) : [];
+  const isDefaultReturnPlaceholder =
+    srvs.length === 1 &&
+    /^(?:عودة|عوده|مراجعة|جلسة متابعة)(?:\s*\/\s*(?:مراجعة|عودة))?(?:\s*علاجية)?$/i.test(srvs[0]);
+  const total = Number(r.totalAmount) || 0;
+  const paid = Number(r.paidAmount) || 0;
+  const rem = Number(r.remainingAmount) || 0;
+  return isDefaultReturnPlaceholder && total > 0 && total === paid && rem === 0;
+}
+
 export function stripArchiveMarkerFromNotes(notes: string): string {
   return String(notes || '')
     .replace(/\[مؤرشف\]\s*\|?\s*/g, '')
     .replace(/\s*\|\s*\[مؤرشف\]/g, '')
+    .replace(/\[عودة(?:\/مراجعة)?\]\s*/g, '')
+    .replace(/^جلسة متابعة\s*\/\s*مراجعة$/g, '')
     .trim();
 }
 
@@ -2433,8 +2447,18 @@ export function buildPatientAccountsFromReceipts(
     return (Number(b.receiptNo) || 0) - (Number(a.receiptNo) || 0);
   });
 
-  for (const r of sorted) {
-    if (!r || !r.patientName) continue;
+  for (const rawReceipt of sorted) {
+    if (!rawReceipt || !rawReceipt.patientName) continue;
+    const isCarryoverReturn = isPureDefaultReturnVisitWithCarryoverAmount(rawReceipt);
+    const r: ReceiptRecord = isCarryoverReturn
+      ? {
+          ...rawReceipt,
+          totalAmount: 0,
+          paidAmount: 0,
+          remainingAmount: 0,
+        }
+      : rawReceipt;
+
     const key = normalizePatientNameKey(r.patientName);
     if (!key) continue;
 
@@ -2450,7 +2474,7 @@ export function buildPatientAccountsFromReceipts(
         totalBilled: 0,
         totalPaid: 0,
         totalRemaining: 0,
-        currency: String(r.currency || defaultCurrency),
+        currency: 'ريال يمني',
         lastVisitDate: r.date || '',
         firstVisitDate: r.date || '',
         allServices: [],

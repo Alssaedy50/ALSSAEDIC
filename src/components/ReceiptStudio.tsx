@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeftRight,
   Check,
@@ -7,7 +7,6 @@ import {
   FileText,
   Layers,
   Loader2,
-  MoreVertical,
   Package,
   PenTool,
   RotateCcw,
@@ -111,8 +110,6 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     undefined
   );
   const [sigModalTarget, setSigModalTarget] = useState<'accountant' | 'receiver' | null>(null);
-  const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState<boolean>(false);
-  const headerMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Instant Foreign Currency Conversion Popup Modal State
   const [isFxModalOpen, setIsFxModalOpen] = useState<boolean>(false);
@@ -204,18 +201,6 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   };
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
-        setIsHeaderMenuOpen(false);
-      }
-    };
-    if (isHeaderMenuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isHeaderMenuOpen]);
-
-  useEffect(() => {
     if (editingReceipt) {
       setReceiptNo(editingReceipt.receiptNo);
       setDate(editingReceipt.date);
@@ -257,12 +242,17 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       setDate(new Date().toISOString().slice(0, 10));
       setPatientName(prefillPatient.patientName);
       setPatientPhone(prefillPatient.patientPhone || '');
+      setSelectedServices([]);
+      setServiceTeethMap({});
+      setToothFDI('');
+      setTotalAmount(0);
+      setPaidAmount(0);
+      setCurrency('ريال يمني');
+      setPaymentMethod('نقداً (Cash)');
+      setReceiverSig('');
+      setAccountantSig(settings.appearance.permanentAccountantSig || '');
       setIsReturnVisit(Boolean(prefillPatient.isReturnVisit));
-      if (prefillPatient.isReturnVisit) {
-        setNotes(`${RETURN_VISIT_MARKER} جلسة متابعة / مراجعة`);
-      } else {
-        setNotes('');
-      }
+      setNotes('');
       setSubTab('form');
       if (onClearPrefillPatient) {
         onClearPrefillPatient();
@@ -467,7 +457,24 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         });
       }
 
-      if (settings.features.autoPrice) {
+      if (isReturnVisit) {
+        // In a return/follow-up visit, only charge for newly added services not previously billed
+        const unbilledTotal = next.reduce((sum, name) => {
+          const srvTeeth = (serviceTeethMap[name] || []).join(' - ') || toothFDI;
+          const alreadyBilled = isServiceAlreadyBilledForPatient(
+            name,
+            srvTeeth,
+            patientPreviousReceipts
+          ).isAlreadyBilled;
+          if (alreadyBilled) return sum;
+          const found = settings.services.find(
+            (srv) => srv.name === name || normalizeSrv(srv.name) === name
+          );
+          return sum + (found ? Number(found.price) || 0 : 0);
+        }, 0);
+        setTotalAmount(unbilledTotal);
+        setPaidAmount(unbilledTotal);
+      } else if (settings.features.autoPrice) {
         const nextTotal = next.reduce((sum, name) => {
           const found = settings.services.find(
             (srv) => srv.name === name || normalizeSrv(srv.name) === name
@@ -520,12 +527,30 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
 
   const handleVisitTypeChange = (nextIsReturn: boolean) => {
     setIsReturnVisit(nextIsReturn);
-    if (nextIsReturn && !notes.includes(RETURN_VISIT_MARKER)) {
+    if (nextIsReturn) {
+      setTotalAmount(0);
+      setPaidAmount(0);
       setNotes((prev) =>
-        prev ? `${RETURN_VISIT_MARKER} ${prev}` : `${RETURN_VISIT_MARKER} جلسة متابعة / مراجعة`
+        prev
+          .replace(RETURN_VISIT_MARKER, '')
+          .replace(/جلسة متابعة\s*\/?\s*مراجعة(?:\s*علاجية)?/g, '')
+          .trim()
       );
-    } else if (!nextIsReturn && notes.includes(RETURN_VISIT_MARKER)) {
-      setNotes((prev) => prev.replace(RETURN_VISIT_MARKER, '').trim());
+    } else {
+      setNotes((prev) =>
+        prev
+          .replace(RETURN_VISIT_MARKER, '')
+          .replace(/جلسة متابعة\s*\/?\s*مراجعة(?:\s*علاجية)?/g, '')
+          .trim()
+      );
+      if (settings.features.autoPrice && selectedServices.length > 0) {
+        const nextTotal = selectedServices.reduce((sum, name) => {
+          const found = settings.services.find((srv) => srv.name === name);
+          return sum + (found ? Number(found.price) || 0 : 0);
+        }, 0);
+        setTotalAmount(nextTotal);
+        setPaidAmount(nextTotal);
+      }
     }
   };
 
@@ -568,11 +593,14 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     const canonicalPhone =
       patientPhone.trim() || matchedPatientAccount?.patientPhone || '';
 
-    const rawNotes = notes.trim();
+    const rawNotes = notes
+      .replace(RETURN_VISIT_MARKER, '')
+      .replace(/جلسة متابعة\s*\/?\s*مراجعة(?:\s*علاجية)?/g, '')
+      .trim();
     const finalNotes = isReturnVisit
-      ? rawNotes.includes(RETURN_VISIT_MARKER)
-        ? rawNotes
-        : `${RETURN_VISIT_MARKER} ${rawNotes || 'جلسة متابعة / مراجعة'}`.trim()
+      ? rawNotes
+        ? `${RETURN_VISIT_MARKER} ${rawNotes}`
+        : RETURN_VISIT_MARKER
       : rawNotes;
 
     const saved = onSaveReceipt({
@@ -585,7 +613,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
         formattedServicesWithTeeth.length > 0
           ? formattedServicesWithTeeth
           : isReturnVisit
-            ? ['عودة / مراجعة علاجية']
+            ? ['عودة / مراجعة']
             : ['كشف ومعاينة'],
       toothFDI: parsedFdi.values.join(' - '),
       totalAmount: numericTotal,
@@ -678,7 +706,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 </h2>
               </div>
 
-              {/* Clean Dropdown Controls instead of crowded buttons */}
+              {/* Clean Controls */}
               <div className="flex items-center gap-2 shrink-0">
                 <div className="relative">
                   <select
@@ -692,7 +720,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                     }`}
                   >
                     <option value="primary" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                      سند أساسي (جديد)
+                      سند أساسي
                     </option>
                     <option value="return" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
                       عودة / مراجعة
@@ -705,69 +733,15 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   />
                 </div>
 
-                {/* Actions Dropdown Menu */}
-                <div className="relative" ref={headerMenuRef}>
-                  <button
-                    type="button"
-                    onClick={() => setIsHeaderMenuOpen((v) => !v)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500 transition-colors"
-                  >
-                    <span>خيارات</span>
-                    <MoreVertical className="w-3.5 h-3.5" />
-                  </button>
-
-                  {isHeaderMenuOpen && (
-                    <div className="absolute left-0 top-full mt-1.5 w-52 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1.5 z-40 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsHeaderMenuOpen(false);
-                          setSigModalTarget('accountant');
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      >
-                        <PenTool className="w-3.5 h-3.5 text-sky-500" />
-                        <span>{accountantSig ? 'تعديل توقيع المستلم' : 'توقيع المستلم'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsHeaderMenuOpen(false);
-                          setSigModalTarget('receiver');
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      >
-                        <PenTool className="w-3.5 h-3.5 text-amber-500" />
-                        <span>{receiverSig ? 'تعديل توقيع المريض' : 'توقيع المريض'}</span>
-                      </button>
-                      {matchedPatientAccount && onOpenPatientAccount && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsHeaderMenuOpen(false);
-                            onOpenPatientAccount(matchedPatientAccount.accountKey);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>فتح كشف حساب المريض</span>
-                        </button>
-                      )}
-                      <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsHeaderMenuOpen(false);
-                          resetForm();
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span>تفريغ الحقول</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  title="تفريغ الحقول"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-rose-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>تفريغ</span>
+                </button>
               </div>
             </div>
 
@@ -947,21 +921,9 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
             {/* تخصيص رقم السن لكل خدمة عند اختيار أكثر من خدمة */}
             {selectedServices.length > 1 && (
               <div className="rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/25 p-3 space-y-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200">
-                    <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                    <span>تحديد رقم السن لكل خدمة على حدة:</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveServiceForFdiModal(selectedServices[0]);
-                      setIsFdiModalOpen(true);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold transition-colors"
-                  >
-                    تخصيص من مخطط الأسنان
-                  </button>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200">
+                  <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span>تحديد السن لكل خدمة:</span>
                 </div>
 
                 <div className="space-y-2">
@@ -1129,34 +1091,12 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               </div>
             </div>
 
-            {/* العملة (حساب يمني موحد مع نافذة تحويل فوري للسعودي والدولار) وطريقة الدفع */}
+            {/* العملة وطريقة الدفع */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <div className="flex items-center justify-between gap-1 mb-1">
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
-                    عملة الدفع (الحساب يمني موحد)
-                  </label>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => openCurrencyConverterModal('ريال سعودي')}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-bold transition-colors"
-                      title="فتح نافذة تحويل الريال السعودي إلى ريال يمني"
-                    >
-                      <ArrowLeftRight className="w-2.5 h-2.5" />
-                      <span>سعودي ← يمني</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openCurrencyConverterModal('دولار أمريكي')}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-500/30 text-[10px] font-bold transition-colors"
-                      title="فتح نافذة تحويل الدولار الأمريكي إلى ريال يمني"
-                    >
-                      <ArrowLeftRight className="w-2.5 h-2.5" />
-                      <span>دولار ← يمني</span>
-                    </button>
-                  </div>
-                </div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  عملة الدفع
+                </label>
                 <select
                   value="ريال يمني"
                   onChange={(e) => {
@@ -1171,9 +1111,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 >
                   {CURRENCIES.map((c) => (
                     <option key={c} value={c}>
-                      {c === 'ريال يمني'
-                        ? 'ريال يمني (الحساب الأساسي الموحد)'
-                        : `${c} (فتح نافذة التحويل الفوري إلى يمني)`}
+                      {c === 'ريال يمني' ? 'ريال يمني' : `${c} (تحويل إلى يمني)`}
                     </option>
                   ))}
                 </select>
@@ -1258,7 +1196,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-sm transition-colors"
               >
                 <Save className="w-4 h-4" />
-                <span>{editingReceipt ? 'تحديث السند' : 'حفظ السند واعتماد الخصم'}</span>
+                <span>{editingReceipt ? 'تحديث السند' : 'حفظ السند'}</span>
               </button>
             </div>
           </section>

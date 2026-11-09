@@ -785,12 +785,24 @@ export default function App() {
           const map = new Map<string, ReceiptRecord>();
           for (const r of prev) {
             if (r && r.id && !deletedIds.has(r.id) && !SEED_DEMO_IDS.receipts.has(r.id)) {
-              map.set(r.id, r);
+              try {
+                map.set(r.id, validateAndNormalizeReceipt(r));
+              } catch {
+                map.set(r.id, r);
+              }
             }
           }
           for (const r of cloudReceipts) {
             if (r && r.id && !deletedIds.has(r.id) && !SEED_DEMO_IDS.receipts.has(r.id)) {
-              map.set(r.id, r);
+              try {
+                const normalized = validateAndNormalizeReceipt(r);
+                map.set(r.id, normalized);
+                if (Number(r.totalAmount) > 0 && normalized.totalAmount === 0) {
+                  saveReceiptToCloud(cloudTargetUid, normalized).catch(() => {});
+                }
+              } catch {
+                map.set(r.id, r);
+              }
             }
           }
           const merged = Array.from(map.values()).sort((a, b) => b.receiptNo - a.receiptNo);

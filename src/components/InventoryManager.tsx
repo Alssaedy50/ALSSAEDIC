@@ -524,74 +524,14 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         </button>
                       </div>
                     ) : (
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenItemMenuId((prev) => (prev === item.id ? null : item.id))
-                          }
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500 transition-colors"
-                        >
-                          <span>إجراءات الصنف</span>
-                          <MoreVertical className="w-3.5 h-3.5 text-slate-500" />
-                        </button>
-
-                        {openItemMenuId === item.id && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-30"
-                              onClick={() => setOpenItemMenuId(null)}
-                            />
-                            <div className="absolute left-0 bottom-full mb-1.5 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl py-1.5 z-40 text-xs">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenItemMenuId(null);
-                                  openEditModal(item);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span>تعديل الصنف والربط</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenItemMenuId(null);
-                                  handleQuickAdjust(item, 1);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>تزويد 1 {item.unit} (+1)</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenItemMenuId(null);
-                                  handleQuickAdjust(item, -1);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                                <span>خصم 1 {item.unit} (-1)</span>
-                              </button>
-                              <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenItemMenuId(null);
-                                  setConfirmDeleteId(item.id);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>حذف الصنف</span>
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOpenItemMenuId(item.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500 transition-colors"
+                      >
+                        <span>خيارات</span>
+                        <MoreVertical className="w-3.5 h-3.5 text-slate-500" />
+                      </button>
                     )}
                   </div>
                 </div>
@@ -705,74 +645,14 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <div className="relative inline-block">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setOpenItemMenuId((prev) => (prev === item.id ? null : item.id))
-                            }
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500"
-                          >
-                            <span>إجراءات</span>
-                            <MoreVertical className="w-3.5 h-3.5" />
-                          </button>
-
-                          {openItemMenuId === item.id && (
-                            <>
-                              <div
-                                className="fixed inset-0 z-30"
-                                onClick={() => setOpenItemMenuId(null)}
-                              />
-                              <div className="absolute left-0 top-full mt-1 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl py-1.5 z-40 text-xs text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenItemMenuId(null);
-                                    openEditModal(item);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                  <span>تعديل الصنف والربط</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenItemMenuId(null);
-                                    handleQuickAdjust(item, 1);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>تزويد 1 {item.unit} (+1)</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenItemMenuId(null);
-                                    handleQuickAdjust(item, -1);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                >
-                                  <Minus className="w-3.5 h-3.5" />
-                                  <span>خصم 1 {item.unit} (-1)</span>
-                                </button>
-                                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenItemMenuId(null);
-                                    setConfirmDeleteId(item.id);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>حذف الصنف</span>
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setOpenItemMenuId(item.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500"
+                        >
+                          <span>خيارات</span>
+                          <MoreVertical className="w-3.5 h-3.5" />
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -782,6 +662,84 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           </table>
         </div>
       </section>
+
+      {/* Centered Mobile-Safe Item Actions Modal */}
+      {openItemMenuId && (() => {
+        const activeItem = inventory.find((i) => i.id === openItemMenuId);
+        if (!activeItem) return null;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs"
+            onClick={() => setOpenItemMenuId(null)}
+          >
+            <div
+              className="w-full max-w-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden text-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
+                <span className="font-black text-slate-900 dark:text-slate-100 truncate">
+                  {activeItem.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setOpenItemMenuId(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-1.5 space-y-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenItemMenuId(null);
+                    openEditModal(activeItem);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <Edit3 className="w-4 h-4 shrink-0" />
+                  <span>تعديل الصنف والربط</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenItemMenuId(null);
+                    handleQuickAdjust(activeItem, 1);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <Plus className="w-4 h-4 shrink-0" />
+                  <span>تزويد 1 {activeItem.unit} (+1)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenItemMenuId(null);
+                    handleQuickAdjust(activeItem, -1);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <Minus className="w-4 h-4 shrink-0" />
+                  <span>خصم 1 {activeItem.unit} (-1)</span>
+                </button>
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenItemMenuId(null);
+                    setConfirmDeleteId(activeItem.id);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                >
+                  <Trash2 className="w-4 h-4 shrink-0" />
+                  <span>حذف الصنف</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Pop-up Modal: Add / Edit Inventory Item with Sub-Units & Location */}
       {isFormModalOpen && (
