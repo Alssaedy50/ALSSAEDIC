@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Building2,
   CheckCircle2,
@@ -169,6 +169,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   // Service Materials Recipe Configurator Modal State
   const [recipeModalServiceId, setRecipeModalServiceId] = useState<string | null>(null);
   const [editingRecipeRules, setEditingRecipeRules] = useState<ServiceMaterialRule[]>([]);
+  const [editingServiceTotalSessions, setEditingServiceTotalSessions] = useState<number>(1);
+  const [activeSessionFilter, setActiveSessionFilter] = useState<'all' | number>('all');
 
   // Telegram & Backup state
   const [showBotToken, setShowBotToken] = useState(false);
@@ -402,6 +404,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   const openServiceRecipeModal = (srv: DentalServiceItem) => {
     setRecipeModalServiceId(srv.id);
+    setEditingServiceTotalSessions(Math.max(1, srv.totalSessions || 1));
+    setActiveSessionFilter('all');
     setEditingRecipeRules(
       Array.isArray(srv.materialsRecipe) ? srv.materialsRecipe.map((r) => ({ ...r })) : []
     );
@@ -421,6 +425,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         qtyFixed: 1,
         qtyAnterior: 1,
         qtyMolar: 1.5,
+        sessionNumber: activeSessionFilter === 'all' ? 'all' : activeSessionFilter,
       },
     ]);
   };
@@ -441,12 +446,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   const handleSaveServiceRecipe = () => {
     if (!recipeModalServiceId) return;
     const cleanedRules = editingRecipeRules.filter((r) => Boolean(r && r.materialId));
+    const finalTotalSessions = Math.max(1, editingServiceTotalSessions || 1);
     const updated: ClinicSettings = {
       ...formState,
       services: formState.services.map((s) =>
         s.id === recipeModalServiceId
           ? {
               ...s,
+              totalSessions: finalTotalSessions,
               materialsRecipe: cleanedRules,
             }
           : s
@@ -455,7 +462,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     setFormState(updated);
     onSaveSettings(updated);
     setRecipeModalServiceId(null);
-    notify('تم حفظ وصفة المواد المستهلكة للخدمة بنجاح', 'success');
+    notify('تم حفظ وصفة المواد وجلسات الخدمة بنجاح', 'success');
   };
 
   const recordBackupTimestamp = (isoStr: string) => {
@@ -1238,16 +1245,23 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                           : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
                       }`}
                     >
-                      <span>إعداد المواد المستهلكة (العيادة والمعمل)</span>
-                      <span
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold ${
-                          recipeCount > 0
-                            ? 'bg-sky-600 text-white'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
-                        }`}
-                      >
-                        {recipeCount > 0 ? `${recipeCount} مواد` : 'غير مربوط'}
-                      </span>
+                      <span>إعداد المواد والجلسات</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {Boolean(srv.totalSessions && srv.totalSessions > 1) && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                            {srv.totalSessions} جلسات
+                          </span>
+                        )}
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold ${
+                            recipeCount > 0
+                              ? 'bg-sky-600 text-white'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                          }`}
+                        >
+                          {recipeCount > 0 ? `${recipeCount} مواد` : 'غير مربوط'}
+                        </span>
+                      </div>
                     </button>
                   </div>
                 </div>
@@ -2170,254 +2184,496 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         </div>
       )}
 
-      {/* Modal: Dynamic Service Materials Recipe Configurator (Clinic & Lab) */}
-      {recipeModalServiceId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4"
-          onClick={() => setRecipeModalServiceId(null)}
-        >
+      {/* Modal: Dynamic Service Materials Recipe Configurator (Clinic & Lab & Sessions) */}
+      {recipeModalServiceId && (() => {
+        const currentService = formState.services.find((s) => s.id === recipeModalServiceId);
+        const totalSessions = Math.max(1, editingServiceTotalSessions || 1);
+
+        // Compute Grand Total Summary for each material across all sessions
+        const materialSummaryMap = new Map<
+          string,
+          {
+            material: InventoryItem;
+            isLab: boolean;
+            unit: string;
+            fixedTotal: number;
+            anteriorTotal: number;
+            molarTotal: number;
+            types: Set<MaterialConsumptionType>;
+            sessionBreakdown: string[];
+          }
+        >();
+
+        editingRecipeRules.forEach((rule) => {
+          if (!rule.materialId) return;
+          const mat = inventory.find((i) => i.id === rule.materialId);
+          if (!mat) return;
+
+          let entry = materialSummaryMap.get(rule.materialId);
+          if (!entry) {
+            entry = {
+              material: mat,
+              isLab: mat.location === 'lab',
+              unit: mat.usageUnit || mat.unit || 'وحدة',
+              fixedTotal: 0,
+              anteriorTotal: 0,
+              molarTotal: 0,
+              types: new Set<MaterialConsumptionType>(),
+              sessionBreakdown: [],
+            };
+            materialSummaryMap.set(rule.materialId, entry);
+          }
+
+          entry.types.add(rule.consumptionType);
+          const ruleSessionsMultiplier =
+            rule.sessionNumber === 'all' || !rule.sessionNumber ? totalSessions : 1;
+
+          if (rule.consumptionType === 'by_tooth_type') {
+            const ant = (rule.qtyAnterior ?? 1) * ruleSessionsMultiplier;
+            const mol = (rule.qtyMolar ?? 1.5) * ruleSessionsMultiplier;
+            entry.anteriorTotal += ant;
+            entry.molarTotal += mol;
+            entry.sessionBreakdown.push(
+              rule.sessionNumber === 'all' || !rule.sessionNumber
+                ? `كل الجلسات (${totalSessions}): ${ant} أمامي / ${mol} ضرس`
+                : `الجلسة ${rule.sessionNumber}: ${rule.qtyAnterior ?? 1} أمامي / ${rule.qtyMolar ?? 1.5} ضرس`
+            );
+          } else {
+            const qty = (rule.qtyFixed ?? 1) * ruleSessionsMultiplier;
+            entry.fixedTotal += qty;
+            const typeLabel =
+              rule.consumptionType === 'per_session'
+                ? 'جلسات'
+                : rule.consumptionType === 'per_tooth_unit'
+                  ? 'لكل سن'
+                  : 'لكل فك';
+            entry.sessionBreakdown.push(
+              rule.sessionNumber === 'all' || !rule.sessionNumber
+                ? `كل الجلسات (${totalSessions}): ${qty} ${entry.unit} (${typeLabel})`
+                : `الجلسة ${rule.sessionNumber}: ${rule.qtyFixed ?? 1} ${entry.unit} (${typeLabel})`
+            );
+          }
+        });
+
+        const grandTotalsList = Array.from(materialSummaryMap.values());
+
+        // Filter displayed rules according to activeSessionFilter
+        const visibleRules = editingRecipeRules
+          .map((rule, origIndex) => ({ rule, origIndex }))
+          .filter(({ rule }) => {
+            if (activeSessionFilter === 'all') return true;
+            return rule.sessionNumber === 'all' || rule.sessionNumber === activeSessionFilter;
+          });
+
+        return (
           <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4"
+            onClick={() => setRecipeModalServiceId(null)}
           >
-            <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 shrink-0">
-              <div>
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                  إعداد المواد المستهلكة (العيادة والمعمل)
-                </h3>
-                <p className="text-xs text-sky-600 dark:text-sky-400 font-bold mt-0.5">
-                  الخدمة:{' '}
-                  {formState.services.find((s) => s.id === recipeModalServiceId)?.name || ''}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRecipeModalServiceId(null)}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                aria-label="إغلاق"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
-              <div className="rounded-xl border border-sky-200/70 dark:border-sky-900/50 bg-sky-50/50 dark:bg-sky-950/30 p-3 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-                حدّد المواد التي تُستهلك تلقائياً عند إصدار سند يحتوي على هذه الخدمة. يقوم النظام
-                بتحليل أرقام الأسنان (أمامي / ضرس / عدد الأسنان / عدد الفكوك) وخصم الكميات الدقيقة
-                تلقائياً دون إظهار أي تفاصيل للمواد في سند المريض.
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-3xl max-h-[92vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 shrink-0 bg-slate-50/60 dark:bg-slate-950/40">
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <span>إعداد المواد وجلسات الخدمة (العيادة والمعمل)</span>
+                  </h3>
+                  <p className="text-xs text-sky-600 dark:text-sky-400 font-bold mt-0.5">
+                    الخدمة: {currentService?.name || ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRecipeModalServiceId(null)}
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  aria-label="إغلاق"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              {editingRecipeRules.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center space-y-2">
-                  <div className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                    لا توجد مواد مربوطة بهذه الخدمة حالياً
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {/* 1. Total Sessions Selector */}
+                <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 p-3.5 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div>
+                      <div className="text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+                        <span>عدد جلسات الخدمة الإجمالية (خطة العلاج)</span>
+                      </div>
+                      <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                        حدد عدد الجلسات لحساب الإجمالي الكلي لمواد الخدمة وخصمها دفعة واحدة في السند الأول للمريض
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {[1, 2, 3, 4].map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          onClick={() => setEditingServiceTotalSessions(count)}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                            editingServiceTotalSessions === count
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:bg-amber-100/50'
+                          }`}
+                        >
+                          {count === 1 ? 'جلسة واحدة' : `${count} جلسات`}
+                        </button>
+                      ))}
+
+                      <div className="flex items-center gap-1 mr-1">
+                        <input
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={editingServiceTotalSessions}
+                          onChange={(e) =>
+                            setEditingServiceTotalSessions(Math.max(1, Number(e.target.value) || 1))
+                          }
+                          className="w-14 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-mono font-bold text-center"
+                        />
+                        <span className="text-[11px] font-bold text-slate-500">جلسة</span>
+                      </div>
+                    </div>
                   </div>
+                </div>
+
+                {/* 2. Session Filter Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800">
                   <button
                     type="button"
-                    onClick={handleAddMaterialRuleRow}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                    onClick={() => setActiveSessionFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                      activeSessionFilter === 'all'
+                        ? 'bg-sky-600 text-white shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                    }`}
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>+ ربط مادة من المخزون</span>
+                    الكل (الإجمالي الكلي)
                   </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {editingRecipeRules.map((rule, idx) => {
-                    const selectedItem = inventory.find((i) => i.id === rule.materialId);
-                    const unitLabel =
-                      selectedItem?.usageUnit || selectedItem?.unit || 'وحدة';
-                    const isLab = selectedItem?.location === 'lab';
 
+                  {Array.from({ length: totalSessions }, (_, i) => i + 1).map((sNum) => {
+                    const countInSession = editingRecipeRules.filter(
+                      (r) => r.sessionNumber === 'all' || r.sessionNumber === sNum
+                    ).length;
                     return (
-                      <div
-                        key={`${rule.materialId}_${idx}`}
-                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 space-y-3"
+                      <button
+                        key={sNum}
+                        type="button"
+                        onClick={() => setActiveSessionFilter(sNum)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                          activeSessionFilter === sNum
+                            ? 'bg-sky-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                        }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                            {/* Material Selector */}
-                            <div>
-                              <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                                المادة من المخزون (عيادة / معمل)
-                              </label>
-                              <select
-                                value={rule.materialId}
-                                onChange={(e) =>
-                                  handleUpdateMaterialRuleRow(idx, {
-                                    materialId: e.target.value,
-                                  })
-                                }
-                                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold"
-                              >
-                                {inventory.map((inv) => (
-                                  <option key={inv.id} value={inv.id}>
-                                    [{inv.location === 'lab' ? 'معمل' : 'عيادة'}] {inv.name} (
-                                    {inv.usageUnit || inv.unit})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            {/* Consumption Mode Selector */}
-                            <div>
-                              <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-                                طريقة حساب الخصم التلقائي
-                              </label>
-                              <select
-                                value={rule.consumptionType}
-                                onChange={(e) =>
-                                  handleUpdateMaterialRuleRow(idx, {
-                                    consumptionType: e.target.value as MaterialConsumptionType,
-                                  })
-                                }
-                                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold"
-                              >
-                                <option value="per_session">
-                                  ثابت للجلسة (مرة واحدة)
-                                </option>
-                                <option value="by_tooth_type">
-                                  حسب نوع السن (أمامي / ضرس)
-                                </option>
-                                <option value="per_tooth_unit">
-                                  لكل سن / وحدة معملية
-                                </option>
-                                <option value="per_arch">
-                                  لكل فك (طبعة / موديل معمل)
-                                </option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveMaterialRuleRow(idx)}
-                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg shrink-0 mt-5"
-                            title="حذف المادة من الوصفة"
+                        <span>الجلسة {sNum}</span>
+                        {countInSession > 0 && (
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                              activeSessionFilter === sNum
+                                ? 'bg-sky-800 text-white'
+                                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                            }`}
                           >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-
-                        {/* Dynamic Quantity Fields based on consumptionType */}
-                        {rule.consumptionType === 'by_tooth_type' ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
-                              <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                                للسن الأمامي (1، 2، 3) — ({unitLabel})
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  value={rule.qtyAnterior ?? 1}
-                                  onChange={(e) =>
-                                    handleUpdateMaterialRuleRow(idx, {
-                                      qtyAnterior: Math.max(0, Number(e.target.value) || 0),
-                                    })
-                                  }
-                                  className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
-                                />
-                                <span className="text-xs font-bold text-sky-700 dark:text-sky-300 shrink-0">
-                                  {unitLabel}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
-                              <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                                للضرس الخلفي (4 إلى 8) — ({unitLabel})
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  value={rule.qtyMolar ?? 1.5}
-                                  onChange={(e) =>
-                                    handleUpdateMaterialRuleRow(idx, {
-                                      qtyMolar: Math.max(0, Number(e.target.value) || 0),
-                                    })
-                                  }
-                                  className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
-                                />
-                                <span className="text-xs font-bold text-sky-700 dark:text-sky-300 shrink-0">
-                                  {unitLabel}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
-                            <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                              {rule.consumptionType === 'per_session'
-                                ? `الكمية الثابتة للجلسة الواحدة (${unitLabel})`
-                                : rule.consumptionType === 'per_tooth_unit'
-                                  ? `الكمية لكل سن / وحدة معملية (${unitLabel})`
-                                  : `الكمية لكل فك متأثر (${unitLabel})`}
-                            </label>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={rule.qtyFixed ?? 1}
-                                onChange={(e) =>
-                                  handleUpdateMaterialRuleRow(idx, {
-                                    qtyFixed: Math.max(0, Number(e.target.value) || 0),
-                                  })
-                                }
-                                className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
-                              />
-                              <span
-                                className={`px-2.5 py-1 rounded-md text-xs font-bold shrink-0 ${
-                                  isLab
-                                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
-                                    : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300'
-                                }`}
-                              >
-                                {unitLabel} ({isLab ? 'مخزن المعمل' : 'مخزن العيادة'})
-                              </span>
-                            </div>
-                          </div>
+                            {countInSession}
+                          </span>
                         )}
-                      </div>
+                      </button>
                     );
                   })}
-
-                  <button
-                    type="button"
-                    onClick={handleAddMaterialRuleRow}
-                    className="w-full py-2 rounded-xl border border-dashed border-sky-400 dark:border-sky-700 text-xs font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-50/50 dark:hover:bg-sky-950/30 transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>+ ربط مادة من المخزون</span>
-                  </button>
                 </div>
-              )}
-            </div>
 
-            <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleSaveServiceRecipe}
-                className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors flex items-center justify-center gap-1.5"
-              >
-                <Save className="w-4 h-4" />
-                <span>حفظ وصفة المواد للخدمة</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setRecipeModalServiceId(null)}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              >
-                إلغاء
-              </button>
+                {/* 3. Materials Rules List */}
+                {editingRecipeRules.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center space-y-2">
+                    <div className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                      لا توجد مواد مربوطة بهذه الخدمة حالياً
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddMaterialRuleRow}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ ربط مادة من المخزون</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {visibleRules.map(({ rule, origIndex }) => {
+                      const selectedItem = inventory.find((i) => i.id === rule.materialId);
+                      const unitLabel = selectedItem?.usageUnit || selectedItem?.unit || 'وحدة';
+                      const isLab = selectedItem?.location === 'lab';
+
+                      return (
+                        <div
+                          key={`${rule.materialId}_${origIndex}`}
+                          className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 space-y-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                              {/* Material Selector */}
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+                                  المادة من المخزون (عيادة / معمل)
+                                </label>
+                                <select
+                                  value={rule.materialId}
+                                  onChange={(e) =>
+                                    handleUpdateMaterialRuleRow(origIndex, {
+                                      materialId: e.target.value,
+                                    })
+                                  }
+                                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold"
+                                >
+                                  {inventory.map((inv) => (
+                                    <option key={inv.id} value={inv.id}>
+                                      [{inv.location === 'lab' ? 'معمل' : 'عيادة'}] {inv.name} (
+                                      {inv.usageUnit || inv.unit})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {/* Session Assignment Selector */}
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+                                  توزيع الجلسة المستهلكة
+                                </label>
+                                <select
+                                  value={rule.sessionNumber ?? 'all'}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    handleUpdateMaterialRuleRow(origIndex, {
+                                      sessionNumber: val === 'all' ? 'all' : Number(val),
+                                    });
+                                  }}
+                                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold text-sky-700 dark:text-sky-300"
+                                >
+                                  <option value="all">تتكرر في كل جلسة (كل الجلسات)</option>
+                                  {Array.from({ length: totalSessions }, (_, i) => i + 1).map((sNum) => (
+                                    <option key={sNum} value={sNum}>
+                                      الجلسة {sNum} فقط
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {/* Consumption Mode Selector */}
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+                                  طريقة حساب الخصم
+                                </label>
+                                <select
+                                  value={rule.consumptionType}
+                                  onChange={(e) =>
+                                    handleUpdateMaterialRuleRow(origIndex, {
+                                      consumptionType: e.target.value as MaterialConsumptionType,
+                                    })
+                                  }
+                                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 text-xs font-bold"
+                                >
+                                  <option value="per_session">ثابت للجلسة (مرة واحدة)</option>
+                                  <option value="by_tooth_type">حسب نوع السن (أمامي / ضرس)</option>
+                                  <option value="per_tooth_unit">لكل سن / وحدة معملية</option>
+                                  <option value="per_arch">لكل فك (طبعة / موديل معمل)</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMaterialRuleRow(origIndex)}
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg shrink-0 mt-5"
+                              title="حذف المادة من الوصفة"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {/* Dynamic Quantity Inputs */}
+                          {rule.consumptionType === 'by_tooth_type' ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+                                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                  للسن الأمامي (1، 2، 3) — ({unitLabel})
+                                </label>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.1"
+                                    value={rule.qtyAnterior ?? 1}
+                                    onChange={(e) =>
+                                      handleUpdateMaterialRuleRow(origIndex, {
+                                        qtyAnterior: Math.max(0, Number(e.target.value) || 0),
+                                      })
+                                    }
+                                    className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
+                                  />
+                                  <span className="text-xs font-bold text-sky-700 dark:text-sky-300 shrink-0">
+                                    {unitLabel}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+                                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                  للضرس الخلفي (4 إلى 8) — ({unitLabel})
+                                </label>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.1"
+                                    value={rule.qtyMolar ?? 1.5}
+                                    onChange={(e) =>
+                                      handleUpdateMaterialRuleRow(origIndex, {
+                                        qtyMolar: Math.max(0, Number(e.target.value) || 0),
+                                      })
+                                    }
+                                    className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
+                                  />
+                                  <span className="text-xs font-bold text-sky-700 dark:text-sky-300 shrink-0">
+                                    {unitLabel}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5">
+                              <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                {rule.consumptionType === 'per_session'
+                                  ? `الكمية للجلسة الواحدة (${unitLabel})`
+                                  : rule.consumptionType === 'per_tooth_unit'
+                                    ? `الكمية لكل سن / وحدة معملية (${unitLabel})`
+                                    : `الكمية لكل فك متأثر (${unitLabel})`}
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={rule.qtyFixed ?? 1}
+                                  onChange={(e) =>
+                                    handleUpdateMaterialRuleRow(origIndex, {
+                                      qtyFixed: Math.max(0, Number(e.target.value) || 0),
+                                    })
+                                  }
+                                  className="flex-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold"
+                                />
+                                <span
+                                  className={`px-2.5 py-1 rounded-md text-xs font-bold shrink-0 ${
+                                    isLab
+                                      ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
+                                      : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300'
+                                  }`}
+                                >
+                                  {unitLabel} ({isLab ? 'مخزن المعمل' : 'مخزن العيادة'})
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <button
+                      type="button"
+                      onClick={handleAddMaterialRuleRow}
+                      className="w-full py-2.5 rounded-xl border border-dashed border-sky-400 dark:border-sky-700 text-xs font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-50/50 dark:hover:bg-sky-950/30 transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ ربط مادة جديدة من المخزون</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* 4. Live Grand Total Across All Sessions Summary Card */}
+                {grandTotalsList.length > 0 && (
+                  <div className="rounded-xl border border-emerald-300 dark:border-emerald-800/80 bg-emerald-50/60 dark:bg-emerald-950/30 p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-bold text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>الإجمالي الكلي لمواد الخدمة عبر جميع جلساتها ({totalSessions} جلسات)</span>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                        {grandTotalsList.length} مواد محسوبة
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {grandTotalsList.map((entry, idx) => (
+                        <div
+                          key={`summary_${entry.material.id}_${idx}`}
+                          className="rounded-lg border border-emerald-200 dark:border-emerald-800/60 bg-white/80 dark:bg-slate-900/80 p-2.5 text-xs flex items-center justify-between gap-2"
+                        >
+                          <div>
+                            <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                              <span
+                                className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                                  entry.isLab
+                                    ? 'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300'
+                                    : 'bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300'
+                                }`}
+                              >
+                                {entry.isLab ? 'معمل' : 'عيادة'}
+                              </span>
+                              <span>{entry.material.name}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {entry.sessionBreakdown.join(' + ')}
+                            </div>
+                          </div>
+
+                          <div className="text-left font-mono font-bold text-emerald-700 dark:text-emerald-300 text-xs shrink-0">
+                            {entry.anteriorTotal > 0 || entry.molarTotal > 0 ? (
+                              <span>
+                                {entry.anteriorTotal} أمامي / {entry.molarTotal} ضرس ({entry.unit})
+                              </span>
+                            ) : (
+                              <span>
+                                {entry.fixedTotal} {entry.unit}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80 leading-relaxed pt-1">
+                      💡 <strong>قاعدة الخصم الحاسمة:</strong> يتم خصم هذا الإجمالي الكلي دفعة واحدة عند إصدار أول سند للمريض يتضمن هذه الخدمة، ولا يتم تكرار الخصم في سندات الأقساط أو الدفعات اللاحقة.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2 shrink-0 bg-slate-50/60 dark:bg-slate-950/40">
+                <button
+                  type="button"
+                  onClick={handleSaveServiceRecipe}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>حفظ وصفة المواد وجلسات الخدمة</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRecipeModalServiceId(null)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                >
+                  إلغاء
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

@@ -2,6 +2,7 @@ import type {
   ConsumedMaterialEntry,
   DentalServiceItem,
   InventoryItem,
+  ReceiptRecord,
 } from '../types/clinic';
 
 function convertUnderThousand(n: number): string {
@@ -191,82 +192,251 @@ export function getEffectiveRemainingSubUnits(
   return +(safeQty * pkgSize).toFixed(3);
 }
 
+export function isServiceAlreadyBilledForPatient(
+  serviceName: string,
+  toothFDI: string,
+  previousReceipts: ReceiptRecord[]
+): { isAlreadyBilled: boolean; unbilledTeeth: string[] } {
+  const cleanName = String(serviceName || '').trim();
+  const currentTeeth = parseFDIToothNumbers(toothFDI).values;
+
+  if (!cleanName || !Array.isArray(previousReceipts) || previousReceipts.length === 0) {
+    return {
+      isAlreadyBilled: false,
+      unbilledTeeth: currentTeeth,
+    };
+  }
+
+  // Find all previous receipts of this patient that included this service name
+  const matchingPrevious = previousReceipts.filter((r) =>
+    (Array.isArray(r.services) ? r.services : []).some(
+      (s) => s.trim() === cleanName || cleanName.includes(s.trim()) || s.trim().includes(cleanName)
+    )
+  );
+
+  if (matchingPrevious.length === 0) {
+    return {
+      isAlreadyBilled: false,
+      unbilledTeeth: currentTeeth,
+    };
+  }
+
+  // Collect all teeth previously treated for this service
+  const previouslyTreatedTeeth = new Set<string>();
+  let previousHadNoTeeth = false;
+
+  for (const prev of matchingPrevious) {
+    const prevTeeth = parseFDIToothNumbers(prev.toothFDI || '').values;
+    if (prevTeeth.length === 0) {
+      previousHadNoTeeth = true;
+    } else {
+      prevTeeth.forEach((t) => previouslyTreatedTeeth.add(t));
+    }
+  }
+
+  // Case 1: Current receipt has no teeth specified
+  if (currentTeeth.length === 0) {
+    return { isAlreadyBilled: true, unbilledTeeth: [] };
+  }
+
+  // Case 2: Previous had general package without tooth numbers
+  if (previousHadNoTeeth && previouslyTreatedTeeth.size === 0) {
+    return { isAlreadyBilled: true, unbilledTeeth: [] };
+  }
+
+  // Case 3: Filter current teeth to those not treated previously
+  const unbilledTeeth = currentTeeth.filter((t) => !previouslyTreatedTeeth.has(t));
+  if (unbilledTeeth.length === 0) {
+    return { isAlreadyBilled: true, unbilledTeeth: [] };
+  }
+
+  return { isAlreadyBilled: false, unbilledTeeth };
+}
+
 export function calculateReceiptMaterialsConsumption(
   servicesNames: string[],
   toothFDI: string,
   servicesCatalog: DentalServiceItem[],
-  inventory: InventoryItem[]
+  inventory: InventoryItem[],
+  patientPreviousReceipts: ReceiptRecord[] = []
 ): ConsumedMaterialEntry[] {
-  const analysis = analyzeFDITeethForConsumption(toothFDI);
-  const totalsByMaterialId = new Map<string, number>();
   const validInventoryIds = new Set(inventory.map((i) => i.id));
+  const fullTeethAnalysis = analyzeFDITeethForConsumption(toothFDI);
 
-  const addDeduction = (materialId: string, amount: number) => {
-    if (!materialId || !validInventoryIds.has(materialId)) return;
-    const numeric = Number(amount);
-    if (!Number.isFinite(numeric) || numeric <= 0) return;
-    const prev = totalsByMaterialId.get(materialId) || 0;
-    totalsByMaterialId.set(materialId, +(prev + numeric).toFixed(4));
-  };
+  // 1. Identify which services are newly billable for this patient
+  interface ServiceToDeductInfo {
+    serviceItem: DentalServiceItem;
+    unbilledTeeth: string[];
+    teethAnalysis: FDITeethConsumptionAnalysis;
+    totalSessions: number;
+  }
+
+  const servicesToDeduct: ServiceToDeductInfo[] = [];
 
   for (const rawSrvName of servicesNames) {
     const cleanName = String(rawSrvName || '').trim();
     if (!cleanName) continue;
 
+    // Check if already billed in previous receipts for this patient
+    const check = isServiceAlreadyBilledForPatient(cleanName, toothFDI, patientPreviousReceipts);
+    if (check.isAlreadyBilled) {
+      // Service was already billed in a previous receipt for this patient => 0 deduction!
+      continue;
+    }
+
     const matchedService = servicesCatalog.find(
-      (s) => s.name.trim() === cleanName || cleanName.includes(s.name.trim())
+      (s) =>
+        s.name.trim() === cleanName ||
+        cleanName.includes(s.name.trim()) ||
+        s.name.trim().includes(cleanName)
     );
 
-    const recipe = matchedService?.materialsRecipe || [];
-    const coveredByRecipeIds = new Set<string>();
+    const teethForThisService =
+      check.unbilledTeeth.length > 0 ? check.unbilledTeeth : fullTeethAnalysis.teeth;
+
+    const analysisForThisService =
+      check.unbilledTeeth.length > 0
+        ? analyzeFDITeethForConsumption(check.unbilledTeeth.join(' - '))
+        : fullTeethAnalysis;
+
+    const totalSessions = Math.max(1, matchedService?.totalSessions || 1);
+
+    if (matchedService) {
+      servicesToDeduct.push({
+        serviceItem: matchedService,
+        unbilledTeeth: teethForThisService,
+        teethAnalysis: analysisForThisService,
+        totalSessions,
+      });
+    } else {
+      servicesToDeduct.push({
+        serviceItem: {
+          id: `tmp_${cleanName}`,
+          name: cleanName,
+          price: 0,
+          category: 'عام',
+          keywords: [cleanName],
+        },
+        unbilledTeeth: teethForThisService,
+        teethAnalysis: analysisForThisService,
+        totalSessions: 1,
+      });
+    }
+  }
+
+  if (servicesToDeduct.length === 0) {
+    return [];
+  }
+
+  // 2. Prevent duplication of shared materials:
+  // - per_session materials: take the maximum across services (based on highest session requirement)
+  // - per_arch materials: take max qtyFixed * actual affected arches (calculated once per actual arch)
+  // - by_tooth_type & per_tooth_unit: tooth-specific, summed for each new service
+
+  const perSessionMaxByMaterial = new Map<string, number>();
+  const perArchMaxFixedByMaterial = new Map<string, number>();
+  const directTotalsByMaterial = new Map<string, number>();
+  const coveredByRecipeServiceNames = new Set<string>();
+
+  for (const info of servicesToDeduct) {
+    const srv = info.serviceItem;
+    const recipe = srv.materialsRecipe || [];
+    const analysis = info.teethAnalysis;
+    const totalSessions = info.totalSessions;
 
     if (recipe.length > 0) {
+      coveredByRecipeServiceNames.add(srv.name.trim());
       for (const rule of recipe) {
-        if (!rule || !rule.materialId) continue;
-        coveredByRecipeIds.add(rule.materialId);
+        if (!rule || !rule.materialId || !validInventoryIds.has(rule.materialId)) continue;
 
-        let amountToDeduct = 0;
+        // How many times does this rule execute across the service sessions?
+        // If sessionNumber === 'all', it runs every session (= totalSessions times).
+        // If sessionNumber is a specific number (e.g. 1, 2), it runs 1 time for that specific session.
+        const sessionMultiplier = rule.sessionNumber === 'all' ? totalSessions : 1;
+
         if (rule.consumptionType === 'per_session') {
-          amountToDeduct = Math.max(0, Number(rule.qtyFixed) || 0);
+          const serviceQtyForThisMaterial =
+            (Math.max(0, Number(rule.qtyFixed) || 0)) * sessionMultiplier;
+          const currentMax = perSessionMaxByMaterial.get(rule.materialId) || 0;
+          perSessionMaxByMaterial.set(
+            rule.materialId,
+            Math.max(currentMax, serviceQtyForThisMaterial)
+          );
+        } else if (rule.consumptionType === 'per_arch') {
+          const ruleFixed = (Math.max(0, Number(rule.qtyFixed) || 0)) * sessionMultiplier;
+          const currentMaxFixed = perArchMaxFixedByMaterial.get(rule.materialId) || 0;
+          perArchMaxFixedByMaterial.set(
+            rule.materialId,
+            Math.max(currentMaxFixed, ruleFixed)
+          );
         } else if (rule.consumptionType === 'by_tooth_type') {
           const qtyAnt = Math.max(0, Number(rule.qtyAnterior) || 0);
           const qtyMol = Math.max(0, Number(rule.qtyMolar) || 0);
+          let ruleAmount = 0;
           if (analysis.totalTeeth > 0) {
-            amountToDeduct = analysis.anteriorCount * qtyAnt + analysis.molarCount * qtyMol;
+            ruleAmount =
+              (analysis.anteriorCount * qtyAnt + analysis.molarCount * qtyMol) *
+              sessionMultiplier;
           } else {
-            // Fallback when doctor did not enter FDI teeth: assume 1 tooth (prefer molar rate or anterior rate)
-            amountToDeduct = qtyMol > 0 ? qtyMol : qtyAnt;
+            ruleAmount = (qtyMol > 0 ? qtyMol : qtyAnt) * sessionMultiplier;
           }
+          const prev = directTotalsByMaterial.get(rule.materialId) || 0;
+          directTotalsByMaterial.set(rule.materialId, +(prev + ruleAmount).toFixed(4));
         } else if (rule.consumptionType === 'per_tooth_unit') {
           const qtyPerUnit = Math.max(0, Number(rule.qtyFixed) || 0);
           const unitsCount = Math.max(1, analysis.totalTeeth);
-          amountToDeduct = unitsCount * qtyPerUnit;
-        } else if (rule.consumptionType === 'per_arch') {
-          const qtyPerArch = Math.max(0, Number(rule.qtyFixed) || 0);
-          const archesCount = Math.max(1, analysis.affectedArches);
-          amountToDeduct = archesCount * qtyPerArch;
+          const ruleAmount = unitsCount * qtyPerUnit * sessionMultiplier;
+          const prev = directTotalsByMaterial.get(rule.materialId) || 0;
+          directTotalsByMaterial.set(rule.materialId, +(prev + ruleAmount).toFixed(4));
         }
-
-        addDeduction(rule.materialId, amountToDeduct);
-      }
-    }
-
-    // Legacy fallback: if an inventory item has `linkedService` matching this service and wasn't in `materialsRecipe`
-    for (const invItem of inventory) {
-      if (
-        invItem.linkedService &&
-        invItem.linkedService.trim() === cleanName &&
-        !coveredByRecipeIds.has(invItem.id)
-      ) {
-        addDeduction(invItem.id, 1);
       }
     }
   }
 
-  return Array.from(totalsByMaterialId.entries()).map(([materialId, amountDeducted]) => ({
-    materialId,
-    amountDeducted: +amountDeducted.toFixed(3),
-  }));
+  // Combine results into final deductions map
+  const finalMap = new Map<string, number>();
+
+  // Add per_session materials
+  for (const [matId, maxAmount] of perSessionMaxByMaterial.entries()) {
+    if (maxAmount > 0) {
+      finalMap.set(matId, +((finalMap.get(matId) || 0) + maxAmount).toFixed(4));
+    }
+  }
+
+  // Add per_arch materials (once per actual affected arch)
+  const actualAffectedArches = Math.max(1, fullTeethAnalysis.affectedArches);
+  for (const [matId, maxFixed] of perArchMaxFixedByMaterial.entries()) {
+    if (maxFixed > 0) {
+      const archAmount = +(maxFixed * actualAffectedArches).toFixed(4);
+      finalMap.set(matId, +((finalMap.get(matId) || 0) + archAmount).toFixed(4));
+    }
+  }
+
+  // Add direct totals (by_tooth_type and per_tooth_unit)
+  for (const [matId, amount] of directTotalsByMaterial.entries()) {
+    if (amount > 0) {
+      finalMap.set(matId, +((finalMap.get(matId) || 0) + amount).toFixed(4));
+    }
+  }
+
+  // Legacy fallback: if an inventory item has `linkedService` matching any newly billed service
+  for (const info of servicesToDeduct) {
+    const srvName = info.serviceItem.name.trim();
+    if (!coveredByRecipeServiceNames.has(srvName)) {
+      for (const invItem of inventory) {
+        if (invItem.linkedService && invItem.linkedService.trim() === srvName) {
+          finalMap.set(invItem.id, +((finalMap.get(invItem.id) || 0) + 1).toFixed(4));
+        }
+      }
+    }
+  }
+
+  return Array.from(finalMap.entries())
+    .map(([materialId, amountDeducted]) => ({
+      materialId,
+      amountDeducted: +amountDeducted.toFixed(3),
+    }))
+    .filter((e) => e.amountDeducted > 0);
 }
 
 export function applyMaterialDeductionsToInventory(

@@ -1158,6 +1158,11 @@ export default function App() {
     const targetClinicUid = cloudTargetUid;
     const today = new Date().toISOString().slice(0, 10);
     const existingReceipt = isEdit ? receipts.find((r) => r.id === payload.id) : undefined;
+    const patientPreviousReceipts = receipts.filter(
+      (r) =>
+        (!existingReceipt || r.id !== existingReceipt.id) &&
+        normalizePatientNameKey(r.patientName) === normalizePatientNameKey(canonicalPatientName)
+    );
 
     let workingInventory = inventory;
     const touchedInventoryMap = new Map<string, InventoryItem>();
@@ -1172,7 +1177,8 @@ export default function App() {
               existingReceipt.services || [],
               existingReceipt.toothFDI || '',
               settings.services,
-              workingInventory
+              workingInventory,
+              patientPreviousReceipts
             );
 
       if (previousDeductions.length > 0) {
@@ -1190,12 +1196,14 @@ export default function App() {
     }
 
     // 2. Calculate new material consumption for this receipt (Clinic & Lab materials)
+    // Only deducts if this service is new for this patient, and deduplicates shared materials
     const computedConsumedMaterials = settings.features.autoInventory
       ? calculateReceiptMaterialsConsumption(
           payload.services || [],
           payload.toothFDI || '',
           settings.services,
-          workingInventory
+          workingInventory,
+          patientPreviousReceipts
         )
       : [];
 

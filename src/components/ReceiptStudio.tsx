@@ -20,7 +20,11 @@ import {
   ReceiptRecord,
 } from '../types/clinic';
 import { CURRENCIES, PAYMENT_METHODS } from '../data/defaultData';
-import { numberToArabicWords, parseFDIToothNumbers } from '../utils/arabicTafqeet';
+import {
+  isServiceAlreadyBilledForPatient,
+  numberToArabicWords,
+  parseFDIToothNumbers,
+} from '../utils/arabicTafqeet';
 import {
   RETURN_VISIT_MARKER,
   buildPatientAccountsFromReceipts,
@@ -184,6 +188,46 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       patientUnpaidReceipts.reduce((sum, r) => sum + (Number(r.remainingAmount) || 0), 0),
     [patientUnpaidReceipts]
   );
+
+  const patientPreviousReceipts = useMemo(() => {
+    if (!matchedPatientAccount) return [];
+    return matchedPatientAccount.receipts.filter(
+      (r) => !editingReceipt || r.id !== editingReceipt.id
+    );
+  }, [matchedPatientAccount, editingReceipt]);
+
+  const inventoryDeductionStatus = useMemo(() => {
+    if (selectedServices.length === 0 || !settings.features.autoInventory) return null;
+    if (patientPreviousReceipts.length === 0) {
+      return {
+        type: 'initial' as const,
+        label: 'سند أول للمريض',
+        message: 'سيتم خصم إجمالي مواد الخدمات لجميع الجلسات تلقائياً من المخزون.',
+      };
+    }
+    const unbilledServices = selectedServices.filter(
+      (srv) => !isServiceAlreadyBilledForPatient(srv, toothFDI, patientPreviousReceipts)
+    );
+    if (unbilledServices.length === 0) {
+      return {
+        type: 'installment' as const,
+        label: 'سند دفعة / قسط',
+        message: 'مواد هذه الخدمة خُصمت بالكامل في السند الأول للمريض ولن يتم تكرار الخصم.',
+      };
+    }
+    if (unbilledServices.length < selectedServices.length) {
+      return {
+        type: 'mixed' as const,
+        label: 'خدمات سابقة وجديدة',
+        message: `سيتم خصم مواد الخدمة الجديدة فقط (${unbilledServices.join('، ')}) وتخطي الخدمات السابقة لمنع التكرار.`,
+      };
+    }
+    return {
+      type: 'new_service' as const,
+      label: 'خدمة جديدة للمريض',
+      message: 'سيتم خصم إجمالي مواد هذه الخدمة لكافة جلساتها من المخزون.',
+    };
+  }, [selectedServices, toothFDI, patientPreviousReceipts, settings.features.autoInventory]);
 
   const handleToggleService = (serviceName: string, price: number) => {
     setSelectedServices((prev) => {
@@ -592,6 +636,36 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* مؤشر الخصم التلقائي للمخزون وقاعدة منع التكرار */}
+            {inventoryDeductionStatus && (
+              <div
+                className={`rounded-xl border p-2.5 text-xs flex items-start gap-2 transition-colors ${
+                  inventoryDeductionStatus.type === 'installment'
+                    ? 'border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200'
+                    : inventoryDeductionStatus.type === 'mixed'
+                      ? 'border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200'
+                      : 'border-sky-200 dark:border-sky-900/60 bg-sky-50/70 dark:bg-sky-950/30 text-sky-900 dark:text-sky-200'
+                }`}
+              >
+                <div className="shrink-0 mt-0.5">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                      inventoryDeductionStatus.type === 'installment'
+                        ? 'bg-emerald-600 text-white'
+                        : inventoryDeductionStatus.type === 'mixed'
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-sky-600 text-white'
+                    }`}
+                  >
+                    {inventoryDeductionStatus.label}
+                  </span>
+                </div>
+                <div className="flex-1 leading-relaxed text-[11px] sm:text-xs">
+                  {inventoryDeductionStatus.message}
+                </div>
+              </div>
+            )}
 
             {/* المبالغ المالية الثلاثة */}
             <div className="grid grid-cols-3 gap-2.5">

@@ -300,22 +300,30 @@ export function sanitizeNum(val: unknown, min = 0, max = 1000000000): number {
 }
 
 const SERVICE_RECIPE_PREFIX = '__mr__:';
+const SERVICE_SESSIONS_PREFIX = '__sess__:';
 const INV_META_REGEX = /\s*\[\[invmeta:([^\]]+)\]\]$/;
 const REC_CM_REGEX = /\s*\[\[cm:([^\]]+)\]\]$/;
 
 function encodeServiceMaterialRulesToKeywords(
   baseKeywords: string[],
   serviceName: string,
-  recipe?: ServiceMaterialRule[]
+  recipe?: ServiceMaterialRule[],
+  totalSessions?: number
 ): string[] {
   const cleanKeywords = (Array.isArray(baseKeywords) && baseKeywords.length > 0
     ? baseKeywords
     : [serviceName]
   )
     .map((k) => String(k || '').trim())
-    .filter((k) => k.length > 0 && !k.startsWith(SERVICE_RECIPE_PREFIX))
-    .slice(0, 10)
+    .filter((k) => k.length > 0 && !k.startsWith(SERVICE_RECIPE_PREFIX) && !k.startsWith(SERVICE_SESSIONS_PREFIX))
+    .slice(0, 8)
     .map((k) => sanitizeStr(k, 80, serviceName));
+
+  const extraMeta: string[] = [];
+  const safeSessions = Math.max(1, Math.min(20, Math.round(Number(totalSessions) || 1)));
+  if (safeSessions > 1) {
+    extraMeta.push(`${SERVICE_SESSIONS_PREFIX}${safeSessions}`);
+  }
 
   const encodedRules: string[] = [];
   if (Array.isArray(recipe)) {
@@ -331,29 +339,39 @@ function encodeServiceMaterialRulesToKeywords(
       const qFix = +(Number(rule.qtyFixed) || 0).toFixed(3);
       const qAnt = +(Number(rule.qtyAnterior) || 0).toFixed(3);
       const qMol = +(Number(rule.qtyMolar) || 0).toFixed(3);
-      const token = `${SERVICE_RECIPE_PREFIX}${matId}|${cType}|${qFix}|${qAnt}|${qMol}`.slice(0, 80);
+      const sNum =
+        rule.sessionNumber === 'all'
+          ? 'all'
+          : Math.max(1, Math.min(20, Math.round(Number(rule.sessionNumber) || 1)));
+      const token = `${SERVICE_RECIPE_PREFIX}${matId}|${cType}|${qFix}|${qAnt}|${qMol}|${sNum}`.slice(0, 80);
       encodedRules.push(token);
     }
   }
 
-  const combined = [...cleanKeywords, ...encodedRules].slice(0, 20);
+  const combined = [...cleanKeywords, ...extraMeta, ...encodedRules].slice(0, 20);
   return combined.length > 0 ? combined : [sanitizeStr(serviceName, 80, 'خدمة علاجية')];
 }
 
 function decodeServiceKeywordsAndRecipe(
   rawKeywords: unknown,
   serviceName: string
-): { keywords: string[]; materialsRecipe: ServiceMaterialRule[] } {
+): { keywords: string[]; materialsRecipe: ServiceMaterialRule[]; totalSessions: number } {
   const list = Array.isArray(rawKeywords)
     ? rawKeywords.map((k) => String(k || '').trim()).filter(Boolean)
     : [];
   const keywords: string[] = [];
   const materialsRecipe: ServiceMaterialRule[] = [];
+  let totalSessions = 1;
 
   for (const entry of list) {
-    if (entry.startsWith(SERVICE_RECIPE_PREFIX)) {
+    if (entry.startsWith(SERVICE_SESSIONS_PREFIX)) {
+      const parsedSess = parseInt(entry.slice(SERVICE_SESSIONS_PREFIX.length), 10);
+      if (Number.isFinite(parsedSess) && parsedSess >= 1) {
+        totalSessions = parsedSess;
+      }
+    } else if (entry.startsWith(SERVICE_RECIPE_PREFIX)) {
       const payload = entry.slice(SERVICE_RECIPE_PREFIX.length);
-      const [matId, cTypeRaw, qFixRaw, qAntRaw, qMolRaw] = payload.split('|');
+      const [matId, cTypeRaw, qFixRaw, qAntRaw, qMolRaw, sNumRaw] = payload.split('|');
       if (matId) {
         const consumptionType: MaterialConsumptionType =
           cTypeRaw === 'by_tooth_type' ||
@@ -361,12 +379,17 @@ function decodeServiceKeywordsAndRecipe(
           cTypeRaw === 'per_arch'
             ? cTypeRaw
             : 'per_session';
+        const sessionNumber: number | 'all' =
+          sNumRaw === 'all'
+            ? 'all'
+            : (Number(sNumRaw) && Number(sNumRaw) > 0 ? Number(sNumRaw) : 1);
         materialsRecipe.push({
           materialId: matId,
           consumptionType,
           qtyFixed: +(Number(qFixRaw) || 0).toFixed(3),
           qtyAnterior: +(Number(qAntRaw) || 0).toFixed(3),
           qtyMolar: +(Number(qMolRaw) || 0).toFixed(3),
+          sessionNumber,
         });
       }
     } else {
@@ -377,6 +400,7 @@ function decodeServiceKeywordsAndRecipe(
   return {
     keywords: keywords.length > 0 ? keywords : [serviceName],
     materialsRecipe,
+    totalSessions,
   };
 }
 
@@ -1459,7 +1483,8 @@ export async function saveServiceToCloud(
   const cloudKeywords = encodeServiceMaterialRulesToKeywords(
     service.keywords || [],
     safeName,
-    service.materialsRecipe
+    service.materialsRecipe,
+    service.totalSessions
   );
   const decodedLocal = decodeServiceKeywordsAndRecipe(cloudKeywords, safeName);
 
@@ -1470,6 +1495,7 @@ export async function saveServiceToCloud(
     category: safeCategory,
     keywords: decodedLocal.keywords,
     materialsRecipe: decodedLocal.materialsRecipe,
+    totalSessions: decodedLocal.totalSessions,
   };
 
   markPendingUpsert(safeUid, 'services', safeServiceId, normalizedService);
@@ -2066,6 +2092,7 @@ async function fetchClinicCollectionsFromFirestore(
         category: String(d.category || 'علاجات سنية'),
         keywords: decoded.keywords,
         materialsRecipe: decoded.materialsRecipe,
+        totalSessions: decoded.totalSessions,
       };
     });
     const mergedServices = applyPendingQueueToItems(
@@ -2362,6 +2389,7 @@ export function subscribeToClinicCloudData(
           category: String(d.category || 'علاجات سنية'),
           keywords: decoded.keywords,
           materialsRecipe: decoded.materialsRecipe,
+          totalSessions: decoded.totalSessions,
         };
       });
       const merged = applyPendingQueueToItems(safeUid, 'services', items);

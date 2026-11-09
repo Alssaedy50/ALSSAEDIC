@@ -16,6 +16,7 @@ export interface ServiceMaterialRule {
   qtyFixed?: number;
   qtyAnterior?: number;
   qtyMolar?: number;
+  sessionNumber?: number | 'all';
 }
 
 export interface DentalServiceItem {
@@ -25,6 +26,7 @@ export interface DentalServiceItem {
   category: string;
   keywords: string[];
   materialsRecipe?: ServiceMaterialRule[];
+  totalSessions?: number;
 }
 
 export type ServiceConfig = DentalServiceItem;
