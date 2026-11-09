@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeftRight,
   Check,
   ChevronDown,
   Eye,
   FileText,
   Layers,
+  Loader2,
   MoreVertical,
   Package,
   PenTool,
   RotateCcw,
   Save,
+  Sparkles,
   Stethoscope,
   X,
 } from 'lucide-react';
@@ -33,7 +36,10 @@ import {
 import {
   RETURN_VISIT_MARKER,
   buildPatientAccountsFromReceipts,
+  fetchLiveExchangeRateToYer,
   findMatchingPatientAccount,
+  getStoredExchangeRates,
+  saveStoredExchangeRates,
 } from '../utils/aiClient';
 import { SignatureModal } from './SignatureModal';
 import { FdiToothModal } from './FdiToothModal';
@@ -57,6 +63,7 @@ interface ReceiptStudioProps {
   onJumpToSettleDebt?: (receiptId: string) => void;
   onOpenPatientAccount?: (accountKey: string) => void;
   onUpdatePermanentSig: (sigDataUrl: string) => void;
+  onUpdateExchangeRates?: (sarRate: number, usdRate: number) => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
@@ -73,6 +80,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   onJumpToSettleDebt,
   onOpenPatientAccount,
   onUpdatePermanentSig,
+  onUpdateExchangeRates,
   notify,
 }) => {
   const [subTab, setSubTab] = useState<'form' | 'preview'>('form');
@@ -86,9 +94,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   const [toothFDI, setToothFDI] = useState<string>('');
   const [totalAmount, setTotalAmount] = useState<number>(0);
   const [paidAmount, setPaidAmount] = useState<number>(0);
-  const [currency, setCurrency] = useState<CurrencyCode | string>(
-    settings.identity.defaultCurrency || 'ريال يمني'
-  );
+  const [currency, setCurrency] = useState<CurrencyCode | string>('ريال يمني');
   const [paymentMethod, setPaymentMethod] = useState<string>('نقداً (Cash)');
   const [notes, setNotes] = useState<string>('');
   const [isReturnVisit, setIsReturnVisit] = useState<boolean>(false);
@@ -107,6 +113,95 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
   const [sigModalTarget, setSigModalTarget] = useState<'accountant' | 'receiver' | null>(null);
   const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState<boolean>(false);
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Instant Foreign Currency Conversion Popup Modal State
+  const [isFxModalOpen, setIsFxModalOpen] = useState<boolean>(false);
+  const [fxForeignCurrency, setFxForeignCurrency] = useState<'ريال سعودي' | 'دولار أمريكي'>('ريال سعودي');
+  const [fxForeignAmount, setFxForeignAmount] = useState<number>(0);
+  const [fxExchangeRate, setFxExchangeRate] = useState<number>(() => getStoredExchangeRates(settings).sarToYerRate);
+  const [fxApplyTarget, setFxApplyTarget] = useState<'paid_only' | 'both'>('paid_only');
+  const [isFetchingLiveRate, setIsFetchingLiveRate] = useState<boolean>(false);
+  const [fxRateSourceNote, setFxRateSourceNote] = useState<string>('');
+
+  const openCurrencyConverterModal = (targetCurr: 'ريال سعودي' | 'دولار أمريكي') => {
+    const rates = getStoredExchangeRates(settings);
+    const initialRate = targetCurr === 'ريال سعودي' ? rates.sarToYerRate : rates.usdToYerRate;
+    setFxForeignCurrency(targetCurr);
+    setFxExchangeRate(initialRate);
+    // If totalAmount in YER is already set (e.g. from selected services), pre-calculate equivalent foreign amount or leave ready for input
+    if (totalAmount > 0 && initialRate > 0) {
+      setFxForeignAmount(+(totalAmount / initialRate).toFixed(2));
+      setFxApplyTarget('paid_only');
+    } else {
+      setFxForeignAmount(0);
+      setFxApplyTarget('both');
+    }
+    setFxRateSourceNote('السعر المحدد مسبقاً في إعدادات العيادة');
+    setCurrency('ريال يمني');
+    setIsFxModalOpen(true);
+  };
+
+  const handleFetchAiLiveRate = async () => {
+    setIsFetchingLiveRate(true);
+    setFxRateSourceNote('جارٍ البحث المباشر عن سعر الصرف...');
+    try {
+      const res = await fetchLiveExchangeRateToYer(fxForeignCurrency, settings);
+      if (res.rate > 0) {
+        setFxExchangeRate(res.rate);
+        const currentRates = getStoredExchangeRates(settings);
+        const nextSar = fxForeignCurrency === 'ريال سعودي' ? res.rate : currentRates.sarToYerRate;
+        const nextUsd = fxForeignCurrency === 'دولار أمريكي' ? res.rate : currentRates.usdToYerRate;
+        saveStoredExchangeRates(nextSar, nextUsd);
+        if (onUpdateExchangeRates) {
+          onUpdateExchangeRates(nextSar, nextUsd);
+        }
+        setFxRateSourceNote(res.note || `تم التحديث عبر: ${res.sourceLabel}`);
+        notify(`تم تحديث سعر صرف ${fxForeignCurrency}: ${res.rate} ريال يمني`, 'success');
+      }
+    } catch {
+      setFxRateSourceNote('تعذر الجلب المباشر — يمكنك تعديل السعر يدوياً');
+    } finally {
+      setIsFetchingLiveRate(false);
+    }
+  };
+
+  const handleConfirmFxConversion = () => {
+    if (fxForeignAmount <= 0 || fxExchangeRate <= 0) {
+      notify('يرجى إدخال المبلغ وسعر الصرف بشكل صحيح أكبر من صفر', 'warning');
+      return;
+    }
+    const convertedYer = Math.round(fxForeignAmount * fxExchangeRate);
+    const currentRates = getStoredExchangeRates(settings);
+    const nextSar = fxForeignCurrency === 'ريال سعودي' ? fxExchangeRate : currentRates.sarToYerRate;
+    const nextUsd = fxForeignCurrency === 'دولار أمريكي' ? fxExchangeRate : currentRates.usdToYerRate;
+    saveStoredExchangeRates(nextSar, nextUsd);
+    if (onUpdateExchangeRates) {
+      onUpdateExchangeRates(nextSar, nextUsd);
+    }
+
+    setCurrency('ريال يمني');
+    if (fxApplyTarget === 'both' || totalAmount <= 0 || convertedYer > totalAmount) {
+      setTotalAmount(convertedYer);
+      setPaidAmount(convertedYer);
+    } else {
+      setPaidAmount(convertedYer);
+    }
+
+    const fxNoteText = `الدفع بـ ${fxForeignAmount} ${fxForeignCurrency} × سعر الصرف ${fxExchangeRate} = ${convertedYer.toLocaleString()} ريال يمني`;
+    setNotes((prev) => {
+      const cleaned = prev
+        .replace(/\s*\|\s*الدفع بـ\s+[\d.,]+\s+(?:ريال سعودي|دولار أمريكي).*?ريال يمني/g, '')
+        .replace(/^الدفع بـ\s+[\d.,]+\s+(?:ريال سعودي|دولار أمريكي).*?ريال يمني\s*\|?\s*/g, '')
+        .trim();
+      return cleaned ? `${cleaned} | ${fxNoteText}` : fxNoteText;
+    });
+
+    setIsFxModalOpen(false);
+    notify(
+      `تم تحويل ${fxForeignAmount} ${fxForeignCurrency} إلى ${convertedYer.toLocaleString()} ريال يمني واعتماده في السند`,
+      'success'
+    );
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -147,7 +242,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       setToothFDI(editingReceipt.toothFDI || '');
       setTotalAmount(editingReceipt.totalAmount);
       setPaidAmount(editingReceipt.paidAmount);
-      setCurrency(editingReceipt.currency || settings.identity.defaultCurrency);
+      setCurrency('ريال يمني');
       setPaymentMethod(editingReceipt.paymentMethod || 'نقداً (Cash)');
       setNotes(editingReceipt.notes || '');
       setIsReturnVisit(String(editingReceipt.notes || '').includes(RETURN_VISIT_MARKER));
@@ -415,7 +510,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
     setToothFDI('');
     setTotalAmount(0);
     setPaidAmount(0);
-    setCurrency(settings.identity.defaultCurrency || 'ريال يمني');
+    setCurrency('ريال يمني');
     setPaymentMethod('نقداً (Cash)');
     setNotes('');
     setIsReturnVisit(false);
@@ -496,7 +591,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
       totalAmount: numericTotal,
       paidAmount: numericPaid,
       remainingAmount,
-      currency,
+      currency: 'ريال يمني',
       paymentMethod,
       notes: finalNotes,
       amountWords,
@@ -1034,20 +1129,51 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               </div>
             </div>
 
-            {/* العملة وطريقة الدفع */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* العملة (حساب يمني موحد مع نافذة تحويل فوري للسعودي والدولار) وطريقة الدفع */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  العملة
-                </label>
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300">
+                    عملة الدفع (الحساب يمني موحد)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openCurrencyConverterModal('ريال سعودي')}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-bold transition-colors"
+                      title="فتح نافذة تحويل الريال السعودي إلى ريال يمني"
+                    >
+                      <ArrowLeftRight className="w-2.5 h-2.5" />
+                      <span>سعودي ← يمني</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openCurrencyConverterModal('دولار أمريكي')}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-500/30 text-[10px] font-bold transition-colors"
+                      title="فتح نافذة تحويل الدولار الأمريكي إلى ريال يمني"
+                    >
+                      <ArrowLeftRight className="w-2.5 h-2.5" />
+                      <span>دولار ← يمني</span>
+                    </button>
+                  </div>
+                </div>
                 <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
+                  value="ريال يمني"
+                  onChange={(e) => {
+                    const picked = e.target.value;
+                    if (picked === 'ريال سعودي' || picked === 'دولار أمريكي') {
+                      openCurrencyConverterModal(picked);
+                    } else {
+                      setCurrency('ريال يمني');
+                    }
+                  }}
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   {CURRENCIES.map((c) => (
                     <option key={c} value={c}>
-                      {c}
+                      {c === 'ريال يمني'
+                        ? 'ريال يمني (الحساب الأساسي الموحد)'
+                        : `${c} (فتح نافذة التحويل الفوري إلى يمني)`}
                     </option>
                   ))}
                 </select>
@@ -1274,6 +1400,205 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
           setToothFDI(allUnique.join(' - '));
         }}
       />
+
+      {/* ==================== POP-UP MODAL: FOREIGN CURRENCY TO YER CONVERTER ==================== */}
+      {isFxModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4 no-print"
+          onClick={() => setIsFxModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <ArrowLeftRight className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100">
+                    تحويل الدفع بـ ({fxForeignCurrency}) إلى ريال يمني
+                  </h3>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    يتم قيد السند في الحساب المالي الموحد بالريال اليمني تلقائياً
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsFxModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 space-y-3.5">
+              {/* Currency Switcher inside Modal */}
+              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                {(['ريال سعودي', 'دولار أمريكي'] as const).map((currOption) => {
+                  const active = fxForeignCurrency === currOption;
+                  return (
+                    <button
+                      key={currOption}
+                      type="button"
+                      onClick={() => {
+                        const rates = getStoredExchangeRates(settings);
+                        const nextRate =
+                          currOption === 'ريال سعودي' ? rates.sarToYerRate : rates.usdToYerRate;
+                        setFxForeignCurrency(currOption);
+                        setFxExchangeRate(nextRate);
+                        if (totalAmount > 0 && nextRate > 0) {
+                          setFxForeignAmount(+(totalAmount / nextRate).toFixed(2));
+                        }
+                      }}
+                      className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-colors ${
+                        active
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                      }`}
+                    >
+                      الدفع بـ {currOption}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Foreign Amount Input */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    المبلغ المدفوع ({fxForeignCurrency})
+                  </label>
+                  {totalAmount > 0 && fxExchangeRate > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFxForeignAmount(+(totalAmount / fxExchangeRate).toFixed(2))}
+                      className="text-[10px] font-bold text-sky-600 dark:text-sky-400 hover:underline"
+                    >
+                      معادل إجمالي السند ({+(totalAmount / fxExchangeRate).toFixed(2)} {fxForeignCurrency})
+                    </button>
+                  )}
+                </div>
+                <SmartNumberInput
+                  autoFocus
+                  placeholder="أدخل المبلغ بالعملة الأجنبية..."
+                  emptyWhenZero
+                  value={fxForeignAmount}
+                  onValueChange={(val) => setFxForeignAmount(Math.max(0, val))}
+                  className="w-full rounded-xl border border-emerald-500/60 bg-emerald-50/20 dark:bg-emerald-950/20 px-3.5 py-2.5 text-base font-mono tabular-nums font-black text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Exchange Rate Input + AI Live Fetch */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    سعر الصرف (1 {fxForeignCurrency} = ؟ ريال يمني)
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isFetchingLiveRate}
+                    onClick={handleFetchAiLiveRate}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white text-[10px] font-bold transition-colors shadow-2xs"
+                  >
+                    {isFetchingLiveRate ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
+                    <span>تحديث السعر عبر الذكاء الاصطناعي</span>
+                  </button>
+                </div>
+
+                <SmartNumberInput
+                  placeholder="سعر الصرف..."
+                  value={fxExchangeRate}
+                  onValueChange={(val) => {
+                    setFxExchangeRate(Math.max(0, val));
+                    setFxRateSourceNote('تم تعديل سعر الصرف يدوياً (سيُحفظ تلقائياً)');
+                  }}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
+                />
+
+                {fxRateSourceNote && (
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    {fxRateSourceNote}
+                  </p>
+                )}
+              </div>
+
+              {/* Target Application Selector */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFxApplyTarget('paid_only')}
+                  className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold transition-colors ${
+                    fxApplyTarget === 'paid_only'
+                      ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  تطبيق على المقبوض فقط
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFxApplyTarget('both')}
+                  className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold transition-colors ${
+                    fxApplyTarget === 'both'
+                      ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  تطبيق على الإجمالي والمقبوض
+                </button>
+              </div>
+
+              {/* Instant Conversion Result Banner */}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+                    المبلغ المحوّل بالريال اليمني:
+                  </div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">
+                    {fxForeignAmount || 0} {fxForeignCurrency} × {fxExchangeRate || 0}
+                  </div>
+                </div>
+                <div className="text-left">
+                  <span className="text-lg font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
+                    {Math.round((fxForeignAmount || 0) * (fxExchangeRate || 0)).toLocaleString()}
+                  </span>
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mr-1">
+                    ريال يمني
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleConfirmFxConversion}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition-colors"
+              >
+                <Check className="w-4 h-4" />
+                <span>اعتماد وتحويل إلى ريال يمني</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFxModalOpen(false)}
+                className="py-2.5 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

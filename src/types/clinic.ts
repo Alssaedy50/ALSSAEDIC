@@ -111,14 +111,22 @@ export interface ClinicFeatures {
   showQrCode: boolean;
   debtAlert: boolean;
   autoInventory: boolean;
+  allowAiDataEntry?: boolean;
+  sarToYerRate?: number;
+  usdToYerRate?: number;
 }
 
 export interface TelegramBackupSettings {
   enabled: boolean;
   autoBackupOnReceipt: boolean;
+  autoSendInventory?: boolean;
+  autoSendFinance?: boolean;
   botToken: string;
   chatId: string;
   lastBackupAt?: string;
+  allowAiDataEntry?: boolean;
+  sarToYerRate?: number;
+  usdToYerRate?: number;
 }
 
 export interface ClinicSubscription {

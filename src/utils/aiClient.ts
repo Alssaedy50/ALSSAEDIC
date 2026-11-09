@@ -787,55 +787,252 @@ export interface AssistantDetailedResponse {
   webSources?: Array<{ title: string; uri: string }>;
 }
 
+export const EXCHANGE_RATES_STORAGE_KEY = 'docai_yer_exchange_rates_v1';
+
+export function getStoredExchangeRates(settings?: ClinicSettings | null): {
+  sarToYerRate: number;
+  usdToYerRate: number;
+} {
+  let localSar = 0;
+  let localUsd = 0;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = window.localStorage.getItem(EXCHANGE_RATES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { sarToYerRate?: number; usdToYerRate?: number };
+        if (Number(parsed?.sarToYerRate) > 0) localSar = Number(parsed.sarToYerRate);
+        if (Number(parsed?.usdToYerRate) > 0) localUsd = Number(parsed.usdToYerRate);
+      }
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+
+  const settingsSar = Number(settings?.features?.sarToYerRate || settings?.telegramBackup?.sarToYerRate || 0);
+  const settingsUsd = Number(settings?.features?.usdToYerRate || settings?.telegramBackup?.usdToYerRate || 0);
+
+  return {
+    sarToYerRate: settingsSar > 0 ? settingsSar : localSar > 0 ? localSar : 140,
+    usdToYerRate: settingsUsd > 0 ? settingsUsd : localUsd > 0 ? localUsd : 535,
+  };
+}
+
+export function saveStoredExchangeRates(sarToYerRate: number, usdToYerRate: number): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(
+        EXCHANGE_RATES_STORAGE_KEY,
+        JSON.stringify({
+          sarToYerRate: Number(sarToYerRate) > 0 ? Number(sarToYerRate) : 140,
+          usdToYerRate: Number(usdToYerRate) > 0 ? Number(usdToYerRate) : 535,
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function convertAmountToYer(
+  amount: number,
+  currency?: string | null,
+  settings?: ClinicSettings | null
+): { yerAmount: number; rateUsed: number; wasConverted: boolean; foreignCurrency: string } {
+  const cleanAmt = Number(amount) || 0;
+  const curr = String(currency || 'ريال يمني').trim();
+  const { sarToYerRate, usdToYerRate } = getStoredExchangeRates(settings);
+
+  if (curr === 'ريال سعودي' || curr === 'SAR' || curr.includes('سعودي')) {
+    return {
+      yerAmount: Math.round(cleanAmt * sarToYerRate),
+      rateUsed: sarToYerRate,
+      wasConverted: true,
+      foreignCurrency: 'ريال سعودي',
+    };
+  }
+  if (curr === 'دولار أمريكي' || curr === 'USD' || curr.includes('دولار')) {
+    return {
+      yerAmount: Math.round(cleanAmt * usdToYerRate),
+      rateUsed: usdToYerRate,
+      wasConverted: true,
+      foreignCurrency: 'دولار أمريكي',
+    };
+  }
+  return {
+    yerAmount: Math.round(cleanAmt),
+    rateUsed: 1,
+    wasConverted: false,
+    foreignCurrency: 'ريال يمني',
+  };
+}
+
+export async function fetchLiveExchangeRateToYer(
+  foreignCurrency: 'ريال سعودي' | 'دولار أمريكي',
+  settings?: ClinicSettings | null
+): Promise<{
+  ok: boolean;
+  rate: number;
+  sourceLabel: string;
+  note?: string;
+}> {
+  const { sarToYerRate, usdToYerRate } = getStoredExchangeRates(settings);
+  const fallbackRate = foreignCurrency === 'ريال سعودي' ? sarToYerRate : usdToYerRate;
+  const isoCode = foreignCurrency === 'ريال سعودي' ? 'SAR' : 'USD';
+  const minValid = foreignCurrency === 'ريال سعودي' ? 80 : 300;
+  const maxValid = foreignCurrency === 'ريال سعودي' ? 1200 : 4500;
+
+  const config = loadAIProviderConfig();
+  const promptText = `ابحث مباشرة عن سعر صرف 1 ${foreignCurrency} (${isoCode}) مقابل الريال اليمني (YER) اليوم في السوق اليمنية (صنعاء). أجب بصيغة JSON فقط يحتوي على الحقل {"rate": رقم_السعر} بدون أي نص إضافي.`;
+
+  // 1. Try Gemini with Live Google Search Grounding (if Gemini API key is configured)
+  if (config.geminiApiKey.trim()) {
+    try {
+      const model = sanitizeGeminiModel(config.geminiModel || 'gemini-2.5-flash');
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(config.geminiApiKey.trim())}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: promptText }] }],
+          tools: [{ googleSearch: {} }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 120 },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = String(data?.candidates?.[0]?.content?.parts?.[0]?.text || '');
+        const numMatch = text.match(/(\d+(?:\.\d+)?)/);
+        if (numMatch) {
+          const parsedRate = Number(numMatch[1]);
+          if (parsedRate >= minValid && parsedRate <= maxValid) {
+            return {
+              ok: true,
+              rate: +parsedRate.toFixed(2),
+              sourceLabel: 'بحث الذكاء الاصطناعي المباشر (Google Search Grounding)',
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to free live currency API & AI models
+    }
+  }
+
+  // 2. Try Free Open Exchange Rate API + Free OpenRouter/Groq AI verification
+  try {
+    const apiRes = await fetch(`https://open.er-api.com/v6/latest/${isoCode}`);
+    if (apiRes.ok) {
+      const apiData = await apiRes.json();
+      const rawYer = Number(apiData?.rates?.YER || 0);
+      if (rawYer >= minValid && rawYer <= maxValid) {
+        return {
+          ok: true,
+          rate: +rawYer.toFixed(2),
+          sourceLabel: 'مؤشر الصرف العالمي المباشر (Live Market Feed)',
+        };
+      }
+    }
+  } catch {
+    // Fall through to AI assistant query
+  }
+
+  // 3. Try configured AI Assistant (OpenRouter Free / Groq / Server Proxy)
+  try {
+    const aiRes = await queryClinicAssistantDetailed({
+      prompt: promptText,
+      taskType: 'chat',
+    });
+    if (aiRes.providerUsed !== 'local') {
+      const jsonMatch = aiRes.reply.match(/\{[\s\S]*?\}/);
+      const targetStr = jsonMatch ? jsonMatch[0] : aiRes.reply;
+      const numMatch = targetStr.match(/(\d{2,4}(?:\.\d{1,2})?)/);
+      if (numMatch) {
+        const parsedRate = Number(numMatch[1]);
+        if (parsedRate >= minValid && parsedRate <= maxValid) {
+          return {
+            ok: true,
+            rate: +parsedRate.toFixed(2),
+            sourceLabel: `الذكاء الاصطناعي (${aiRes.modelLabel})`,
+          };
+        }
+      }
+    }
+  } catch {
+    // Fall back to saved rate
+  }
+
+  return {
+    ok: true,
+    rate: fallbackRate,
+    sourceLabel: 'السعر المعتمد في إعدادات العيادة',
+    note: 'تم استخدام سعر الصرف المحفوظ في إعدادات العيادة (يمكنك تعديله يدوياً في أي وقت).',
+  };
+}
+
 export function buildClinicalSystemPrompt(
   clinicContext?: Record<string, unknown> | null,
-  prompt?: string
+  _prompt?: string
 ): string {
   const ctx = (clinicContext || {}) as Record<string, unknown>;
   const id = (ctx.identity || {}) as Record<string, unknown>;
+  const feat = (ctx.features || {}) as Record<string, unknown>;
+  const tg = (ctx.telegramBackup || {}) as Record<string, unknown>;
   const clinicName = String(id.clinicAr || 'عيادة السعيدي لطب وجراحة الفم والأسنان');
   const doctorName = String(id.doctorAr || 'د. صلاح الدين السعيدي');
   const specialty = String(id.specialtyAr || 'طب وجراحة الفم والأسنان');
-  const defaultCurr = String(id.defaultCurrency || 'ريال يمني');
+  const defaultCurr = 'ريال يمني';
+  const sarRate = Number(feat.sarToYerRate || tg.sarToYerRate || 140);
+  const usdRate = Number(feat.usdToYerRate || tg.usdToYerRate || 535);
+  const allowAiDataEntry = feat.allowAiDataEntry !== false;
 
   let contextSnippet = '';
   if (ctx.financialSummary) {
     const fin = ctx.financialSummary as Record<string, unknown>;
-    contextSnippet += `\n- إجمالي السندات: ${fin.totalReceipts || 0} | الديون الآجلة: ${fin.totalDebtors || 0} مريض`;
+    contextSnippet += `\n- الحساب المالي الموحد (بالريال اليمني فقط): إجمالي السندات: ${fin.totalReceipts || 0} | إجمالي الفواتير: ${Number(fin.totalBilled || 0).toLocaleString()} ريال يمني | المقبوض الفعلي: ${Number(fin.totalCollected || 0).toLocaleString()} ريال يمني | الديون المتبقية: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ريال يمني (${fin.totalDebtors || 0} مريض) | المصروفات: ${Number(fin.totalExpenses || 0).toLocaleString()} ريال يمني`;
   }
+  contextSnippet += `\n- أسعار الصرف المعتمدة للتحويل الفوري إلى الريال اليمني: 1 ريال سعودي = ${sarRate} ريال يمني | 1 دولار أمريكي = ${usdRate} ريال يمني`;
+  contextSnippet += `\n- حالة إدخال البيانات المباشر عبر المحادثة: ${allowAiDataEntry ? 'مفعّل (بموافقة المستخدم)' : 'مغلق من الإعدادات'}`;
+
   if (Array.isArray(ctx.pendingDebtsPatients) && ctx.pendingDebtsPatients.length > 0) {
     const topDebts = ctx.pendingDebtsPatients
       .slice(0, 8)
-      .map((d: Record<string, unknown>) => `${d.patientName}: ${Number(d.remainingAmount).toLocaleString()} ${d.currency || defaultCurr}`)
+      .map((d: Record<string, unknown>) => `${d.patientName}: ${Number(d.remainingAmount).toLocaleString()} ريال يمني`)
       .join('، ');
     contextSnippet += `\n- أبرز حالات الذمم الآجلة: ${topDebts}`;
   }
   if (Array.isArray(ctx.lowStockAlerts) && ctx.lowStockAlerts.length > 0) {
     const lowNames = ctx.lowStockAlerts
       .slice(0, 6)
-      .map((i: Record<string, unknown>) => `${i.name} (المتبقي: ${i.qty})`)
+      .map((i: Record<string, unknown>) => `${i.name} [${i.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة'}] (المتبقي: ${i.qty} ${i.unit} / ${i.remainingSubUnits ?? i.qty} ${i.usageUnit || i.unit})`)
       .join('، ');
-    contextSnippet += `\n- نواقص المخزون: ${lowNames}`;
+    contextSnippet += `\n- نواقص المخزون الطبي والمعمل: ${lowNames}`;
   }
   if (Array.isArray(ctx.servicesCatalog) && ctx.servicesCatalog.length > 0) {
     const srvNames = ctx.servicesCatalog
-      .slice(0, 10)
+      .slice(0, 12)
       .map((s: Record<string, unknown>) => `${s.name}: ${Number(s.price).toLocaleString()} ${defaultCurr}`)
       .join(' | ');
-    contextSnippet += `\n- خدمات العيادة وأسعارها: ${srvNames}`;
+    contextSnippet += `\n- خدمات العيادة وأسعارها بالريال اليمني: ${srvNames}`;
   }
 
-  return `أنت المساعد الذكي المعتمد والمتخصص لعيادة "${clinicName}" — ${specialty}.
+  return `أنت المساعد الذكي المعتمد والمحدّث لعيادة "${clinicName}" — ${specialty}.
 الطبيب المعالج والمالك: ${doctorName}.
-العملة الافتراضية: ${defaultCurr}.
+العملة المحاسبية الموحدة للنظام: الريال اليمني (ريال يمني) فقط.
 
-بيانات العيادة الحالية المتاحة لديك:
+أحدث التحديثات المطبقة في النظام والتي يجب أن تعمل وفقها:
+1. المالية الموحدة بالريال اليمني: يعتمد النظام حساباً مالياً موحداً بالريال اليمني فقط. عند الدفع بالريال السعودي أو الدولار الأمريكي، يتم تحويل المبلغ فوراً إلى الريال اليمني حسب سعر الصرف المعتمد (السعودي = ${sarRate} ريال يمني، الدولار = ${usdRate} ريال يمني).
+2. السندات وتخصيص الأسنان وخصم المواد: يدعم السند اختيار عدة خدمات علاجية مع تحديد رقم السن (FDI) لكل خدمة بشكل مستقل، ويقوم بخصم جميع المواد المرتبطة بالخدمات المختارة بدقة 4 خانات عشرية (0.0001) من المخزون تلقائياً.
+3. المخزون المزدوج (مخزن العيادة ومخزن المعمل): يدعم النظام الجرد بالعبوات والوحدات الجزئية الدقيقة (مل، جرام، كبسولة، قطعة) مع تنبيهات النواقص.
+4. أتمتة قناة تليجرام: يمكن من الإعدادات تفعيل/إلغاء الإرسال التلقائي للسندات، أو إرسال ملف المخزون والنواقص (CSV)، أو ملف المالية الموحد (CSV) إلى قناة أرشيف العيادة.
+
+بيانات العيادة الحية المتاحة لديك:
 ${contextSnippet || '- لا توجد بيانات إضافية محددة.'}
 
 إرشادات العمل الصارمة:
-1. قدّم إجابات إكلينيكية، مالية، ومحاسبية دقيقة واحترافية باللغة العربية.
-2. يُمنع منعاً باتاً تكرار الجمل أو الفقرات أو إعادة صياغة نفس الإجابة مرتين في الرسالة الواحدة. اكتب الإجابة مرة واحدة فقط بشكل مركز ومرتب.
-3. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات وموانع الاستعمال باختصار واضح.
+1. قدّم إجابات إكلينيكية، مالية، ومحاسبية دقيقة واحترافية باللغة العربية، واعتمد الريال اليمني في جميع الملخصات المالية.
+2. يُمنع منعاً باتاً تكرار الجمل أو الفقرات أو إعادة صياغة نفس الإجابة مرتين في الرسالة الواحدة.
+3. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات باختصار واضح.
 4. عند تحليل صور الأشعة أو الحالات السريرية المرفقة، بيّن الملاحظات التشخيصية وخطة العلاج التقديرية بدقة.`;
 }
 
@@ -2549,6 +2746,10 @@ export async function parseDirectDataEntryProposal(
   },
   existingReceipts?: ReceiptRecord[]
 ): Promise<PendingDataEntryProposal | null> {
+  if (settings.features.allowAiDataEntry === false) {
+    return null;
+  }
+
   const detectedType =
     forcedType ||
     isDirectDataEntryIntent(promptText, {
@@ -2563,13 +2764,17 @@ export async function parseDirectDataEntryProposal(
   const strictValidation = governanceOptions?.strictCatalogValidation !== false;
   const config = loadAIProviderConfig();
   const preferredModel = sanitizeGroqTextModel(config.dataEntryModel || 'openai/gpt-oss-120b');
-  const defaultCurrency = settings.identity.defaultCurrency || 'ريال يمني';
+  const defaultCurrency = 'ريال يمني';
+  const { sarToYerRate, usdToYerRate } = getStoredExchangeRates(settings);
 
   const servicesCatalogStr = settings.services
-    .map((s) => `${s.name} (${s.price} ${defaultCurrency})`)
+    .map((s) => `${s.name} (${s.price} ريال يمني)`)
     .join('، ');
   const inventoryCatalogStr = inventory
-    .map((i) => `${i.name} [المتوفر: ${i.qty} ${i.unit}، السعر: ${i.unitPrice}]`)
+    .map(
+      (i) =>
+        `${i.name} [${i.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة'} | المتوفر: ${i.qty} ${i.unit} (${i.remainingSubUnits ?? i.qty} ${i.usageUnit || i.unit}) | السعر: ${i.unitPrice}]`
+    )
     .join('، ');
 
   const patientAccounts = existingReceipts
@@ -2578,7 +2783,7 @@ export async function parseDirectDataEntryProposal(
   const patientAccountsStr = patientAccounts
     .map(
       (a) =>
-        `${a.patientName} [هاتف: ${a.patientPhone || '—'}، زيارات: ${a.visitsCount}، دين متبقٍ: ${a.totalRemaining} ${a.currency}، أسنان سابقة: ${a.allTeethFDI.join('-') || '—'}]`
+        `${a.patientName} [هاتف: ${a.patientPhone || '—'}، زيارات: ${a.visitsCount}، دين متبقٍ: ${a.totalRemaining} ريال يمني، أسنان سابقة: ${a.allTeethFDI.join('-') || '—'}]`
     )
     .join(' | ');
 
@@ -2590,13 +2795,13 @@ export async function parseDirectDataEntryProposal(
 النص: "${promptText}"
 خدمات العيادة المعتمدة: ${servicesCatalogStr}
 حسابات المرضى المسجلين في النظام (لربط السند بنفس حساب المريض إذا تطابق الاسم): ${patientAccountsStr || 'لا توجد حسابات سابقة'}
-العملة: ${defaultCurrency}
+العملة المعتمدة للنظام: ريال يمني (أو اذكر "ريال سعودي" أو "دولار أمريكي" في حقل currency إذا ذكر المستخدم الدفع بالسعودي أو الدولار ليقوم النظام بتحويله تلقائياً).
 قواعد صارمة:
 1. إذا تطابق اسم المريض في النص مع أحد حسابات المرضى المسجلين أعلاه، يجب كتابة نفس الاسم الكامل المعتمد في patientName ونفس رقم الهاتف في patientPhone ليدرج السند تحت حسابه مباشرة.
 2. إذا لم يُذكر اسم المريض اجعل patientName نصاً فارغاً "".
-3. اختر الخدمة المطابقة من خدمات العيادة المعتمدة.
+3. اختر الخدمات المطابقة من خدمات العيادة المعتمدة.
 JSON المطلوب فقط:
-{"type":"receipt","patientName":"","patientPhone":"","services":[],"toothFDI":"","totalAmount":0,"paidAmount":0,"currency":"${defaultCurrency}","paymentMethod":"نقداً","isReturnVisit":${isReturnIntent},"notes":""}`
+{"type":"receipt","patientName":"","patientPhone":"","services":[],"toothFDI":"","totalAmount":0,"paidAmount":0,"currency":"ريال يمني","paymentMethod":"نقداً","isReturnVisit":${isReturnIntent},"notes":""}`
       : `استخرج بيانات عملية المخزون من النص التالي بدقة صارمة بصيغة JSON فقط دون تأليف أي بيانات غير مذكورة:
 النص: "${promptText}"
 أصناف المخزون الحالية: ${inventoryCatalogStr || 'لا توجد أصناف'}
@@ -2683,21 +2888,46 @@ JSON المطلوب فقط:
         }
 
         const catalogSum = finalServices.reduce((sum, sName) => {
-          const found = settings.services.find((srv) => srv.name === sName);
+          const baseName = sName.replace(/\s*\(سن:.*?\)\s*$/, '').trim();
+          const found = settings.services.find((srv) => srv.name === baseName || srv.name === sName);
           return sum + (found ? Number(found.price) || 0 : 0);
         }, 0);
 
-        const parsedTotal = Math.max(0, Number(parsed.totalAmount) || 0);
+        const rawCurrencyStr = String(parsed.currency || '').trim();
+        const isSaudiMentions =
+          rawCurrencyStr.includes('سعودي') || /(?:ريال سعودي|سعودي|SAR)/i.test(promptText);
+        const isUsdMentions =
+          rawCurrencyStr.includes('دولار') || /(?:دولار|USD|\$)/i.test(promptText);
+
+        let parsedTotal = Math.max(0, Number(parsed.totalAmount) || 0);
+        let rawPaid =
+          parsed.paidAmount !== undefined && Number(parsed.paidAmount) >= 0
+            ? Number(parsed.paidAmount)
+            : parsedTotal;
+
+        let conversionNote = '';
+        if (isSaudiMentions || isUsdMentions) {
+          const rate = isSaudiMentions ? sarToYerRate : usdToYerRate;
+          const foreignLabel = isSaudiMentions ? 'ريال سعودي' : 'دولار أمريكي';
+          if (rawPaid > 0 && rawPaid < 50000) {
+            const origPaid = rawPaid;
+            rawPaid = Math.round(origPaid * rate);
+            conversionNote = `الدفع بـ ${origPaid} ${foreignLabel} × سعر الصرف ${rate} = ${rawPaid.toLocaleString()} ريال يمني`;
+          }
+          if (parsedTotal > 0 && parsedTotal < 50000) {
+            parsedTotal = Math.round(parsedTotal * rate);
+          }
+          warnings.push(
+            `تم تحويل المبلغ تلقائياً من (${foreignLabel}) إلى (ريال يمني) حسب سعر الصرف المعتمد (${rate}).`
+          );
+        }
+
         const totalAmount = parsedTotal > 0 ? parsedTotal : isReturnIntent ? 0 : catalogSum;
         if (totalAmount <= 0 && !isReturnIntent) {
           warnings.push('يرجى تحديد المبلغ الإجمالي للسند قبل الاعتماد.');
         }
 
-        const rawPaid =
-          parsed.paidAmount !== undefined && Number(parsed.paidAmount) >= 0
-            ? Number(parsed.paidAmount)
-            : totalAmount;
-        const paidAmount = Math.min(totalAmount, Math.max(0, rawPaid));
+        const paidAmount = Math.min(totalAmount > 0 ? totalAmount : rawPaid, Math.max(0, rawPaid));
         const remainingAmount = Math.max(0, +(totalAmount - paidAmount).toFixed(2));
 
         let cleanPatientName = String(parsed.patientName || '').trim();
@@ -2733,11 +2963,12 @@ JSON المطلوب فقط:
         }
 
         const effectiveReturnVisit = Boolean(parsed.isReturnVisit || isReturnIntent);
-        const baseNotes = String(parsed.notes || 'إدخال مراجع عبر المساعد').trim().slice(0, 180);
+        const baseNotes = String(parsed.notes || 'إدخال مراجع عبر المساعد').trim().slice(0, 150);
+        const withConversionNotes = conversionNote ? `${baseNotes} | ${conversionNote}` : baseNotes;
         const finalNotes =
-          effectiveReturnVisit && !baseNotes.includes(RETURN_VISIT_MARKER)
-            ? `${RETURN_VISIT_MARKER} ${baseNotes}`
-            : baseNotes;
+          effectiveReturnVisit && !withConversionNotes.includes(RETURN_VISIT_MARKER)
+            ? `${RETURN_VISIT_MARKER} ${withConversionNotes}`
+            : withConversionNotes;
 
         const receiptData: PendingReceiptEntryData = {
           patientName: cleanPatientName,
@@ -2747,7 +2978,7 @@ JSON المطلوب فقط:
           totalAmount,
           paidAmount,
           remainingAmount,
-          currency: String(parsed.currency || matchedAccount?.currency || defaultCurrency).trim(),
+          currency: 'ريال يمني',
           paymentMethod: String(parsed.paymentMethod || 'نقداً').trim(),
           notes: finalNotes,
           matchedAccountName: matchedAccount?.patientName,
@@ -2757,7 +2988,7 @@ JSON المطلوب فقط:
         };
 
         const accountBadgeText = matchedAccount
-          ? ` (مرتبط بحساب المريض المسجل: ${matchedAccount.visitsCount} زيارة سابقة — الدين السابق: ${matchedAccount.totalRemaining.toLocaleString()} ${matchedAccount.currency})`
+          ? ` (مرتبط بحساب المريض المسجل: ${matchedAccount.visitsCount} زيارة سابقة — الدين السابق: ${matchedAccount.totalRemaining.toLocaleString()} ريال يمني)`
           : '';
 
         return {
@@ -2766,7 +2997,7 @@ JSON المطلوب فقط:
           status: 'pending',
           modelUsed: modelUsedLabel,
           validationWarnings: warnings.length > 0 ? warnings : undefined,
-          summaryText: `مسودة ${effectiveReturnVisit ? 'عودة / مراجعة' : 'سند قبض'} جاهزة للمراجعة (${receiptData.patientName || 'يرجى إدخال اسم المريض'})${accountBadgeText} — لن يتم الحفظ إلا بعد موافقتك:`,
+          summaryText: `مسودة ${effectiveReturnVisit ? 'عودة / مراجعة' : 'سند قبض'} جاهزة للمراجعة (${receiptData.patientName || 'يرجى إدخال اسم المريض'})${accountBadgeText} — بالحساب الموحد (ريال يمني):`,
           receiptData,
         };
       } else {

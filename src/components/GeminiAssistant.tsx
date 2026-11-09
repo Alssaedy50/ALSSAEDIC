@@ -21,6 +21,7 @@ import {
   PackagePlus,
   Palette,
   PanelRightOpen,
+  RotateCcw,
   Save,
   Send,
   ShieldAlert,
@@ -53,7 +54,9 @@ import { isPlatformDeveloperUser } from '../data/defaultData';
 import { auth } from '../firebase';
 import { SmartNumberInput } from './SmartNumberInput';
 import {
+  convertAmountToYer,
   findMatchingPatientAccount,
+  getStoredExchangeRates,
   isDestructiveSystemIntent,
   isDirectDataEntryIntent,
   loadAIProviderConfig,
@@ -83,6 +86,7 @@ interface GeminiAssistantProps {
   onOpenMenu?: () => void;
   onOpenSettings?: (tab?: 'subscription' | 'ai') => void;
   onUpdateSubscription?: (sub: ClinicSubscription) => void;
+  onToggleAiDataEntry?: (enabled: boolean) => void;
   onApproveReceiptEntry?: (data: PendingReceiptEntryData) => ReceiptRecord | void;
   onApproveInventoryEntry?: (data: PendingInventoryEntryData) => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
@@ -254,10 +258,12 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   onAddMessage,
   onClearMessages,
   onOpenSettings,
+  onToggleAiDataEntry,
   onApproveReceiptEntry,
   onApproveInventoryEntry,
   notify,
 }) => {
+  const isGlobalAiDataEntryEnabled = settings.features.allowAiDataEntry !== false;
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -455,6 +461,48 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     notify('تم بدء محادثة جديدة', 'info');
   };
 
+  const handleResetSmartAssistant = () => {
+    stopActiveAISpeech();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsSending(false);
+    setDirectEntryMode('auto');
+    setProposalDrafts({});
+    setAttachment(null);
+    setInput('');
+    const freshConfig = settings.aiConfig ? settings.aiConfig : loadAIProviderConfig();
+    setAiConfig(freshConfig);
+    saveAIProviderConfig(freshConfig);
+
+    const nextId = 'sess_' + Date.now();
+    setActiveSessionId(nextId);
+    onClearMessages();
+
+    const rates = getStoredExchangeRates(settings);
+    const resetMsg: ChatMessage = {
+      id: 'msg_reset_' + Date.now(),
+      role: 'assistant',
+      text:
+        `✅ تمت إعادة ضبط المساعد الذكي وتحديثه ليعمل وفق آخر التحديثات المطبقة في النظام (${settings.identity.clinicAr || 'العيادة'}):\n\n` +
+        `1. الحساب المالي الموحد: (ريال يمني فقط) — مع التحويل التلقائي للريال السعودي (السعر: ${rates.sarToYerRate}) والدولار الأمريكي (السعر: ${rates.usdToYerRate}).\n` +
+        `2. نظام السندات المتقدم: دعم تعدد الخدمات وتخصيص رقم السن (FDI) لكل خدمة مع خصم المواد الجزئي الدقيق (حتى 0.0001).\n` +
+        `3. المخزون المزدوج: (مخزن العيادة ومخزن المعمل) بالعبوات والوحدات الفرعية الدقيقة.\n` +
+        `4. إدخال البيانات المباشر في شاشة المحادثة: ${isGlobalAiDataEntryEnabled ? 'مفعّل (بموافقتك)' : 'مغلق من الإعدادات'}.\n\n` +
+        `كيف يمكنني مساعدتك الآن؟`,
+      timestamp: new Date().toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    if (onSetMessages) {
+      onSetMessages([resetMsg]);
+    } else {
+      onAddMessage(resetMsg);
+    }
+    setIsSidebarOpen(false);
+    notify('تمت إعادة ضبط المساعد الذكي ومزامنته مع آخر تحديثات النظام بنجاح', 'success');
+  };
+
   const handleSaveCurrentSessionExplicitly = () => {
     if (messages.length === 0) {
       notify('لا توجد رسائل في المحادثة الحالية لحفظها', 'warning');
@@ -552,49 +600,41 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   }, []);
 
   const currencySummaries = useMemo<CurrencyFinancialSummary[]>(() => {
-    const defaultCur = String(settings.identity.defaultCurrency || 'ريال يمني');
-    const map = new Map<string, CurrencyFinancialSummary>();
-
-    const ensureBucket = (curr: string) => {
-      const key = curr || defaultCur;
-      if (!map.has(key)) {
-        map.set(key, {
-          currency: key,
-          totalBilledAmount: 0,
-          totalCollectedRevenue: 0,
-          totalPendingDebts: 0,
-          totalExpenses: 0,
-          netCashProfit: 0,
-          receiptsCount: 0,
-          debtorsCount: 0,
-        });
-      }
-      return map.get(key)!;
-    };
-
-    ensureBucket(defaultCur);
+    let totalBilledAmount = 0;
+    let totalCollectedRevenue = 0;
+    let totalPendingDebts = 0;
+    let totalExpenses = 0;
+    let debtorsCount = 0;
 
     receipts.forEach((r) => {
-      const row = ensureBucket(String(r.currency || defaultCur));
-      row.totalBilledAmount += Number(r.totalAmount) || 0;
-      row.totalCollectedRevenue += Number(r.paidAmount) || 0;
-      row.totalPendingDebts += Number(r.remainingAmount) || 0;
-      row.receiptsCount += 1;
-      if ((Number(r.remainingAmount) || 0) > 0) {
-        row.debtorsCount += 1;
+      const billedYer = convertAmountToYer(Number(r.totalAmount) || 0, r.currency, settings).yerAmount;
+      const paidYer = convertAmountToYer(Number(r.paidAmount) || 0, r.currency, settings).yerAmount;
+      const remYer = convertAmountToYer(Number(r.remainingAmount) || 0, r.currency, settings).yerAmount;
+      totalBilledAmount += billedYer;
+      totalCollectedRevenue += paidYer;
+      totalPendingDebts += remYer;
+      if (remYer > 0) {
+        debtorsCount += 1;
       }
     });
 
     expenses.forEach((e) => {
-      const row = ensureBucket(String(e.currency || defaultCur));
-      row.totalExpenses += Number(e.amount) || 0;
+      totalExpenses += convertAmountToYer(Number(e.amount) || 0, e.currency, settings).yerAmount;
     });
 
-    return Array.from(map.values()).map((item) => ({
-      ...item,
-      netCashProfit: item.totalCollectedRevenue - item.totalExpenses,
-    }));
-  }, [receipts, expenses, settings.identity.defaultCurrency]);
+    return [
+      {
+        currency: 'ريال يمني',
+        totalBilledAmount,
+        totalCollectedRevenue,
+        totalPendingDebts,
+        totalExpenses,
+        netCashProfit: totalCollectedRevenue - totalExpenses,
+        receiptsCount: receipts.length,
+        debtorsCount,
+      },
+    ];
+  }, [receipts, expenses, settings]);
 
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -1134,17 +1174,39 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       }
 
       // 2. Check if Direct Data Entry (Receipt or Inventory) is requested and permitted
+      const rawDataIntent = isDirectDataEntryIntent(userMsg.text, {
+        allowReceipt: true,
+        allowInventory: true,
+      });
+
+      if (!isGlobalAiDataEntryEnabled && (rawDataIntent || directEntryMode !== 'auto')) {
+        const disabledMsg: ChatMessage = {
+          id: 'msg_disabled_' + Date.now(),
+          role: 'assistant',
+          text: '🔒 إمكانية إدخال البيانات (السندات والمخزون) عبر الذكاء الاصطناعي في شاشة المحادثة معطّلة حالياً من إعدادات العيادة.\n\nلتفعيلها: انتقل إلى قسم (الإعدادات > الهوية أو الذكاء الاصطناعي) وفعّل خيار "السماح للذكاء الاصطناعي بإدخال البيانات في شاشة المحادثة".',
+          timestamp: new Date().toLocaleTimeString('ar-YE', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        };
+        onAddMessage(disabledMsg);
+        return;
+      }
+
+      const canReceipt = isGlobalAiDataEntryEnabled && appearance.allowAiReceiptEntry;
+      const canInventory = isGlobalAiDataEntryEnabled && appearance.allowAiInventoryEntry;
+
       const forcedEntryType =
-        directEntryMode === 'receipt' && appearance.allowAiReceiptEntry
+        directEntryMode === 'receipt' && canReceipt
           ? 'receipt'
-          : directEntryMode === 'inventory' && appearance.allowAiInventoryEntry
+          : directEntryMode === 'inventory' && canInventory
             ? 'inventory'
             : undefined;
       const detectedIntent =
         forcedEntryType ||
         isDirectDataEntryIntent(userMsg.text, {
-          allowReceipt: appearance.allowAiReceiptEntry,
-          allowInventory: appearance.allowAiInventoryEntry,
+          allowReceipt: canReceipt,
+          allowInventory: canInventory,
         });
 
       if (detectedIntent) {
@@ -1156,8 +1218,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           detectedIntent,
           {
             strictCatalogValidation: appearance.strictCatalogValidation,
-            allowReceipt: appearance.allowAiReceiptEntry,
-            allowInventory: appearance.allowAiInventoryEntry,
+            allowReceipt: canReceipt,
+            allowInventory: canInventory,
           },
           receipts
         );
@@ -1193,14 +1255,21 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
 
       const debtors = receipts.filter((r) => (Number(r.remainingAmount) || 0) > 0);
       const lowStock = inventory.filter((i) => Number(i.qty) <= Number(i.minQty));
+      const unifiedSummary = currencySummaries[0];
 
       const clinicContext = {
         identity: settings.identity,
+        features: settings.features,
+        telegramBackup: settings.telegramBackup,
         servicesCatalog: settings.services,
         currencySummaries,
         financialSummary: {
           totalReceipts: receipts.length,
           totalDebtors: debtors.length,
+          totalBilled: unifiedSummary?.totalBilledAmount || 0,
+          totalCollected: unifiedSummary?.totalCollectedRevenue || 0,
+          totalPendingDebts: unifiedSummary?.totalPendingDebts || 0,
+          totalExpenses: unifiedSummary?.totalExpenses || 0,
           byCurrency: currencySummaries,
         },
         allReceipts: receipts.map((r) => ({
@@ -1784,8 +1853,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <span>المحادثات والإعدادات</span>
         </button>
 
+        <button
+          type="button"
+          onClick={handleResetSmartAssistant}
+          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 rounded-xl transition-colors whitespace-nowrap"
+          title="إعادة ضبط المساعد الذكي ومزامنته مع آخر تحديثات البرنامج"
+        >
+          <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+          <span>إعادة ضبط المساعد</span>
+        </button>
+
         {/* Direct Data Entry Quick Mode Buttons (Governed by Settings) */}
-        {appearance.allowAiReceiptEntry && (
+        {isGlobalAiDataEntryEnabled && appearance.allowAiReceiptEntry && (
           <button
             type="button"
             onClick={() =>
@@ -1803,7 +1882,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           </button>
         )}
 
-        {appearance.allowAiInventoryEntry && (
+        {isGlobalAiDataEntryEnabled && appearance.allowAiInventoryEntry && (
           <button
             type="button"
             onClick={() =>
@@ -1843,7 +1922,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           </button>
         )}
 
-        {QUICK_PROMPTS.map((q) => (
+        {QUICK_PROMPTS.filter(
+          (q) =>
+            isGlobalAiDataEntryEnabled ||
+            (!q.startsWith('سجل سند') && !q.startsWith('أضف للمخزون'))
+        ).map((q) => (
           <button
             key={q}
             type="button"
@@ -1969,6 +2052,16 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto p-3.5 space-y-4 text-xs">
+                {/* Reset Smart Assistant Button inside Sidebar Settings */}
+                <button
+                  type="button"
+                  onClick={handleResetSmartAssistant}
+                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>إعادة ضبط المساعد الذكي لآخر التحديثات</span>
+                </button>
+
                 {/* Strict AI Data Entry & System Protection Governance */}
                 <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-slate-950 p-3 space-y-2.5">
                   <div className="font-black text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
@@ -1976,20 +2069,35 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                     <span>ضوابط الإدخال وحماية النظام</span>
                   </div>
 
+                  {onToggleAiDataEntry && (
+                    <label className="flex items-center justify-between gap-2 cursor-pointer pt-1 pb-1.5 border-b border-emerald-500/20">
+                      <span className="font-black text-slate-800 dark:text-slate-100">
+                        تفعيل إدخال البيانات في المحادثة
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={isGlobalAiDataEntryEnabled}
+                        onChange={(e) => onToggleAiDataEntry(e.target.checked)}
+                        className="w-4 h-4 rounded text-emerald-600"
+                      />
+                    </label>
+                  )}
+
                   <label className="flex items-center justify-between gap-2 cursor-pointer pt-1">
                     <span className="font-bold text-slate-700 dark:text-slate-300">
                       إدخال السندات بموافقة المستخدم
                     </span>
                     <input
                       type="checkbox"
-                      checked={appearance.allowAiReceiptEntry}
+                      disabled={!isGlobalAiDataEntryEnabled}
+                      checked={isGlobalAiDataEntryEnabled && appearance.allowAiReceiptEntry}
                       onChange={(e) =>
                         setAppearance((prev) => ({
                           ...prev,
                           allowAiReceiptEntry: e.target.checked,
                         }))
                       }
-                      className="w-4 h-4 rounded text-emerald-600"
+                      className="w-4 h-4 rounded text-emerald-600 disabled:opacity-40"
                     />
                   </label>
 
@@ -1999,14 +2107,15 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                     </span>
                     <input
                       type="checkbox"
-                      checked={appearance.allowAiInventoryEntry}
+                      disabled={!isGlobalAiDataEntryEnabled}
+                      checked={isGlobalAiDataEntryEnabled && appearance.allowAiInventoryEntry}
                       onChange={(e) =>
                         setAppearance((prev) => ({
                           ...prev,
                           allowAiInventoryEntry: e.target.checked,
                         }))
                       }
-                      className="w-4 h-4 rounded text-emerald-600"
+                      className="w-4 h-4 rounded text-emerald-600 disabled:opacity-40"
                     />
                   </label>
 

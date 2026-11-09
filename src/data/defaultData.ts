@@ -130,6 +130,9 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
     showQrCode: true,
     debtAlert: true,
     autoInventory: true,
+    allowAiDataEntry: true,
+    sarToYerRate: 140,
+    usdToYerRate: 535,
   },
   services: [
     {
@@ -192,6 +195,8 @@ export const DEFAULT_SETTINGS: ClinicSettings = {
   telegramBackup: {
     enabled: false,
     autoBackupOnReceipt: true,
+    autoSendInventory: false,
+    autoSendFinance: false,
     botToken: '',
     chatId: '',
   },
@@ -239,7 +244,14 @@ export function createInitialClinicSettingsForUser(
       services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
       telegramBackup: DEFAULT_SETTINGS.telegramBackup
         ? { ...DEFAULT_SETTINGS.telegramBackup }
-        : { enabled: false, autoBackupOnReceipt: true, botToken: '', chatId: '' },
+        : {
+            enabled: false,
+            autoBackupOnReceipt: true,
+            autoSendInventory: false,
+            autoSendFinance: false,
+            botToken: '',
+            chatId: '',
+          },
       subscription: {
         ...DEFAULT_SUBSCRIPTION,
         planId: 'enterprise',
@@ -262,7 +274,14 @@ export function createInitialClinicSettingsForUser(
       appearance: { ...DEFAULT_SETTINGS.appearance },
       features: { ...DEFAULT_SETTINGS.features },
       services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
-      telegramBackup: { enabled: false, autoBackupOnReceipt: true, botToken: '', chatId: '' },
+      telegramBackup: {
+        enabled: false,
+        autoBackupOnReceipt: true,
+        autoSendInventory: false,
+        autoSendFinance: false,
+        botToken: '',
+        chatId: '',
+      },
       subscription: { ...DEFAULT_SUBSCRIPTION },
     };
   }
@@ -297,11 +316,16 @@ export function createInitialClinicSettingsForUser(
       showQrCode: true,
       debtAlert: true,
       autoInventory: true,
+      allowAiDataEntry: true,
+      sarToYerRate: 140,
+      usdToYerRate: 535,
     },
     services: DEFAULT_SETTINGS.services.map((s) => ({ ...s, keywords: [...s.keywords] })),
     telegramBackup: {
       enabled: false,
       autoBackupOnReceipt: true,
+      autoSendInventory: false,
+      autoSendFinance: false,
       botToken: '',
       chatId: '',
     },

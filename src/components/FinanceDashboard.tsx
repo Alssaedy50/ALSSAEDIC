@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ChevronDown,
+  ArrowLeftRight,
   Loader2,
   PlusCircle,
   Sparkles,
@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  ClinicSettings,
   CurrencyCode,
   CurrencyFinancialSummary,
   ExpenseRecord,
@@ -18,7 +19,13 @@ import {
   ReceiptRecord,
 } from '../types/clinic';
 import { CURRENCIES } from '../data/defaultData';
-import { queryClinicAssistant } from '../utils/aiClient';
+import {
+  convertAmountToYer,
+  fetchLiveExchangeRateToYer,
+  getStoredExchangeRates,
+  queryClinicAssistant,
+  saveStoredExchangeRates,
+} from '../utils/aiClient';
 import { SmartNumberInput } from './SmartNumberInput';
 
 interface FinanceDashboardProps {
@@ -26,6 +33,7 @@ interface FinanceDashboardProps {
   expenses: ExpenseRecord[];
   inventory: InventoryItem[];
   defaultCurrency: CurrencyCode | string;
+  settings?: ClinicSettings;
   onAddExpense: (title: string, amount: number, category: string, currency: string) => void;
   onDeleteExpense: (id: string) => void;
   notify: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
@@ -44,7 +52,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
   receipts,
   expenses,
   inventory,
-  defaultCurrency,
+  settings,
   onAddExpense,
   onDeleteExpense,
   notify,
@@ -60,7 +68,6 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
     }
     return 'overview';
   });
-  const [selectedCurrency, setSelectedCurrency] = useState<string>(String(defaultCurrency));
 
   React.useEffect(() => {
     try {
@@ -70,76 +77,58 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
     }
   }, [subTab]);
 
-  // Pop-up Expense Modal
+  // Pop-up Expense Modal (Unified in Yemeni Rial with instant conversion if foreign currency chosen)
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState<boolean>(false);
   const [expTitle, setExpTitle] = useState('');
   const [expAmount, setExpAmount] = useState<number>(0);
   const [expCategory, setExpCategory] = useState<string>('مشتريات مخزون');
-  const [expCurrency, setExpCurrency] = useState<string>(String(defaultCurrency));
+  const [expCurrency, setExpCurrency] = useState<string>('ريال يمني');
+  const [expExchangeRate, setExpExchangeRate] = useState<number>(() => getStoredExchangeRates(settings).sarToYerRate);
+  const [isFetchingExpRate, setIsFetchingExpRate] = useState<boolean>(false);
 
   // Pop-up AI Report Modal
   const [aiReport, setAiReport] = useState<string>('');
   const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const currencySummaries = useMemo<CurrencyFinancialSummary[]>(() => {
-    const map = new Map<string, CurrencyFinancialSummary>();
+  const rates = useMemo(() => getStoredExchangeRates(settings), [settings]);
 
-    const ensureBucket = (curr: string) => {
-      const key = curr || String(defaultCurrency);
-      if (!map.has(key)) {
-        map.set(key, {
-          currency: key,
-          totalBilledAmount: 0,
-          totalCollectedRevenue: 0,
-          totalPendingDebts: 0,
-          totalExpenses: 0,
-          netCashProfit: 0,
-          receiptsCount: 0,
-          debtorsCount: 0,
-        });
-      }
-      return map.get(key)!;
-    };
-
-    ensureBucket(String(defaultCurrency));
+  // Unified Yemeni Rial Financial Summary
+  const activeSummary = useMemo<CurrencyFinancialSummary>(() => {
+    let totalBilledAmount = 0;
+    let totalCollectedRevenue = 0;
+    let totalPendingDebts = 0;
+    let totalExpenses = 0;
+    let debtorsCount = 0;
 
     receipts.forEach((r) => {
-      const row = ensureBucket(String(r.currency || defaultCurrency));
-      row.totalBilledAmount += Number(r.totalAmount) || 0;
-      row.totalCollectedRevenue += Number(r.paidAmount) || 0;
-      row.totalPendingDebts += Number(r.remainingAmount) || 0;
-      row.receiptsCount += 1;
-      if ((Number(r.remainingAmount) || 0) > 0) {
-        row.debtorsCount += 1;
+      const billedYer = convertAmountToYer(Number(r.totalAmount) || 0, r.currency, settings).yerAmount;
+      const paidYer = convertAmountToYer(Number(r.paidAmount) || 0, r.currency, settings).yerAmount;
+      const remYer = convertAmountToYer(Number(r.remainingAmount) || 0, r.currency, settings).yerAmount;
+      totalBilledAmount += billedYer;
+      totalCollectedRevenue += paidYer;
+      totalPendingDebts += remYer;
+      if (remYer > 0) {
+        debtorsCount += 1;
       }
     });
 
     expenses.forEach((e) => {
-      const row = ensureBucket(String(e.currency || defaultCurrency));
-      row.totalExpenses += Number(e.amount) || 0;
+      const expYer = convertAmountToYer(Number(e.amount) || 0, e.currency, settings).yerAmount;
+      totalExpenses += expYer;
     });
 
-    return Array.from(map.values()).map((item) => ({
-      ...item,
-      netCashProfit: item.totalCollectedRevenue - item.totalExpenses,
-    }));
-  }, [receipts, expenses, defaultCurrency]);
-
-  const activeSummary = useMemo(() => {
-    return (
-      currencySummaries.find((c) => c.currency === selectedCurrency) || {
-        currency: selectedCurrency,
-        totalBilledAmount: 0,
-        totalCollectedRevenue: 0,
-        totalPendingDebts: 0,
-        totalExpenses: 0,
-        netCashProfit: 0,
-        receiptsCount: 0,
-        debtorsCount: 0,
-      }
-    );
-  }, [currencySummaries, selectedCurrency]);
+    return {
+      currency: 'ريال يمني',
+      totalBilledAmount,
+      totalCollectedRevenue,
+      totalPendingDebts,
+      totalExpenses,
+      netCashProfit: totalCollectedRevenue - totalExpenses,
+      receiptsCount: receipts.length,
+      debtorsCount,
+    };
+  }, [receipts, expenses, settings]);
 
   const collectionRate = useMemo(() => {
     if (activeSummary.totalBilledAmount <= 0) return 100;
@@ -148,15 +137,45 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
     );
   }, [activeSummary]);
 
+  const handleFetchExpenseLiveRate = async () => {
+    if (expCurrency !== 'ريال سعودي' && expCurrency !== 'دولار أمريكي') return;
+    setIsFetchingExpRate(true);
+    try {
+      const res = await fetchLiveExchangeRateToYer(expCurrency, settings);
+      if (res.rate > 0) {
+        setExpExchangeRate(res.rate);
+        const currentRates = getStoredExchangeRates(settings);
+        saveStoredExchangeRates(
+          expCurrency === 'ريال سعودي' ? res.rate : currentRates.sarToYerRate,
+          expCurrency === 'دولار أمريكي' ? res.rate : currentRates.usdToYerRate
+        );
+        notify(`تم تحديث سعر صرف ${expCurrency}: ${res.rate} ريال يمني`, 'success');
+      }
+    } finally {
+      setIsFetchingExpRate(false);
+    }
+  };
+
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
     if (!expTitle.trim() || Number(expAmount) <= 0) {
       notify('يرجى إدخال بيان المصروف والمبلغ', 'warning');
       return;
     }
-    onAddExpense(expTitle.trim(), Number(expAmount), expCategory, expCurrency);
+
+    let finalYerAmount = Math.round(Number(expAmount));
+    let finalTitle = expTitle.trim();
+
+    if (expCurrency === 'ريال سعودي' || expCurrency === 'دولار أمريكي') {
+      const rate = Number(expExchangeRate) > 0 ? Number(expExchangeRate) : expCurrency === 'ريال سعودي' ? rates.sarToYerRate : rates.usdToYerRate;
+      finalYerAmount = Math.round(Number(expAmount) * rate);
+      finalTitle = `${finalTitle} (محوّل من ${expAmount} ${expCurrency} × ${rate})`;
+    }
+
+    onAddExpense(finalTitle, finalYerAmount, expCategory, 'ريال يمني');
     setExpTitle('');
     setExpAmount(0);
+    setExpCurrency('ريال يمني');
     setIsExpenseModalOpen(false);
   };
 
@@ -166,9 +185,9 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
       const reply = await queryClinicAssistant({
         taskType: 'report',
         prompt:
-          'أعد تقريراً مالياً تنفيذياً مختصراً لأداء العيادة: حلل الإيرادات، نسبة التحصيل، الديون، المصروفات، وصافي الربح النقدي مع 3 توصيات عملية.',
+          'أعد تقريراً مالياً تنفيذياً مختصراً لأداء العيادة بالحساب الموحد (ريال يمني): حلل الإيرادات، نسبة التحصيل، الديون، المصروفات، وصافي الربح النقدي مع 3 توصيات عملية.',
         clinicContext: {
-          currencySummaries,
+          currencySummaries: [activeSummary],
           allExpenses: expenses,
           expenses,
           totalReceipts: receipts.length,
@@ -197,7 +216,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               : 'text-slate-600 dark:text-slate-400'
           }`}
         >
-          المؤشرات المالية
+          المؤشرات المالية (ريال يمني)
         </button>
         <button
           type="button"
@@ -216,9 +235,14 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
       {subTab === 'expenses' ? (
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-4">
           <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
-            <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-              المصروفات
-            </h2>
+            <div>
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                سجل المصروفات (بالريال اليمني الموحد)
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                إجمالي المصروفات: {activeSummary.totalExpenses.toLocaleString()} ريال يمني
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => setIsExpenseModalOpen(true)}
@@ -235,72 +259,69 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
             </div>
           ) : (
             <div className="space-y-2.5">
-              {expenses.map((exp) => (
-                <div
-                  key={exp.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
-                      {exp.title}
+              {expenses.map((exp) => {
+                const converted = convertAmountToYer(Number(exp.amount) || 0, exp.currency, settings);
+                return (
+                  <div
+                    key={exp.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                        {exp.title}
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span>{exp.category}</span>
+                        <span>·</span>
+                        <span className="whitespace-nowrap shrink-0 font-mono tabular-nums">
+                          {exp.date}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                      <span>{exp.category}</span>
-                      <span>·</span>
-                      <span className="whitespace-nowrap shrink-0 font-mono tabular-nums">
-                        {exp.date}
-                      </span>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-mono tabular-nums font-bold text-xs sm:text-sm text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                      {Number(exp.amount).toLocaleString()} {exp.currency}
-                    </span>
-                    {confirmDeleteId === exp.id ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onDeleteExpense(exp.id);
-                          setConfirmDeleteId(null);
-                        }}
-                        className="px-2.5 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
-                      >
-                        تأكيد؟
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(exp.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
-                        title="حذف"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono tabular-nums font-bold text-xs sm:text-sm text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                        {converted.yerAmount.toLocaleString()} ريال يمني
+                      </span>
+                      {confirmDeleteId === exp.id ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteExpense(exp.id);
+                            setConfirmDeleteId(null);
+                          }}
+                          className="px-2.5 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                        >
+                          تأكيد؟
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(exp.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
+                          title="حذف"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
-            <div className="relative min-w-[190px] flex-1 sm:flex-initial">
-              <select
-                value={selectedCurrency}
-                onChange={(e) => setSelectedCurrency(e.target.value)}
-                aria-label="العملة المعروضة"
-                className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3.5 py-2 pl-8 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
-              >
-                {CURRENCIES.map((curr) => (
-                  <option key={curr} value={curr}>
-                    العملة المعروضة: {curr}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-black text-emerald-700 dark:text-emerald-300">
+                <Wallet className="w-3.5 h-3.5" />
+                <span>الحساب المالي الموحد: ريال يمني</span>
+              </span>
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                (السعودي = {rates.sarToYerRate} | الدولار = {rates.usdToYerRate})
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -338,7 +359,9 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
                 {activeSummary.totalCollectedRevenue.toLocaleString()}
               </div>
-              <div className="mt-1 text-[11px] text-slate-400">التحصيل: {collectionRate}%</div>
+              <div className="mt-1 text-[11px] text-slate-400">
+                ريال يمني · التحصيل: {collectionRate}%
+              </div>
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
@@ -350,7 +373,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
                 {activeSummary.totalPendingDebts.toLocaleString()}
               </div>
               <div className="mt-1 text-[11px] text-slate-400">
-                {activeSummary.debtorsCount} حالة آجلة
+                ريال يمني · {activeSummary.debtorsCount} حالة آجلة
               </div>
             </div>
 
@@ -362,12 +385,12 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               <div className="mt-1.5 text-lg sm:text-2xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
                 {activeSummary.totalExpenses.toLocaleString()}
               </div>
-              <div className="mt-1 text-[11px] text-slate-400">نفقات مسجلة</div>
+              <div className="mt-1 text-[11px] text-slate-400">ريال يمني · نفقات مسجلة</div>
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>صافي الربح</span>
+                <span>صافي الربح النقدي</span>
                 <Wallet className="w-4 h-4 text-sky-500" />
               </div>
               <div
@@ -379,47 +402,38 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
               >
                 {activeSummary.netCashProfit.toLocaleString()}
               </div>
-              <div className="mt-1 text-[11px] text-slate-400">{activeSummary.currency}</div>
+              <div className="mt-1 text-[11px] text-slate-400">ريال يمني</div>
             </div>
           </div>
 
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">ملخص العملات</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {currencySummaries.map((row) => (
-                <div
-                  key={row.currency}
-                  className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3.5 space-y-1.5 text-xs"
-                >
-                  <div className="font-bold text-slate-900 dark:text-slate-100 border-b border-slate-200 dark:border-slate-800 pb-1.5">
-                    {row.currency} ({row.receiptsCount} سند)
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">المقبوض:</span>
-                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                      {row.totalCollectedRevenue.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">الديون:</span>
-                    <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
-                      {row.totalPendingDebts.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">المصروفات:</span>
-                    <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
-                      {row.totalExpenses.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-800">
-                    <span className="font-bold">الصافي:</span>
-                    <span className="font-mono font-black text-sky-600 dark:text-sky-400">
-                      {row.netCashProfit.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                كشف الحساب المالي الموحد (ريال يمني)
+              </h3>
+              <span className="text-xs font-mono font-bold text-slate-500">
+                إجمالي السندات: {activeSummary.receiptsCount} سند
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 flex items-center justify-between">
+                <span className="text-slate-500">إجمالي قيمة الفواتير:</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                  {activeSummary.totalBilledAmount.toLocaleString()} ريال يمني
+                </span>
+              </div>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 flex items-center justify-between">
+                <span className="text-slate-500">المقبوض الفعلي:</span>
+                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                  {activeSummary.totalCollectedRevenue.toLocaleString()} ريال يمني
+                </span>
+              </div>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 flex items-center justify-between">
+                <span className="text-slate-500">صافي الخزينة (المقبوض - المصروفات):</span>
+                <span className="font-mono font-black text-sky-600 dark:text-sky-400">
+                  {activeSummary.netCashProfit.toLocaleString()} ريال يمني
+                </span>
+              </div>
             </div>
           </section>
         </>
@@ -438,7 +452,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                إضافة مصروف
+                إضافة مصروف (يُسجل بالريال اليمني)
               </h3>
               <button
                 type="button"
@@ -466,7 +480,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  المبلغ
+                  المبلغ ({expCurrency})
                 </label>
                 <SmartNumberInput
                   placeholder="0"
@@ -481,21 +495,60 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  العملة
+                  عملة الدفع
                 </label>
                 <select
                   value={expCurrency}
-                  onChange={(e) => setExpCurrency(e.target.value)}
+                  onChange={(e) => {
+                    const nextCurr = e.target.value;
+                    setExpCurrency(nextCurr);
+                    if (nextCurr === 'ريال سعودي') {
+                      setExpExchangeRate(rates.sarToYerRate);
+                    } else if (nextCurr === 'دولار أمريكي') {
+                      setExpExchangeRate(rates.usdToYerRate);
+                    }
+                  }}
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold"
                 >
                   {CURRENCIES.map((c) => (
                     <option key={c} value={c}>
-                      {c}
+                      {c === 'ريال يمني' ? 'ريال يمني (مباشر)' : `${c} (تحويل إلى يمني)`}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
+
+            {(expCurrency === 'ريال سعودي' || expCurrency === 'دولار أمريكي') && (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                    <span>سعر صرف {expCurrency} مقابل اليمني:</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={isFetchingExpRate}
+                    onClick={handleFetchExpenseLiveRate}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-600 text-white text-[10px] font-bold"
+                  >
+                    {isFetchingExpRate ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    <span>بحث مباشر</span>
+                  </button>
+                </div>
+                <SmartNumberInput
+                  value={expExchangeRate}
+                  onValueChange={(val) => setExpExchangeRate(Math.max(0, val))}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-mono font-bold"
+                />
+                <div className="flex items-center justify-between text-xs font-bold text-emerald-700 dark:text-emerald-300 pt-1">
+                  <span>المبلغ المحوّل للقيد:</span>
+                  <span className="font-mono">
+                    {Math.round((expAmount || 0) * (expExchangeRate || 0)).toLocaleString()} ريال يمني
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
@@ -519,7 +572,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
                 type="submit"
                 className="w-full py-2.5 rounded-xl font-bold text-xs bg-sky-600 hover:bg-sky-500 text-white transition-colors"
               >
-                حفظ
+                حفظ بالريال اليمني
               </button>
             </div>
           </form>
@@ -538,7 +591,7 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-sm font-bold text-sky-600 dark:text-sky-400">
-                التقرير المالي
+                التقرير المالي الموحد (ريال يمني)
               </h3>
               <button
                 type="button"
@@ -558,3 +611,4 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
     </div>
   );
 };
+

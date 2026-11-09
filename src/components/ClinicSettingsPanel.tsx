@@ -54,6 +54,9 @@ import {
   flushPendingSyncQueue,
   getActiveCloudDiagnostics,
   sendBackupToTelegramApi,
+  sendFinanceReportToTelegramChannel,
+  sendInventoryReportToTelegramChannel,
+  sendReceiptToTelegramChannel,
   updateClinicAiConfigByDeveloper,
 } from '../firebase';
 import {
@@ -67,9 +70,12 @@ import {
   OPENROUTER_MODELS,
   OPENROUTER_VISION_MODELS,
   ProviderTestResult,
+  fetchLiveExchangeRateToYer,
   formatModelDisplayLabel,
+  getStoredExchangeRates,
   loadAIProviderConfig,
   saveAIProviderConfig,
+  saveStoredExchangeRates,
   testAIProviderConnection,
 } from '../utils/aiClient';
 import { WorkspaceTeamPanel } from './WorkspaceTeamModal';
@@ -302,14 +308,107 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     }));
   };
 
+  const [isFetchingLiveRates, setIsFetchingLiveRates] = useState(false);
+
   const handleFeatureToggle = (field: keyof ClinicSettings['features']) => {
-    setFormState((prev) => ({
-      ...prev,
-      features: {
-        ...prev.features,
-        [field]: !prev.features[field],
-      },
-    }));
+    setFormState((prev) => {
+      const currentVal =
+        field === 'allowAiDataEntry'
+          ? prev.features.allowAiDataEntry !== false
+          : Boolean(prev.features[field]);
+      const nextVal = !currentVal;
+      const nextSettings: ClinicSettings = {
+        ...prev,
+        features: {
+          ...prev.features,
+          [field]: nextVal,
+        },
+        telegramBackup: prev.telegramBackup
+          ? {
+              ...prev.telegramBackup,
+              ...(field === 'allowAiDataEntry' ? { allowAiDataEntry: nextVal } : {}),
+            }
+          : prev.telegramBackup,
+      };
+      if (field === 'allowAiDataEntry') {
+        onSaveSettings(nextSettings);
+        notify(
+          nextVal
+            ? 'تم تفعيل إدخال البيانات عبر الذكاء الاصطناعي في شاشة المحادثة ✅'
+            : 'تم إلغاء إدخال البيانات عبر الذكاء الاصطناعي في شاشة المحادثة 🔒',
+          'info'
+        );
+      }
+      return nextSettings;
+    });
+  };
+
+  const handleExchangeRateChange = (
+    field: 'sarToYerRate' | 'usdToYerRate',
+    rawVal: number
+  ) => {
+    const cleanVal = Math.max(0.01, Number(rawVal) || (field === 'sarToYerRate' ? 140 : 535));
+    setFormState((prev) => {
+      const nextSar = field === 'sarToYerRate' ? cleanVal : prev.features.sarToYerRate || 140;
+      const nextUsd = field === 'usdToYerRate' ? cleanVal : prev.features.usdToYerRate || 535;
+      saveStoredExchangeRates(nextSar, nextUsd);
+      return {
+        ...prev,
+        features: {
+          ...prev.features,
+          [field]: cleanVal,
+        },
+        telegramBackup: prev.telegramBackup
+          ? {
+              ...prev.telegramBackup,
+              [field]: cleanVal,
+            }
+          : prev.telegramBackup,
+      };
+    });
+  };
+
+  const handleFetchLiveRatesNow = async () => {
+    setIsFetchingLiveRates(true);
+    try {
+      const stored = getStoredExchangeRates(formState);
+      const [sarRes, usdRes] = await Promise.all([
+        fetchLiveExchangeRateToYer('ريال سعودي', formState),
+        fetchLiveExchangeRateToYer('دولار أمريكي', formState),
+      ]);
+      const nextSar = sarRes.ok && sarRes.rate > 0 ? sarRes.rate : stored.sarToYerRate;
+      const nextUsd = usdRes.ok && usdRes.rate > 0 ? usdRes.rate : stored.usdToYerRate;
+      saveStoredExchangeRates(nextSar, nextUsd);
+      const nextSettings: ClinicSettings = {
+        ...formState,
+        identity: {
+          ...formState.identity,
+          defaultCurrency: 'ريال يمني',
+        },
+        features: {
+          ...formState.features,
+          sarToYerRate: nextSar,
+          usdToYerRate: nextUsd,
+        },
+        telegramBackup: formState.telegramBackup
+          ? {
+              ...formState.telegramBackup,
+              sarToYerRate: nextSar,
+              usdToYerRate: nextUsd,
+            }
+          : formState.telegramBackup,
+      };
+      setFormState(nextSettings);
+      onSaveSettings(nextSettings);
+      notify(
+        `تم تحديث وحفظ أسعار الصرف: 1 سعودي = ${nextSar.toLocaleString('en-US')} يمني | 1 دولار = ${nextUsd.toLocaleString('en-US')} يمني`,
+        'success'
+      );
+    } catch {
+      notify('تعذر جلب أسعار الصرف تلقائياً، يمكنك تعديلها يدوياً.', 'warning');
+    } finally {
+      setIsFetchingLiveRates(false);
+    }
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -582,9 +681,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     reader.readAsText(file);
   };
 
+  const [isTelegramSendMenuOpen, setIsTelegramSendMenuOpen] = useState(false);
+
   const currentTelegramConfig: TelegramBackupSettings = formState.telegramBackup || {
     enabled: false,
     autoBackupOnReceipt: true,
+    autoSendInventory: false,
+    autoSendFinance: false,
     botToken: '',
     chatId: '',
   };
@@ -593,25 +696,41 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
     field: keyof TelegramBackupSettings,
     value: string | boolean
   ) => {
-    setFormState((prev) => {
-      const base: TelegramBackupSettings = prev.telegramBackup || {
-        enabled: false,
-        autoBackupOnReceipt: true,
-        botToken: '',
-        chatId: '',
-      };
-      const updatedTg: TelegramBackupSettings = {
-        ...base,
-        [field]: value,
-      };
-      if (field === 'botToken' || field === 'chatId') {
-        updatedTg.enabled = Boolean(updatedTg.botToken.trim() && updatedTg.chatId.trim());
-      }
-      return {
-        ...prev,
-        telegramBackup: updatedTg,
-      };
-    });
+    const base: TelegramBackupSettings = formState.telegramBackup || {
+      enabled: false,
+      autoBackupOnReceipt: true,
+      autoSendInventory: false,
+      autoSendFinance: false,
+      botToken: '',
+      chatId: '',
+    };
+    const updatedTg: TelegramBackupSettings = {
+      ...base,
+      [field]: value,
+    };
+    if (field === 'botToken' || field === 'chatId') {
+      updatedTg.enabled = Boolean(updatedTg.botToken.trim() && updatedTg.chatId.trim());
+    }
+    const nextSettings: ClinicSettings = {
+      ...formState,
+      telegramBackup: updatedTg,
+    };
+    setFormState(nextSettings);
+
+    try {
+      localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
+    } catch {
+      // Ignore
+    }
+
+    // Automatically persist toggle switches to cloud/settings immediately
+    if (
+      field === 'autoBackupOnReceipt' ||
+      field === 'autoSendInventory' ||
+      field === 'autoSendFinance'
+    ) {
+      onSaveSettings(nextSettings);
+    }
   };
 
   const handleSaveTelegramSettings = () => {
@@ -619,6 +738,9 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       ...currentTelegramConfig,
       botToken: currentTelegramConfig.botToken.trim(),
       chatId: currentTelegramConfig.chatId.trim(),
+      autoBackupOnReceipt: Boolean(currentTelegramConfig.autoBackupOnReceipt ?? true),
+      autoSendInventory: Boolean(currentTelegramConfig.autoSendInventory ?? false),
+      autoSendFinance: Boolean(currentTelegramConfig.autoSendFinance ?? false),
       enabled: Boolean(
         currentTelegramConfig.botToken.trim() && currentTelegramConfig.chatId.trim()
       ),
@@ -634,18 +756,42 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       // Ignore
     }
     onSaveSettings(nextSettings);
-    notify('تم حفظ إعدادات النسخ الاحتياطي لتليجرام بنجاح', 'success');
+    notify('تم حفظ إعدادات قناة وبوت تليجرام للعيادة بنجاح', 'success');
+  };
+
+  const updateTelegramTimestampAfterSend = (sentAtIso?: string) => {
+    const sentAt = sentAtIso || new Date().toISOString();
+    recordBackupTimestamp(sentAt);
+    const updatedTg: TelegramBackupSettings = {
+      ...currentTelegramConfig,
+      botToken: currentTelegramConfig.botToken.trim(),
+      chatId: currentTelegramConfig.chatId.trim(),
+      enabled: true,
+      lastBackupAt: sentAt,
+    };
+    const nextSettings: ClinicSettings = {
+      ...formState,
+      telegramBackup: updatedTg,
+    };
+    setFormState(nextSettings);
+    try {
+      localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
+    } catch {
+      // Ignore
+    }
+    onSaveSettings(nextSettings);
   };
 
   const handleSendTelegramBackupNow = async () => {
     const botToken = currentTelegramConfig.botToken.trim();
     const chatId = currentTelegramConfig.chatId.trim();
     if (!botToken || !chatId) {
-      notify('يرجى إدخال رمز البوت (Bot Token) ومعرّف المحادثة (Chat ID) أولاً.', 'warning');
+      notify('يرجى إدخال رمز البوت (Bot Token) ومعرّف القناة (Chat ID) أولاً.', 'warning');
       return;
     }
 
     setIsSendingTelegram(true);
+    setIsTelegramSendMenuOpen(false);
     try {
       const result = await sendBackupToTelegramApi({
         botToken,
@@ -662,29 +808,116 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
         return;
       }
 
-      const sentAt = result.sentAt || new Date().toISOString();
-      recordBackupTimestamp(sentAt);
-      const updatedTg: TelegramBackupSettings = {
-        ...currentTelegramConfig,
+      updateTelegramTimestampAfterSend(result.sentAt);
+      notify('تم إرسال النسخة الاحتياطية الشاملة إلى قناة تليجرام بنجاح', 'success');
+    } catch {
+      notify('تعذر الاتصال بخدمة تليجرام حالياً.', 'error');
+    } finally {
+      setIsSendingTelegram(false);
+    }
+  };
+
+  const handleSendTelegramInventoryNow = async () => {
+    const botToken = currentTelegramConfig.botToken.trim();
+    const chatId = currentTelegramConfig.chatId.trim();
+    if (!botToken || !chatId) {
+      notify('يرجى إدخال رمز البوت (Bot Token) ومعرّف القناة (Chat ID) أولاً.', 'warning');
+      return;
+    }
+
+    setIsSendingTelegram(true);
+    setIsTelegramSendMenuOpen(false);
+    try {
+      const result = await sendInventoryReportToTelegramChannel({
         botToken,
         chatId,
-        enabled: true,
-        lastBackupAt: sentAt,
-      };
-      const nextSettings: ClinicSettings = {
-        ...formState,
-        telegramBackup: updatedTg,
-      };
-      setFormState(nextSettings);
-      try {
-        localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
-      } catch {
-        // Ignore
+        inventory,
+        settings: formState,
+        triggerReason: 'إرسال يدوي لملف المخزون والنواقص من الإعدادات',
+      });
+
+      if (!result.ok) {
+        notify(result.error || 'تعذر إرسال ملف المخزون والنواقص إلى القناة.', 'error');
+        return;
       }
-      onSaveSettings(nextSettings);
-      notify('تم إرسال النسخة الاحتياطية الشاملة إلى تليجرام بنجاح', 'success');
+
+      updateTelegramTimestampAfterSend(result.sentAt);
+      notify('تم إرسال ملف المخزون والنواقص إلى قناة تليجرام بنجاح', 'success');
     } catch {
-      notify('تعذر الاتصال بخادم النسخ الاحتياطي لتليجرام.', 'error');
+      notify('تعذر الاتصال بخدمة تليجرام لإرسال ملف المخزون.', 'error');
+    } finally {
+      setIsSendingTelegram(false);
+    }
+  };
+
+  const handleSendTelegramFinanceNow = async () => {
+    const botToken = currentTelegramConfig.botToken.trim();
+    const chatId = currentTelegramConfig.chatId.trim();
+    if (!botToken || !chatId) {
+      notify('يرجى إدخال رمز البوت (Bot Token) ومعرّف القناة (Chat ID) أولاً.', 'warning');
+      return;
+    }
+
+    setIsSendingTelegram(true);
+    setIsTelegramSendMenuOpen(false);
+    try {
+      const result = await sendFinanceReportToTelegramChannel({
+        botToken,
+        chatId,
+        receipts,
+        expenses,
+        inventory,
+        settings: formState,
+        triggerReason: 'إرسال يدوي لملف المالية والحسابات من الإعدادات',
+      });
+
+      if (!result.ok) {
+        notify(result.error || 'تعذر إرسال ملف المالية إلى القناة.', 'error');
+        return;
+      }
+
+      updateTelegramTimestampAfterSend(result.sentAt);
+      notify('تم إرسال ملف المالية والتقارير إلى قناة تليجرام بنجاح', 'success');
+    } catch {
+      notify('تعذر الاتصال بخدمة تليجرام لإرسال ملف المالية.', 'error');
+    } finally {
+      setIsSendingTelegram(false);
+    }
+  };
+
+  const handleSendLatestReceiptToTelegramNow = async () => {
+    const botToken = currentTelegramConfig.botToken.trim();
+    const chatId = currentTelegramConfig.chatId.trim();
+    if (!botToken || !chatId) {
+      notify('يرجى إدخال رمز البوت (Bot Token) ومعرّف القناة (Chat ID) أولاً.', 'warning');
+      return;
+    }
+    if (receipts.length === 0) {
+      notify('لا توجد سندات مصدرة حالياً لإرسالها.', 'warning');
+      return;
+    }
+
+    const latestReceipt = [...receipts].sort((a, b) => (Number(b.receiptNo) || 0) - (Number(a.receiptNo) || 0))[0];
+    setIsSendingTelegram(true);
+    setIsTelegramSendMenuOpen(false);
+    try {
+      const result = await sendReceiptToTelegramChannel({
+        botToken,
+        chatId,
+        receipt: latestReceipt,
+        settings: formState,
+        triggerReason: `إرسال فوري للسند #${latestReceipt.receiptNo}`,
+      });
+
+      if (!result.ok) {
+        notify(result.error || 'تعذر إرسال السند إلى قناة تليجرام.', 'error');
+        return;
+      }
+
+      updateTelegramTimestampAfterSend(result.sentAt);
+      notify(`تم إرسال السند #${latestReceipt.receiptNo} إلى قناة تليجرام بنجاح`, 'success');
+    } catch {
+      notify('تعذر الاتصال بخدمة تليجرام لإرسال السند.', 'error');
     } finally {
       setIsSendingTelegram(false);
     }
@@ -1038,21 +1271,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                العملة الافتراضية
+                الحساب المالي والعملة الأساسية للعيادة
               </label>
-              <select
-                value={formState.identity.defaultCurrency}
-                onChange={(e) =>
-                  handleIdentityChange('defaultCurrency', e.target.value as CurrencyCode)
-                }
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-bold"
-              >
-                {CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+              <div className="w-full rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-black text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+                <span>ريال يمني (الحساب الموحد للعيادة)</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-600 text-white">
+                  موحد
+                </span>
+              </div>
             </div>
 
             <div>
@@ -1104,6 +1330,61 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 onChange={(e) => handleIdentityChange('phones', e.target.value)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-mono"
               />
+            </div>
+          </div>
+
+          {/* Exchange Rates Configurator (SAR & USD -> YER) */}
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-black text-slate-900 dark:text-slate-100">
+                  أسعار الصرف المعتمدة للتحويل إلى الريال اليمني (سعودي / دولار)
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  تُستخدم تلقائياً في نافذة التحويل الفوري عند الدفع بالسعودي أو الدولار في السندات والمصروفات.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleFetchLiveRatesNow}
+                disabled={isFetchingLiveRates}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-[11px] font-bold transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isFetchingLiveRates ? 'animate-spin' : ''}`} />
+                <span>
+                  {isFetchingLiveRates
+                    ? 'جارٍ التحديث بالذكاء الاصطناعي...'
+                    : 'تحديث بالذكاء الاصطناعي (بحث مباشر)'}
+                </span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  سعر صرف الريال السعودي (1 سعودي = ؟ ريال يمني)
+                </label>
+                <SmartNumberInput
+                  min={0.01}
+                  placeholder="140"
+                  value={formState.features.sarToYerRate ?? 140}
+                  onValueChange={(val) => handleExchangeRateChange('sarToYerRate', val)}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  سعر صرف الدولار الأمريكي (1 دولار = ؟ ريال يمني)
+                </label>
+                <SmartNumberInput
+                  min={0.01}
+                  placeholder="535"
+                  value={formState.features.usdToYerRate ?? 535}
+                  onValueChange={(val) => handleExchangeRateChange('usdToYerRate', val)}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-mono font-bold text-slate-900 dark:text-slate-100"
+                />
+              </div>
             </div>
           </div>
 
@@ -1186,10 +1467,40 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               </label>
             </div>
 
+            {/* AI Data Entry in Chat Toggle */}
+            <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-black text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                  <span>إدخال البيانات عبر الذكاء الاصطناعي في شاشة المحادثة</span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  تفعيل أو إلغاء إمكانية إنشاء السندات وإضافة أو خصم أصناف المخزون مباشرة من محادثة المساعد الذكي.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={formState.features.allowAiDataEntry !== false}
+                  onChange={() => handleFeatureToggle('allowAiDataEntry')}
+                  className="sr-only peer"
+                />
+                <div className="w-10 h-5 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
+            </div>
+
             <div className="pt-2">
               <button
                 type="button"
-                onClick={() => onSaveSettings(formState)}
+                onClick={() =>
+                  onSaveSettings({
+                    ...formState,
+                    identity: {
+                      ...formState.identity,
+                      defaultCurrency: 'ريال يمني',
+                    },
+                  })
+                }
                 className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
               >
                 <Save className="w-4 h-4" />
@@ -1487,22 +1798,27 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             </div>
           </section>
 
-          {/* SECTION 3: Automatic & Instant Telegram Cloud Backup */}
+          {/* SECTION 3: Clinic Telegram Channel & Granular Auto-Send Controls */}
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <Send className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                  النسخ الاحتياطي عبر تليجرام
-                </h2>
+                <div>
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
+                    إعدادات قناة وبوت تليجرام للعيادة
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    التحكم في إرسال السندات المصدرة، ملف المخزون والنواقص، وملف المالية إلى قناة العيادة
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={handleSaveTelegramSettings}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-xl transition-colors"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>حفظ</span>
+                <span>حفظ الإعدادات</span>
               </button>
             </div>
 
@@ -1533,47 +1849,160 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  معرّف القناة (Chat ID)
+                  معرّف قناة العيادة (Chat ID)
                 </label>
                 <input
                   type="text"
                   dir="ltr"
                   value={currentTelegramConfig.chatId}
                   onChange={(e) => handleTelegramFieldChange('chatId', e.target.value)}
-                  placeholder="987654321"
+                  placeholder="-1001234567890 أو @channel_username"
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
                 />
               </div>
             </div>
 
-            <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-700 dark:text-slate-300 pt-1">
-              <input
-                type="checkbox"
-                checked={Boolean(currentTelegramConfig.autoBackupOnReceipt)}
-                onChange={(e) =>
-                  handleTelegramFieldChange('autoBackupOnReceipt', e.target.checked)
-                }
-                className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
-              />
-              <span>نسخ تلقائي عند حفظ السندات</span>
-            </label>
+            {/* Granular Toggle Options for Clinic's Telegram Channel */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 space-y-2.5">
+              <div className="text-xs font-black text-slate-800 dark:text-slate-200 pb-1 border-b border-slate-200/80 dark:border-slate-800">
+                خيارات التفعيل والإلغاء للإرسال التلقائي إلى قناة العيادة:
+              </div>
 
-            <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <button
-                type="button"
-                disabled={isSendingTelegram}
-                onClick={handleSendTelegramBackupNow}
-                className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-black flex items-center justify-center gap-2 transition-colors"
-              >
-                {isSendingTelegram ? (
-                  <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
-                ) : (
-                  <Send className="w-4 h-4 shrink-0" />
+              {/* Option 1: Auto-send any issued receipt to the channel */}
+              <label className="flex items-start justify-between gap-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 cursor-pointer hover:border-sky-500/40 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                    إرسال أي سند يتم إصداره إلى القناة تلقائياً
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    إرسال تفاصيل ونسخة كل سند قبض جديد أو معدل فور حفظه إلى قناة العيادة
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(currentTelegramConfig.autoBackupOnReceipt)}
+                  onChange={(e) =>
+                    handleTelegramFieldChange('autoBackupOnReceipt', e.target.checked)
+                  }
+                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 shrink-0"
+                />
+              </label>
+
+              {/* Option 2: Auto-send Inventory & Low-Stock file to the channel */}
+              <label className="flex items-start justify-between gap-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 cursor-pointer hover:border-sky-500/40 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                    إرسال ملف المخزون والنواقص إلى القناة تلقائياً
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    إرسال ملف جرد المخزون الطبي وتنبيهات النواقص (CSV) عند تحديث الأصناف أو خصم المواد
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(currentTelegramConfig.autoSendInventory)}
+                  onChange={(e) =>
+                    handleTelegramFieldChange('autoSendInventory', e.target.checked)
+                  }
+                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 shrink-0"
+                />
+              </label>
+
+              {/* Option 3: Auto-send Finance file to the channel */}
+              <label className="flex items-start justify-between gap-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 cursor-pointer hover:border-sky-500/40 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                    إرسال ملف المالية والحسابات إلى القناة تلقائياً
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    إرسال ملف التقرير المالي الشامل (الإيرادات، المقبوضات، الديون، والمصروفات) إلى القناة
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(currentTelegramConfig.autoSendFinance)}
+                  onChange={(e) =>
+                    handleTelegramFieldChange('autoSendFinance', e.target.checked)
+                  }
+                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 shrink-0"
+                />
+              </label>
+            </div>
+
+            {/* Clean Popup Dropdown Menu for Instant Channel File Sending */}
+            <div className="pt-1 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <button
+                  type="button"
+                  disabled={isSendingTelegram}
+                  onClick={() => setIsTelegramSendMenuOpen((v) => !v)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-black flex items-center justify-between gap-2 transition-colors shadow-xs"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {isSendingTelegram ? (
+                      <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+                    ) : (
+                      <Send className="w-4 h-4 shrink-0" />
+                    )}
+                    <span>
+                      {isSendingTelegram
+                        ? 'جاري الإرسال إلى قناة تليجرام...'
+                        : 'إرسال فوري إلى قناة تليجرام (اختر الملف)'}
+                    </span>
+                  </span>
+                  <ChevronDown
+                    className={`w-4 h-4 transition-transform shrink-0 ${
+                      isTelegramSendMenuOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {isTelegramSendMenuOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setIsTelegramSendMenuOpen(false)}
+                    />
+                    <div className="absolute left-0 right-0 mt-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-30 py-1.5 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
+                      <button
+                        type="button"
+                        onClick={handleSendTelegramInventoryNow}
+                        className="w-full px-3.5 py-2.5 text-right text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2"
+                      >
+                        <span>📦 إرسال ملف المخزون والنواقص إلى القناة (CSV)</span>
+                        <FileSpreadsheet className="w-4 h-4 text-amber-500 shrink-0" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSendTelegramFinanceNow}
+                        className="w-full px-3.5 py-2.5 text-right text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2"
+                      >
+                        <span>💰 إرسال ملف المالية والحسابات والديون إلى القناة (CSV)</span>
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSendLatestReceiptToTelegramNow}
+                        className="w-full px-3.5 py-2.5 text-right text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2"
+                      >
+                        <span>🧾 إرسال آخر سند قبض مصدر إلى القناة الآن</span>
+                        <Send className="w-4 h-4 text-sky-500 shrink-0" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSendTelegramBackupNow}
+                        className="w-full px-3.5 py-2.5 text-right text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2"
+                      >
+                        <span>☁️ إرسال النسخة الاحتياطية الشاملة للنظام (JSON)</span>
+                        <Database className="w-4 h-4 text-indigo-500 shrink-0" />
+                      </button>
+                    </div>
+                  </>
                 )}
-                <span>
-                  {isSendingTelegram ? 'جاري الإرسال...' : 'إرسال لتليجرام الآن'}
-                </span>
-              </button>
+              </div>
 
               {currentTelegramConfig.lastBackupAt && (
                 <div className="text-[11px] font-mono tabular-nums text-slate-500 text-center sm:text-left shrink-0">

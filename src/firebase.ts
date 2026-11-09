@@ -1277,15 +1277,22 @@ function buildClinicCloudPayload(
     payload.ownerEmail = sanitizeStr(ownerEmail, 160, '');
   }
 
-  if (tg) {
-    payload.telegramBackup = {
-      enabled: Boolean(tg.enabled && tg.botToken?.trim() && tg.chatId?.trim()),
-      autoBackupOnReceipt: Boolean(tg.autoBackupOnReceipt ?? true),
-      botToken: sanitizeStr(tg.botToken, 120, ''),
-      chatId: sanitizeStr(tg.chatId, 80, ''),
-      lastBackupAt: sanitizeStr(tg.lastBackupAt || '', 50, ''),
-    };
-  }
+  const allowAiDataEntry = settings.features.allowAiDataEntry !== false;
+  const sarToYerRate = sanitizeNum(settings.features.sarToYerRate || tg?.sarToYerRate || 140, 1, 100000);
+  const usdToYerRate = sanitizeNum(settings.features.usdToYerRate || tg?.usdToYerRate || 535, 1, 500000);
+
+  payload.telegramBackup = {
+    enabled: Boolean(tg?.enabled && tg?.botToken?.trim() && tg?.chatId?.trim()),
+    autoBackupOnReceipt: Boolean(tg?.autoBackupOnReceipt ?? true),
+    autoSendInventory: Boolean(tg?.autoSendInventory ?? false),
+    autoSendFinance: Boolean(tg?.autoSendFinance ?? false),
+    botToken: sanitizeStr(tg?.botToken, 120, ''),
+    chatId: sanitizeStr(tg?.chatId, 80, ''),
+    lastBackupAt: sanitizeStr(tg?.lastBackupAt || '', 50, ''),
+    allowAiDataEntry,
+    sarToYerRate,
+    usdToYerRate,
+  };
 
   // Only write subscription or aiConfig when the authenticated platform developer saves
   if (sub && (isDev || isInitialCreate)) {
@@ -2003,13 +2010,30 @@ async function fetchClinicCollectionsFromFirestore(
       saveAIProviderConfig(parsedAiConfig);
     }
 
-    if (!pendingState.settings) {
-      const rawCurrency = String(d.defaultCurrency || 'ريال يمني');
-      const validCurrency: CurrencyCode =
-        rawCurrency === 'ريال سعودي' || rawCurrency === 'دولار أمريكي'
-          ? rawCurrency
-          : 'ريال يمني';
+    const cloudTg = d.telegramBackup as Partial<TelegramBackupSettings> | undefined;
+    const parsedAllowAiDataEntry =
+      cloudTg?.allowAiDataEntry !== undefined ? Boolean(cloudTg.allowAiDataEntry) : true;
+    const parsedSarRate =
+      Number(cloudTg?.sarToYerRate) > 0 ? Number(cloudTg?.sarToYerRate) : 140;
+    const parsedUsdRate =
+      Number(cloudTg?.usdToYerRate) > 0 ? Number(cloudTg?.usdToYerRate) : 535;
 
+    const parsedTelegram: TelegramBackupSettings | undefined = cloudTg
+      ? {
+          enabled: Boolean(cloudTg.enabled && cloudTg.botToken?.trim() && cloudTg.chatId?.trim()),
+          autoBackupOnReceipt: Boolean(cloudTg.autoBackupOnReceipt ?? true),
+          autoSendInventory: Boolean(cloudTg.autoSendInventory ?? false),
+          autoSendFinance: Boolean(cloudTg.autoSendFinance ?? false),
+          botToken: String(cloudTg.botToken || '').trim(),
+          chatId: String(cloudTg.chatId || '').trim(),
+          lastBackupAt: cloudTg.lastBackupAt ? String(cloudTg.lastBackupAt) : undefined,
+          allowAiDataEntry: parsedAllowAiDataEntry,
+          sarToYerRate: parsedSarRate,
+          usdToYerRate: parsedUsdRate,
+        }
+      : undefined;
+
+    if (!pendingState.settings) {
       const isOwnerSession = auth.currentUser?.uid === safeUid;
       const resolvedOwnerEmail = d.ownerEmail
         ? String(d.ownerEmail).toLowerCase()
@@ -2028,7 +2052,7 @@ async function fetchClinicCollectionsFromFirestore(
           doctorEn: String(d.doctorEn ?? ''),
           address: String(d.address ?? ''),
           phones: String(d.phones ?? ''),
-          defaultCurrency: validCurrency,
+          defaultCurrency: 'ريال يمني',
           ownerEmail: resolvedOwnerEmail,
         },
         appearance: {
@@ -2047,7 +2071,11 @@ async function fetchClinicCollectionsFromFirestore(
           debtAlert: true,
           autoInventory: Boolean(d.autoInventory ?? true),
           showQrCode: Boolean(d.showQrCode ?? true),
+          allowAiDataEntry: parsedAllowAiDataEntry,
+          sarToYerRate: parsedSarRate,
+          usdToYerRate: parsedUsdRate,
         },
+        telegramBackup: parsedTelegram || nextSettings.telegramBackup,
         subscription: parsedSubscription,
         ...(parsedAiConfig ? { aiConfig: parsedAiConfig } : {}),
       };
@@ -2055,6 +2083,9 @@ async function fetchClinicCollectionsFromFirestore(
       // Always preserve cloud subscription and developer-configured aiConfig
       nextSettings = {
         ...nextSettings,
+        telegramBackup: nextSettings.telegramBackup?.botToken
+          ? nextSettings.telegramBackup
+          : parsedTelegram || nextSettings.telegramBackup,
         subscription: parsedSubscription,
         ...(parsedAiConfig ? { aiConfig: parsedAiConfig } : {}),
       };
@@ -2277,20 +2308,27 @@ export function subscribeToClinicCloudData(
         return;
       }
       const d = snap.docs[0].data();
-      const rawCurrency = String(d.defaultCurrency || 'ريال يمني');
-      const validCurrency: CurrencyCode =
-        rawCurrency === 'ريال سعودي' || rawCurrency === 'دولار أمريكي'
-          ? rawCurrency
-          : 'ريال يمني';
 
       const cloudTg = d.telegramBackup as Partial<TelegramBackupSettings> | undefined;
+      const parsedAllowAiDataEntry =
+        cloudTg?.allowAiDataEntry !== undefined ? Boolean(cloudTg.allowAiDataEntry) : true;
+      const parsedSarRate =
+        Number(cloudTg?.sarToYerRate) > 0 ? Number(cloudTg?.sarToYerRate) : 140;
+      const parsedUsdRate =
+        Number(cloudTg?.usdToYerRate) > 0 ? Number(cloudTg?.usdToYerRate) : 535;
+
       const parsedTelegram: TelegramBackupSettings | undefined = cloudTg
         ? {
             enabled: Boolean(cloudTg.enabled && cloudTg.botToken?.trim() && cloudTg.chatId?.trim()),
             autoBackupOnReceipt: Boolean(cloudTg.autoBackupOnReceipt ?? true),
+            autoSendInventory: Boolean(cloudTg.autoSendInventory ?? false),
+            autoSendFinance: Boolean(cloudTg.autoSendFinance ?? false),
             botToken: String(cloudTg.botToken || '').trim(),
             chatId: String(cloudTg.chatId || '').trim(),
             lastBackupAt: cloudTg.lastBackupAt ? String(cloudTg.lastBackupAt) : undefined,
+            allowAiDataEntry: parsedAllowAiDataEntry,
+            sarToYerRate: parsedSarRate,
+            usdToYerRate: parsedUsdRate,
           }
         : undefined;
 
@@ -2329,7 +2367,7 @@ export function subscribeToClinicCloudData(
           doctorEn: String(d.doctorEn ?? ''),
           address: String(d.address ?? ''),
           phones: String(d.phones ?? ''),
-          defaultCurrency: validCurrency,
+          defaultCurrency: 'ريال يمني',
           ownerEmail: resolvedOwnerEmail,
         },
         appearance: {
@@ -2344,6 +2382,9 @@ export function subscribeToClinicCloudData(
           debtAlert: true,
           autoInventory: Boolean(d.autoInventory ?? true),
           showQrCode: Boolean(d.showQrCode ?? true),
+          allowAiDataEntry: parsedAllowAiDataEntry,
+          sarToYerRate: parsedSarRate,
+          usdToYerRate: parsedUsdRate,
         },
         telegramBackup: parsedTelegram,
         subscription: parsedSubscription,
@@ -3666,7 +3707,440 @@ export async function deleteClinicByDeveloper(
   await deleteDoc(doc(db, 'clinics', cleanClinicId));
 }
 
-// ==================== TELEGRAM CLOUD BACKUP CLIENT HELPER ====================
+// ==================== TELEGRAM CLOUD BACKUP & CHANNEL DISPATCHERS ====================
+function escapeTelegramHtml(text: string): string {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeCsvCell(val: unknown): string {
+  const s = String(val ?? '');
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+async function sendDocumentToTelegramDirect(params: {
+  botToken: string;
+  chatId: string;
+  blob: Blob;
+  fileName: string;
+  caption: string;
+}): Promise<{ ok: boolean; sentAt?: string; messageId?: number; error?: string }> {
+  const cleanToken = String(params.botToken || '').trim();
+  const cleanChatId = String(params.chatId || '').trim();
+  if (!cleanToken || !cleanChatId) {
+    return {
+      ok: false,
+      error: 'يرجى إدخال رمز البوت (Bot Token) ومعرّف القناة (Chat ID) في إعدادات تليجرام.',
+    };
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', cleanChatId);
+    formData.append('document', params.blob, params.fileName);
+    formData.append('caption', params.caption.slice(0, 1020));
+    formData.append('parse_mode', 'HTML');
+
+    const res = await fetch(`https://api.telegram.org/bot${cleanToken}/sendDocument`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return {
+        ok: true,
+        sentAt: new Date().toISOString(),
+        messageId: data?.result?.message_id,
+      };
+    }
+    return {
+      ok: false,
+      error: data?.description || `تعذر الإرسال إلى قناة تليجرام (${res.status})`,
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'تعذر الاتصال بخدمة تليجرام. تحقق من اتصال الإنترنت.',
+    };
+  }
+}
+
+export async function sendReceiptToTelegramChannel(params: {
+  botToken: string;
+  chatId: string;
+  receipt: ReceiptRecord;
+  settings: ClinicSettings;
+  triggerReason?: string;
+}): Promise<{ ok: boolean; sentAt?: string; messageId?: number; error?: string }> {
+  const { receipt, settings } = params;
+  const clinicName = settings.identity.clinicAr || 'عيادة طب الأسنان';
+  const doctorName = settings.identity.doctorAr || '';
+  const servicesStr = Array.isArray(receipt.services) && receipt.services.length > 0
+    ? receipt.services.join(' + ')
+    : 'خدمات علاجية';
+
+  const consumedStr =
+    Array.isArray(receipt.consumedMaterials) && receipt.consumedMaterials.length > 0
+      ? receipt.consumedMaterials
+          .map((m) => `${m.materialId} (${m.amountDeducted})`)
+          .join('، ')
+      : '';
+
+  const caption = [
+    `🧾 <b>سند قبض مالي #${receipt.receiptNo}</b>`,
+    `🏥 <b>${escapeTelegramHtml(clinicName)}</b>${doctorName ? ` — ${escapeTelegramHtml(doctorName)}` : ''}`,
+    params.triggerReason ? `📌 الحالة: ${escapeTelegramHtml(params.triggerReason)}` : '',
+    `━━━━━━━━━━━━━━`,
+    `👤 <b>المريض:</b> ${escapeTelegramHtml(receipt.patientName)}`,
+    receipt.patientPhone ? `📞 <b>الهاتف:</b> ${escapeTelegramHtml(receipt.patientPhone)}` : '',
+    `📅 <b>التاريخ:</b> ${escapeTelegramHtml(receipt.date)}`,
+    `🦷 <b>الخدمات:</b> ${escapeTelegramHtml(servicesStr)}`,
+    receipt.toothFDI ? `🔢 <b>الأسنان (FDI):</b> ${escapeTelegramHtml(receipt.toothFDI)}` : '',
+    `━━━━━━━━━━━━━━`,
+    `💰 <b>إجمالي الحساب:</b> ${Number(receipt.totalAmount || 0).toLocaleString()} ${escapeTelegramHtml(receipt.currency)}`,
+    `✅ <b>المقبوض:</b> ${Number(receipt.paidAmount || 0).toLocaleString()} ${escapeTelegramHtml(receipt.currency)} (${escapeTelegramHtml(receipt.paymentMethod)})`,
+    `⏳ <b>المتبقي (دين):</b> ${Number(receipt.remainingAmount || 0).toLocaleString()} ${escapeTelegramHtml(receipt.currency)}`,
+    consumedStr ? `📦 <b>المواد المخصومة:</b> ${escapeTelegramHtml(consumedStr)}` : '',
+    receipt.notes ? `📝 <b>ملاحظات:</b> ${escapeTelegramHtml(receipt.notes)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const htmlVoucher = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>سند قبض #${receipt.receiptNo} - ${escapeTelegramHtml(receipt.patientName)}</title>
+<style>
+  body { font-family: Tahoma, Arial, sans-serif; background: #f8fafc; padding: 24px; color: #0f172a; }
+  .card { max-width: 650px; margin: 0 auto; background: #fff; border: 2px solid #0b2545; border-radius: 16px; padding: 24px; }
+  .hdr { display: flex; justify-content: space-between; border-bottom: 2px solid #0b2545; padding-bottom: 12px; margin-bottom: 16px; }
+  .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1; font-size: 14px; }
+  .boxes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; text-align: center; }
+  .box { padding: 10px; border-radius: 10px; border: 1px solid #cbd5e1; font-weight: bold; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="hdr">
+      <div>
+        <h2 style="margin:0;color:#0b2545">${escapeTelegramHtml(clinicName)}</h2>
+        <div style="font-size:13px;color:#0284c7;font-weight:bold">${escapeTelegramHtml(doctorName)}</div>
+      </div>
+      <div style="text-align:left">
+        <div style="font-size:18px;font-weight:bold;color:#e11d48">سند قبض #${receipt.receiptNo}</div>
+        <div style="font-size:12px;color:#475569">${escapeTelegramHtml(receipt.date)}</div>
+      </div>
+    </div>
+    <div class="row"><strong>وصلنا من الأخ/ت:</strong><span>${escapeTelegramHtml(receipt.patientName)}</span></div>
+    <div class="row"><strong>رقم الهاتف:</strong><span>${escapeTelegramHtml(receipt.patientPhone || '—')}</span></div>
+    <div class="row"><strong>الخدمات العلاجية:</strong><span>${escapeTelegramHtml(servicesStr)}</span></div>
+    <div class="row"><strong>أرقام الأسنان (FDI):</strong><span>${escapeTelegramHtml(receipt.toothFDI || '—')}</span></div>
+    <div class="row"><strong>طريقة الدفع:</strong><span>${escapeTelegramHtml(receipt.paymentMethod)}</span></div>
+    <div class="row"><strong>المبلغ بالحروف:</strong><span>${escapeTelegramHtml(receipt.amountWords)}</span></div>
+    ${consumedStr ? `<div class="row"><strong>المواد المخصومة:</strong><span>${escapeTelegramHtml(consumedStr)}</span></div>` : ''}
+    ${receipt.notes ? `<div class="row"><strong>ملاحظات:</strong><span>${escapeTelegramHtml(receipt.notes)}</span></div>` : ''}
+    <div class="boxes">
+      <div class="box">إجمالي الحساب<br/>${Number(receipt.totalAmount || 0).toLocaleString()} ${escapeTelegramHtml(receipt.currency)}</div>
+      <div class="box" style="border-color:#10b981;background:#ecfdf5;color:#047857">المبلغ المقبوض<br/>${Number(receipt.paidAmount || 0).toLocaleString()} ${escapeTelegramHtml(receipt.currency)}</div>
+      <div class="box" style="border-color:#f43f5e;background:#fff1f2;color:#be123c">المتبقي (دين)<br/>${Number(receipt.remainingAmount || 0).toLocaleString()} ${escapeTelegramHtml(receipt.currency)}</div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const safePatient = String(receipt.patientName || 'مريض')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^\u0600-\u06FFa-zA-Z0-9_-]/g, '')
+    .slice(0, 35);
+  const fileName = `سند_قبض_${receipt.receiptNo}_${safePatient || 'مريض'}.html`;
+  const blob = new Blob([htmlVoucher], { type: 'text/html;charset=utf-8' });
+
+  return sendDocumentToTelegramDirect({
+    botToken: params.botToken,
+    chatId: params.chatId,
+    blob,
+    fileName,
+    caption,
+  });
+}
+
+export async function sendInventoryReportToTelegramChannel(params: {
+  botToken: string;
+  chatId: string;
+  inventory: InventoryItem[];
+  settings: ClinicSettings;
+  triggerReason?: string;
+}): Promise<{ ok: boolean; sentAt?: string; messageId?: number; error?: string }> {
+  const { inventory, settings } = params;
+  const clinicName = settings.identity.clinicAr || 'عيادة طب الأسنان';
+  const defaultCurrency = settings.identity.defaultCurrency || 'ريال يمني';
+  const dateStamp = new Date().toISOString().slice(0, 10);
+
+  const lowStockItems = inventory.filter((i) => Number(i.qty) <= Number(i.minQty));
+  const clinicItems = inventory.filter((i) => (i.location || 'clinic') === 'clinic');
+  const labItems = inventory.filter((i) => i.location === 'lab');
+  const totalValue = inventory.reduce((sum, i) => sum + (Number(i.totalCost) || 0), 0);
+
+  const csvRows: string[][] = [
+    ['تقرير المخزون الطبي والنواقص — ' + clinicName, 'التاريخ: ' + dateStamp],
+    [
+      'إجمالي الأصناف: ' + inventory.length,
+      'نواقص المخزون: ' + lowStockItems.length,
+      'مخزن العيادة: ' + clinicItems.length,
+      'مخزن المعمل: ' + labItems.length,
+      'إجمالي القيمة: ' + totalValue + ' ' + defaultCurrency,
+    ],
+    [],
+    ['=== أولاً: قائمة نواقص المخزون والأصناف التي وصلت للحد الأدنى ==='],
+    [
+      'اسم الصنف',
+      'الموقع',
+      'الرصيد المتوفر (بالعبوة)',
+      'الحد الأدنى',
+      'الرصيد الجزئي المتبقي',
+      'وحدة الصرف',
+      'سعر العبوة',
+      'الحالة',
+    ],
+  ];
+
+  if (lowStockItems.length === 0) {
+    csvRows.push(['لا توجد نواقص حالياً — جميع الأصناف متوفرة فوق الحد الأدنى']);
+  } else {
+    for (const item of lowStockItems) {
+      csvRows.push([
+        item.name,
+        item.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة',
+        `${item.qty} ${item.unit}`,
+        `${item.minQty} ${item.unit}`,
+        `${item.remainingSubUnits ?? item.qty}`,
+        item.usageUnit || item.unit,
+        `${item.unitPrice} ${defaultCurrency}`,
+        Number(item.qty) <= 0 ? 'نافد تماماً (0)' : 'نقص حرج (تحت الحد الأدنى)',
+      ]);
+    }
+  }
+
+  csvRows.push(
+    [],
+    ['=== ثانياً: الجرد الشامل لجميع أصناف المخزون ==='],
+    [
+      'اسم الصنف',
+      'الموقع',
+      'الكمية المتوفرة',
+      'الوحدة',
+      'سعة العبوة',
+      'الرصيد الجزئي الدقيق',
+      'وحدة الصرف',
+      'الحد الأدنى',
+      'سعر الوحدة',
+      'إجمالي التكلفة',
+      'الخدمة المرتبطة',
+      'الحالة',
+      'آخر تحديث',
+    ]
+  );
+
+  for (const item of inventory) {
+    const isLow = Number(item.qty) <= Number(item.minQty);
+    csvRows.push([
+      item.name,
+      item.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة',
+      String(item.qty),
+      item.unit,
+      String(item.packageSize || 1),
+      String(item.remainingSubUnits ?? item.qty),
+      item.usageUnit || item.unit,
+      String(item.minQty),
+      String(item.unitPrice),
+      String(item.totalCost),
+      item.linkedService || '—',
+      isLow ? 'نقص / يحتاج توريد' : 'متوفر',
+      item.updatedAt || dateStamp,
+    ]);
+  }
+
+  const csvContent = '\uFEFF' + csvRows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+  const fileName = `ملف_المخزون_والنواقص_${dateStamp}.csv`;
+
+  const lowNamesPreview =
+    lowStockItems.length > 0
+      ? lowStockItems
+          .slice(0, 8)
+          .map((i) => `• ${escapeTelegramHtml(i.name)} (${i.qty} ${escapeTelegramHtml(i.unit)})`)
+          .join('\n')
+      : '✅ لا توجد نواقص حالياً.';
+
+  const caption = [
+    `📦 <b>تقرير المخزون الطبي والنواقص</b>`,
+    `🏥 <b>${escapeTelegramHtml(clinicName)}</b>`,
+    params.triggerReason ? `📌 السبب: ${escapeTelegramHtml(params.triggerReason)}` : '',
+    `━━━━━━━━━━━━━━`,
+    `📊 <b>إجمالي الأصناف:</b> ${inventory.length} صنف (العيادة: ${clinicItems.length} | المعمل: ${labItems.length})`,
+    `⚠️ <b>الأصناف الناقصة:</b> ${lowStockItems.length} صنف`,
+    `💰 <b>إجمالي قيمة المخزون:</b> ${totalValue.toLocaleString()} ${escapeTelegramHtml(defaultCurrency)}`,
+    `━━━━━━━━━━━━━━`,
+    `<b>تنبيهات النواقص:</b>`,
+    lowNamesPreview,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return sendDocumentToTelegramDirect({
+    botToken: params.botToken,
+    chatId: params.chatId,
+    blob,
+    fileName,
+    caption,
+  });
+}
+
+export async function sendFinanceReportToTelegramChannel(params: {
+  botToken: string;
+  chatId: string;
+  receipts: ReceiptRecord[];
+  expenses: ExpenseRecord[];
+  inventory: InventoryItem[];
+  settings: ClinicSettings;
+  triggerReason?: string;
+}): Promise<{ ok: boolean; sentAt?: string; messageId?: number; error?: string }> {
+  const { receipts, expenses, settings } = params;
+  const clinicName = settings.identity.clinicAr || 'عيادة طب الأسنان';
+  const unifiedCurrency = 'ريال يمني';
+  const sarRate = Number(settings.features.sarToYerRate) > 0 ? Number(settings.features.sarToYerRate) : 140;
+  const usdRate = Number(settings.features.usdToYerRate) > 0 ? Number(settings.features.usdToYerRate) : 535;
+  const toYer = (amt: number, curr?: string) => {
+    const val = Number(amt) || 0;
+    if (curr === 'ريال سعودي') return Math.round(val * sarRate);
+    if (curr === 'دولار أمريكي') return Math.round(val * usdRate);
+    return Math.round(val);
+  };
+  const dateStamp = new Date().toISOString().slice(0, 10);
+
+  const csvRows: string[][] = [
+    ['التقرير المالي الشامل وكشف الحسابات والديون (حساب الريال اليمني الموحد) — ' + clinicName, 'التاريخ: ' + dateStamp],
+    [],
+    ['=== أولاً: ملخص الأداء المالي الموحد بالريال اليمني ==='],
+    ['العملة المعتمدة', 'إجمالي الفواتير', 'المقبوض الفعلي', 'الديون المتبقية (الذمم)', 'إجمالي المصروفات', 'صافي الربح النقدي'],
+  ];
+
+  const totalBilled = receipts.reduce((s, r) => s + toYer(r.totalAmount, r.currency), 0);
+  const totalPaid = receipts.reduce((s, r) => s + toYer(r.paidAmount, r.currency), 0);
+  const totalRemaining = receipts.reduce((s, r) => s + toYer(r.remainingAmount, r.currency), 0);
+  const totalExp = expenses.reduce((s, e) => s + toYer(e.amount, e.currency), 0);
+  const netProfit = totalPaid - totalExp;
+
+  csvRows.push([
+    unifiedCurrency,
+    String(totalBilled),
+    String(totalPaid),
+    String(totalRemaining),
+    String(totalExp),
+    String(netProfit),
+  ]);
+
+  const summaryBlocks: string[] = [
+    `💵 <b>الحساب المالي الموحد (${escapeTelegramHtml(unifiedCurrency)}):</b>\n` +
+      `   • إجمالي الفواتير: ${totalBilled.toLocaleString()} ريال يمني\n` +
+      `   • المقبوض الفعلي: ${totalPaid.toLocaleString()} ريال يمني\n` +
+      `   • الديون المتبقية: ${totalRemaining.toLocaleString()} ريال يمني\n` +
+      `   • المصروفات: ${totalExp.toLocaleString()} ريال يمني\n` +
+      `   • <b>صافي الربح النقدي: ${netProfit.toLocaleString()} ريال يمني</b>`,
+  ];
+
+  const debtors = receipts.filter((r) => (Number(r.remainingAmount) || 0) > 0);
+  csvRows.push(
+    [],
+    ['=== ثانياً: كشف الديون والذمم المتبقية على المرضى ==='],
+    ['رقم السند', 'التاريخ', 'اسم المريض', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'المتبقي (الدين)', 'العملة', 'الخدمات']
+  );
+
+  if (debtors.length === 0) {
+    csvRows.push(['لا توجد ديون متبقية على المرضى حالياً']);
+  } else {
+    for (const r of debtors) {
+      csvRows.push([
+        String(r.receiptNo),
+        r.date,
+        r.patientName,
+        r.patientPhone || '—',
+        String(r.totalAmount),
+        String(r.paidAmount),
+        String(r.remainingAmount),
+        r.currency,
+        (r.services || []).join(' + '),
+      ]);
+    }
+  }
+
+  csvRows.push(
+    [],
+    ['=== ثالثاً: سجل المصروفات التشغيلية والمشتريات ==='],
+    ['التاريخ', 'بيان المصروف', 'التصنيف', 'المبلغ', 'العملة']
+  );
+
+  if (expenses.length === 0) {
+    csvRows.push(['لا توجد مصروفات مسجلة']);
+  } else {
+    for (const e of expenses) {
+      csvRows.push([e.date, e.title, e.category, String(e.amount), e.currency]);
+    }
+  }
+
+  csvRows.push(
+    [],
+    ['=== رابعاً: سجل سندات القبض الكامل ==='],
+    ['رقم السند', 'التاريخ', 'اسم المريض', 'الهاتف', 'الخدمات', 'الأسنان (FDI)', 'الإجمالي', 'المقبوض', 'المتبقي', 'العملة', 'طريقة الدفع']
+  );
+
+  for (const r of receipts) {
+    csvRows.push([
+      String(r.receiptNo),
+      r.date,
+      r.patientName,
+      r.patientPhone || '—',
+      (r.services || []).join(' + '),
+      r.toothFDI || '—',
+      String(r.totalAmount),
+      String(r.paidAmount),
+      String(r.remainingAmount),
+      r.currency,
+      r.paymentMethod,
+    ]);
+  }
+
+  const csvContent = '\uFEFF' + csvRows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+  const fileName = `ملف_المالية_والحسابات_${dateStamp}.csv`;
+
+  const caption = [
+    `💰 <b>التقرير المالي الشامل للعيادة</b>`,
+    `🏥 <b>${escapeTelegramHtml(clinicName)}</b>`,
+    params.triggerReason ? `📌 السبب: ${escapeTelegramHtml(params.triggerReason)}` : '',
+    `📅 التاريخ: ${dateStamp} | إجمالي السندات: ${receipts.length} | حالات الدين: ${debtors.length}`,
+    `━━━━━━━━━━━━━━`,
+    summaryBlocks.join('\n━━━━━━━━━━━━━━\n'),
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return sendDocumentToTelegramDirect({
+    botToken: params.botToken,
+    chatId: params.chatId,
+    blob,
+    fileName,
+    caption,
+  });
+}
+
 export async function sendBackupToTelegramApi(params: {
   botToken: string;
   chatId: string;
@@ -3690,6 +4164,42 @@ export async function sendBackupToTelegramApi(params: {
     expenses: params.expenses,
   };
 
+  // 1. Try direct browser-to-Telegram sendDocument first (works on Vercel, static hosting, and Cloud Run)
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const clinicName = params.settings.identity.clinicAr || 'عيادة طب الأسنان';
+  const defaultCurrency = params.settings.identity.defaultCurrency || 'ريال يمني';
+  const totalCollected = params.receipts.reduce((s, r) => s + (Number(r.paidAmount) || 0), 0);
+  const totalDebts = params.receipts.reduce((s, r) => s + (Number(r.remainingAmount) || 0), 0);
+  const lowStockCount = params.inventory.filter((i) => Number(i.qty) <= Number(i.minQty)).length;
+
+  const caption = [
+    `☁️ <b>نسخة احتياطية شاملة للنظام (JSON)</b>`,
+    `🏥 <b>${escapeTelegramHtml(clinicName)}</b>`,
+    `📌 السبب: ${escapeTelegramHtml(params.triggerReason)}`,
+    `━━━━━━━━━━━━━━`,
+    `🧾 السندات: ${params.receipts.length} سند`,
+    `📦 أصناف المخزون: ${params.inventory.length} (النواقص: ${lowStockCount})`,
+    `💸 المصروفات: ${params.expenses.length} عملية`,
+    `💰 إجمالي المقبوض: ${totalCollected.toLocaleString()} ${escapeTelegramHtml(defaultCurrency)}`,
+    `⏳ إجمالي الديون: ${totalDebts.toLocaleString()} ${escapeTelegramHtml(defaultCurrency)}`,
+  ].join('\n');
+
+  const jsonBlob = new Blob([JSON.stringify(backupPayload, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  });
+  const directRes = await sendDocumentToTelegramDirect({
+    botToken: params.botToken,
+    chatId: params.chatId,
+    blob: jsonBlob,
+    fileName: `نسخة_احتياطية_شاملة_${dateStamp}.json`,
+    caption,
+  });
+
+  if (directRes.ok) {
+    return directRes;
+  }
+
+  // 2. Fallback to backend proxy (/api/backup/telegram)
   try {
     const res = await fetch('/api/backup/telegram', {
       method: 'POST',
@@ -3707,7 +4217,7 @@ export async function sendBackupToTelegramApi(params: {
     if (!rawText || rawText.trim().startsWith('<')) {
       return {
         ok: false,
-        error: 'تعذر الوصول إلى خادم النسخ الاحتياطي لتليجرام.',
+        error: directRes.error || 'تعذر الوصول إلى خادم النسخ الاحتياطي لتليجرام.',
       };
     }
     const parsed = JSON.parse(rawText) as {
@@ -3719,7 +4229,7 @@ export async function sendBackupToTelegramApi(params: {
     if (!res.ok || !parsed.ok) {
       return {
         ok: false,
-        error: parsed.error || 'تعذر إرسال النسخة الاحتياطية إلى تليجرام.',
+        error: parsed.error || directRes.error || 'تعذر إرسال النسخة الاحتياطية إلى تليجرام.',
       };
     }
     return {
@@ -3730,7 +4240,7 @@ export async function sendBackupToTelegramApi(params: {
   } catch {
     return {
       ok: false,
-      error: 'تعذر الاتصال بخادم النسخ الاحتياطي لتليجرام. تحقق من اتصال الإنترنت.',
+      error: directRes.error || 'تعذر الاتصال بخادم النسخ الاحتياطي لتليجرام. تحقق من اتصال الإنترنت.',
     };
   }
 }

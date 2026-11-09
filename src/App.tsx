@@ -89,7 +89,9 @@ import {
   saveInventoryItemToCloud,
   saveReceiptToCloud,
   saveServiceToCloud,
-  sendBackupToTelegramApi,
+  sendFinanceReportToTelegramChannel,
+  sendInventoryReportToTelegramChannel,
+  sendReceiptToTelegramChannel,
   signInWithGoogleAccount,
   signOutAccount,
   subscribeToClinicCloudData,
@@ -745,7 +747,9 @@ export default function App() {
               partial.appearance.customLogoDataUrl || prev.appearance.customLogoDataUrl,
           },
           features: partial.features,
-          telegramBackup: prev.telegramBackup,
+          telegramBackup: partial.telegramBackup?.botToken
+            ? partial.telegramBackup
+            : prev.telegramBackup,
         }));
       },
       onServicesUpdate: (cloudServices) => {
@@ -1081,13 +1085,9 @@ export default function App() {
 
   const isCloudConnected = Boolean(currentUser);
 
-  const triggerAutoTelegramBackup = (
-    triggerReason: string,
-    nextReceiptsList: ReceiptRecord[],
-    nextInventoryList: InventoryItem[],
-    nextExpensesList: ExpenseRecord[],
+  const resolveEffectiveTelegramConfig = (
     currentSettingsSnapshot: ClinicSettings = settings
-  ) => {
+  ): TelegramBackupSettings | null => {
     let tg: TelegramBackupSettings | undefined = currentSettingsSnapshot.telegramBackup;
     try {
       const storedRaw = localStorage.getItem('docai_telegram_backup_v1');
@@ -1095,7 +1095,9 @@ export default function App() {
         const parsed = JSON.parse(storedRaw) as Partial<TelegramBackupSettings>;
         tg = {
           enabled: Boolean(tg?.enabled ?? parsed.enabled),
-          autoBackupOnReceipt: Boolean(tg?.autoBackupOnReceipt ?? parsed.autoBackupOnReceipt),
+          autoBackupOnReceipt: Boolean(tg?.autoBackupOnReceipt ?? parsed.autoBackupOnReceipt ?? true),
+          autoSendInventory: Boolean(tg?.autoSendInventory ?? parsed.autoSendInventory ?? false),
+          autoSendFinance: Boolean(tg?.autoSendFinance ?? parsed.autoSendFinance ?? false),
           botToken: (tg?.botToken || parsed.botToken || '').trim(),
           chatId: (tg?.chatId || parsed.chatId || '').trim(),
           lastBackupAt: tg?.lastBackupAt || parsed.lastBackupAt,
@@ -1104,46 +1106,95 @@ export default function App() {
     } catch {
       // Ignore storage error
     }
+    if (!tg || !tg.botToken.trim() || !tg.chatId.trim()) {
+      return null;
+    }
+    return tg;
+  };
 
-    if (!tg || !tg.autoBackupOnReceipt || !tg.botToken.trim() || !tg.chatId.trim()) {
-      return;
+  const recordTelegramAutoSendSuccess = (tg: TelegramBackupSettings, sentAtIso?: string) => {
+    const sentAt = sentAtIso || new Date().toISOString();
+    const updatedTg: TelegramBackupSettings = {
+      ...tg,
+      enabled: true,
+      lastBackupAt: sentAt,
+    };
+    try {
+      localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
+      localStorage.setItem('docai_last_local_backup_at_v1', sentAt);
+    } catch {
+      // Ignore
+    }
+    setSettings((prev) => ({
+      ...prev,
+      telegramBackup: updatedTg,
+    }));
+  };
+
+  const triggerAutoTelegramBackup = (
+    triggerReason: string,
+    nextReceiptsList: ReceiptRecord[],
+    nextInventoryList: InventoryItem[],
+    nextExpensesList: ExpenseRecord[],
+    currentSettingsSnapshot: ClinicSettings = settings,
+    options?: {
+      targetReceipt?: ReceiptRecord;
+      inventoryChanged?: boolean;
+      financeChanged?: boolean;
+    }
+  ) => {
+    const tg = resolveEffectiveTelegramConfig(currentSettingsSnapshot);
+    if (!tg) return;
+
+    const botToken = tg.botToken.trim();
+    const chatId = tg.chatId.trim();
+
+    // 1. Send issued/updated Receipt to Telegram channel if autoBackupOnReceipt is enabled
+    if (tg.autoBackupOnReceipt && options?.targetReceipt) {
+      void sendReceiptToTelegramChannel({
+        botToken,
+        chatId,
+        receipt: options.targetReceipt,
+        settings: currentSettingsSnapshot,
+        triggerReason,
+      })
+        .then((res) => {
+          if (res.ok) recordTelegramAutoSendSuccess(tg, res.sentAt);
+        })
+        .catch(() => {});
     }
 
-    const exportedAt = new Date().toISOString();
-
-    // Non-blocking background execution
-    void sendBackupToTelegramApi({
-      botToken: tg.botToken.trim(),
-      chatId: tg.chatId.trim(),
-      settings: currentSettingsSnapshot,
-      receipts: nextReceiptsList,
-      inventory: nextInventoryList,
-      expenses: nextExpensesList,
-      triggerReason,
-    })
-      .then((res) => {
-        if (res.ok) {
-          const sentAt = res.sentAt || exportedAt;
-          const updatedTg: TelegramBackupSettings = {
-            ...tg!,
-            enabled: true,
-            lastBackupAt: sentAt,
-          };
-          try {
-            localStorage.setItem('docai_telegram_backup_v1', JSON.stringify(updatedTg));
-            localStorage.setItem('docai_last_local_backup_at_v1', sentAt);
-          } catch {
-            // Ignore
-          }
-          setSettings((prev) => ({
-            ...prev,
-            telegramBackup: updatedTg,
-          }));
-        }
+    // 2. Send Inventory & Low-Stock file to Telegram channel if autoSendInventory is enabled and inventory changed
+    if (tg.autoSendInventory && options?.inventoryChanged) {
+      void sendInventoryReportToTelegramChannel({
+        botToken,
+        chatId,
+        inventory: nextInventoryList,
+        settings: currentSettingsSnapshot,
+        triggerReason,
       })
-      .catch(() => {
-        // Non-blocking: ignore transient network errors on auto-backup
-      });
+        .then((res) => {
+          if (res.ok) recordTelegramAutoSendSuccess(tg, res.sentAt);
+        })
+        .catch(() => {});
+    }
+
+    // 3. Send Finance file to Telegram channel if autoSendFinance is enabled and finance changed
+    if (tg.autoSendFinance && options?.financeChanged) {
+      void sendFinanceReportToTelegramChannel({
+        botToken,
+        chatId,
+        receipts: nextReceiptsList,
+        expenses: nextExpensesList,
+        inventory: nextInventoryList,
+        settings: currentSettingsSnapshot,
+        triggerReason,
+      })
+        .then((res) => {
+          if (res.ok) recordTelegramAutoSendSuccess(tg, res.sentAt);
+        })
+        .catch(() => {});
+    }
   };
 
   const handleSaveReceipt = (
@@ -1334,12 +1385,17 @@ export default function App() {
 
     triggerAutoTelegramBackup(
       isEdit
-        ? `تلقائي بعد تعديل السند #${record.receiptNo}`
-        : `تلقائي بعد إصدار سند جديد #${record.receiptNo}`,
+        ? `تعديل السند #${record.receiptNo}`
+        : `إصدار سند جديد #${record.receiptNo}`,
       nextReceiptsList,
       nextInventoryList,
       expenses,
-      settings
+      settings,
+      {
+        targetReceipt: record,
+        inventoryChanged: touchedInventoryMap.size > 0,
+        financeChanged: true,
+      }
     );
 
     return record;
@@ -1395,11 +1451,16 @@ export default function App() {
     if (settledRecord) {
       const recNo = (settledRecord as ReceiptRecord).receiptNo;
       triggerAutoTelegramBackup(
-        `تلقائي بعد تسديد دفعة للسند #${recNo}`,
+        `تسديد دفعة للسند #${recNo}`,
         nextReceiptsList,
         inventory,
         expenses,
-        settings
+        settings,
+        {
+          targetReceipt: settledRecord as ReceiptRecord,
+          inventoryChanged: false,
+          financeChanged: true,
+        }
       );
     }
   };
@@ -1528,6 +1589,21 @@ export default function App() {
         .catch(() => notify('تم تسديد الدفعة محلياً وستتم المزامنة تلقائياً', 'info'));
     } else {
       notify('تم تسديد الدفعة من حساب المريض بنجاح', 'success');
+    }
+
+    if (updatedCloudRecords.length > 0) {
+      triggerAutoTelegramBackup(
+        `تسديد دفعة من حساب المريض (${updatedCloudRecords[0].patientName})`,
+        nextReceiptsList,
+        inventory,
+        expenses,
+        settings,
+        {
+          targetReceipt: updatedCloudRecords[0],
+          inventoryChanged: false,
+          financeChanged: true,
+        }
+      );
     }
   };
 
@@ -1665,6 +1741,7 @@ export default function App() {
     setInventory(nextInventoryList);
 
     let createdExpense: ExpenseRecord | null = null;
+    let nextExpensesAfterSave = expenses;
     if (recordAsExpense && newItem.totalCost > 0) {
       const exp = validateAndNormalizeExpense({
         id: 'exp_' + Date.now(),
@@ -1677,9 +1754,9 @@ export default function App() {
         date: today,
       });
       createdExpense = exp;
-      const nextExpenses = [exp, ...expenses];
-      persistCollectionToLocal(STORAGE_KEYS.EXPENSES, nextExpenses, targetClinicUid);
-      setExpenses(nextExpenses);
+      nextExpensesAfterSave = [exp, ...expenses];
+      persistCollectionToLocal(STORAGE_KEYS.EXPENSES, nextExpensesAfterSave, targetClinicUid);
+      setExpenses(nextExpensesAfterSave);
     }
 
     if (targetClinicUid) {
@@ -1698,6 +1775,18 @@ export default function App() {
     } else {
       notify(`تم حفظ الصنف (${newItem.name})`, 'success');
     }
+
+    triggerAutoTelegramBackup(
+      `تحديث المخزون: ${newItem.name}`,
+      receipts,
+      nextInventoryList,
+      nextExpensesAfterSave,
+      settings,
+      {
+        inventoryChanged: true,
+        financeChanged: Boolean(createdExpense),
+      }
+    );
   };
 
   const handleQuickConsumeInventory = (id: string, amount = 1) => {
@@ -1712,8 +1801,8 @@ export default function App() {
       if (item.id !== id) return item;
       const pkgSize = getEffectivePackageSize(item);
       const currentSub = getEffectiveRemainingSubUnits(item);
-      const nextSub = Math.max(0, +(currentSub - amount).toFixed(3));
-      const nextQty = Math.max(0, +(nextSub / pkgSize).toFixed(2));
+      const nextSub = Math.max(0, +(currentSub - amount).toFixed(4));
+      const nextQty = Math.max(0, +(nextSub / pkgSize).toFixed(4));
       const updated = validateAndNormalizeInventoryItem({
         ...item,
         packageSize: pkgSize,
@@ -1734,6 +1823,20 @@ export default function App() {
       });
     }
     notify('تم خصم الاستهلاك من الرصيد الجزئي', 'info');
+
+    if (updatedTarget) {
+      triggerAutoTelegramBackup(
+        `صرف من المخزون: ${(updatedTarget as InventoryItem).name}`,
+        receipts,
+        nextInventoryList,
+        expenses,
+        settings,
+        {
+          inventoryChanged: true,
+          financeChanged: false,
+        }
+      );
+    }
   };
 
   const handleQuickRestockInventory = (id: string, amount: number, recordExpense: boolean) => {
@@ -1752,8 +1855,8 @@ export default function App() {
       if (item.id !== id) return item;
       const pkgSize = getEffectivePackageSize(item);
       const currentSub = getEffectiveRemainingSubUnits(item);
-      const nextSub = +(currentSub + amount * pkgSize).toFixed(3);
-      const nextQty = +(nextSub / pkgSize).toFixed(2);
+      const nextSub = +(currentSub + amount * pkgSize).toFixed(4);
+      const nextQty = +(nextSub / pkgSize).toFixed(4);
       if (recordExpense && item.unitPrice > 0) {
         const exp = validateAndNormalizeExpense({
           id: 'exp_' + Date.now(),
@@ -1794,6 +1897,20 @@ export default function App() {
         });
     }
     notify(`تم تزويد المخزون +${amount}`, 'success');
+
+    if (updatedTarget) {
+      triggerAutoTelegramBackup(
+        `تزويد المخزون: ${(updatedTarget as InventoryItem).name}`,
+        receipts,
+        nextInventoryList,
+        nextExpensesList,
+        settings,
+        {
+          inventoryChanged: true,
+          financeChanged: Boolean(restockExpense),
+        }
+      );
+    }
   };
 
   // Exactly 6 Non-Duplicate Core Sections (1-2 word titles)
@@ -2072,6 +2189,31 @@ export default function App() {
                 });
               }
             }}
+            onUpdateExchangeRates={(sarRate, usdRate) => {
+              const nextSettings: ClinicSettings = {
+                ...settings,
+                identity: {
+                  ...settings.identity,
+                  defaultCurrency: 'ريال يمني',
+                },
+                features: {
+                  ...settings.features,
+                  sarToYerRate: sarRate,
+                  usdToYerRate: usdRate,
+                },
+                telegramBackup: settings.telegramBackup
+                  ? {
+                      ...settings.telegramBackup,
+                      sarToYerRate: sarRate,
+                      usdToYerRate: usdRate,
+                    }
+                  : settings.telegramBackup,
+              };
+              setSettings(nextSettings);
+              if (cloudTargetUid) {
+                saveClinicSettingsToCloud(cloudTargetUid, nextSettings).catch(() => {});
+              }
+            }}
             notify={notify}
           />
         )}
@@ -2139,7 +2281,8 @@ export default function App() {
               receipts={receipts}
               expenses={expenses}
               inventory={inventory}
-              defaultCurrency={settings.identity.defaultCurrency}
+              settings={settings}
+              defaultCurrency="ريال يمني"
               onAddExpense={(title, amount, category, currency) => {
                 if (!currentPermissions.canManageExpenses && currentRole !== 'owner') {
                   notify('غير مصرح لك بإضافة مصروفات مالية.', 'error');
@@ -2166,6 +2309,17 @@ export default function App() {
                 } else {
                   notify('تم إضافة المصروف', 'success');
                 }
+                triggerAutoTelegramBackup(
+                  `إضافة مصروف مالي: ${newExp.title}`,
+                  receipts,
+                  inventory,
+                  nextExpensesList,
+                  settings,
+                  {
+                    inventoryChanged: false,
+                    financeChanged: true,
+                  }
+                );
               }}
               onDeleteExpense={(id) => {
                 if (!currentPermissions.canManageExpenses && currentRole !== 'owner') {
@@ -2212,6 +2366,10 @@ export default function App() {
               onSetMessages={(msgs) => setChatMessages(msgs)}
               onClearMessages={() => setChatMessages([])}
               onApproveReceiptEntry={(recData) => {
+                if (settings.features?.allowAiDataEntry === false) {
+                  notify('إدخال البيانات عبر الذكاء الاصطناعي معطل من الإعدادات.', 'warning');
+                  return;
+                }
                 const cleanPatient = (recData.patientName || '').trim();
                 const totalAmount = Math.max(0, Number(recData.totalAmount) || 0);
                 const paidAmount = Math.max(0, Number(recData.paidAmount) || 0);
@@ -2226,7 +2384,7 @@ export default function App() {
                 const maxNo = receipts.reduce((max, r) => Math.max(max, Number(r.receiptNo) || 0), 0);
                 const nextReceiptNo = maxNo + 1;
                 const remainingAmount = Math.max(0, +(totalAmount - paidAmount).toFixed(2));
-                const currency = recData.currency || settings.identity.defaultCurrency;
+                const currency = 'ريال يمني' as const;
                 handleSaveReceipt({
                   receiptNo: nextReceiptNo,
                   date: new Date().toISOString().slice(0, 10),
@@ -2251,6 +2409,10 @@ export default function App() {
                 });
               }}
               onApproveInventoryEntry={(invData) => {
+                if (settings.features?.allowAiDataEntry === false) {
+                  notify('إدخال البيانات عبر الذكاء الاصطناعي معطل من الإعدادات.', 'warning');
+                  return;
+                }
                 const targetName = (invData.name || '').trim();
                 const qty = Math.max(0, Number(invData.qty) || 0);
                 if (targetName.length < 2 || qty <= 0) {
@@ -2307,6 +2469,25 @@ export default function App() {
                 const nextSettings: ClinicSettings = {
                   ...settings,
                   subscription: newSub,
+                };
+                setSettings(nextSettings);
+                if (cloudTargetUid) {
+                  saveClinicSettingsToCloud(cloudTargetUid, nextSettings).catch(() => {});
+                }
+              }}
+              onToggleAiDataEntry={(enabled) => {
+                const nextSettings: ClinicSettings = {
+                  ...settings,
+                  features: {
+                    ...settings.features,
+                    allowAiDataEntry: enabled,
+                  },
+                  telegramBackup: settings.telegramBackup
+                    ? {
+                        ...settings.telegramBackup,
+                        allowAiDataEntry: enabled,
+                      }
+                    : settings.telegramBackup,
                 };
                 setSettings(nextSettings);
                 if (cloudTargetUid) {
