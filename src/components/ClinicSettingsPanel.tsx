@@ -821,9 +821,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 : 'text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300'
             }`}
           >
-            <Crown className="w-3.5 h-3.5 shrink-0 text-amber-300" />
-            <Sparkles className="w-3 h-3 shrink-0" />
-            <span>الذكاء (AI للمطور)</span>
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>الذكاء</span>
           </button>
         )}
       </div>
@@ -832,13 +831,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
       {subTab === 'identity' && (
         <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-4">
           {isNewAccountSetup && (
-            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-xs font-bold text-emerald-900 dark:text-emerald-200 space-y-1">
-              <div className="font-black text-emerald-700 dark:text-emerald-300">
-                مرحباً بك! إعداد بيانات عيادتك الخاصة
-              </div>
-              <div>
-                أدخل اسم عيادتك، اسم الطبيب، التخصص، العنوان، وأرقام الهواتف أدناه ثم اضغط على زر (حفظ) لتثبيت بيانات عيادتك ومزامنتها سحابياً بشكل خاص ومستقل.
-              </div>
+            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs font-black text-emerald-800 dark:text-emerald-200">
+              أكمل بيانات العيادة ثم اضغط حفظ.
             </div>
           )}
 
@@ -846,23 +840,15 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                الهوية وبيانات العيادة
+                بيانات العيادة
               </h2>
             </div>
-            <button
-              type="button"
-              onClick={() => onSaveSettings(formState)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg"
-            >
-              <Save className="w-4 h-4" />
-              <span>حفظ</span>
-            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                اسم العيادة (عربي)
+                اسم العيادة
               </label>
               <input
                 type="text"
@@ -875,7 +861,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                اسم الطبيب (عربي)
+                اسم الطبيب
               </label>
               <input
                 type="text"
@@ -1054,7 +1040,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-colors"
               >
                 <Save className="w-4 h-4" />
-                <span>حفظ ومزامنة إعدادات العيادة</span>
+                <span>حفظ الإعدادات</span>
               </button>
             </div>
           </div>
@@ -1267,7 +1253,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                  النسخ الاحتياطي المحلي (JSON + CSV)
+                  النسخ الاحتياطي المحلي
                 </h2>
               </div>
               <span className="text-xs font-mono tabular-nums text-slate-500">
@@ -1290,7 +1276,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="w-full inline-flex items-center justify-center gap-2 py-3 px-3.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors"
               >
                 <Download className="w-4 h-4 shrink-0" />
-                <span>تصدير نسخة احتياطية شاملة (JSON)</span>
+                <span>تصدير نسخة احتياطية</span>
               </button>
 
               <button
@@ -1299,7 +1285,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="w-full inline-flex items-center justify-center gap-2 py-3 px-3.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-xl transition-colors"
               >
                 <FileSpreadsheet className="w-4 h-4 shrink-0" />
-                <span>تصدير سجل السندات والديون (CSV للـ Excel)</span>
+                <span>تصدير ملف Excel</span>
               </button>
 
               <button
@@ -1308,7 +1294,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="w-full inline-flex items-center justify-center gap-2 py-3 px-3.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
               >
                 <Upload className="w-4 h-4 shrink-0" />
-                <span>استيراد واستعادة نسخة احتياطية (JSON)</span>
+                <span>استعادة نسخة احتياطية</span>
               </button>
             </div>
           </section>
@@ -1319,7 +1305,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <div className="flex items-center gap-2">
                 <Send className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                  النسخ الاحتياطي التلقائي إلى تليجرام (Telegram Cloud Backup)
+                  النسخ الاحتياطي عبر تليجرام
                 </h2>
               </div>
               <button
@@ -1328,25 +1314,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>حفظ الإعدادات سحابياً</span>
+                <span>حفظ</span>
               </button>
-            </div>
-
-            {/* Explicit Notice: Clinic Owner Must Configure & Save in Cloud */}
-            <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 dark:bg-sky-950/20 p-3.5 space-y-1.5 text-xs">
-              <div className="font-bold text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                <span>سياسة خصوصية النسخ الاحتياطي السحابي لتليجرام:</span>
-              </div>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                خدمة بوت وقناة تليجرام خاصة بكل عيادة مستقلة. لن يعمل الإرسال أو النسخ التلقائي إطلاقاً إلا بعد قيام مالك العيادة بإدخال رمز البوت (Bot Token) ومعرّف القناة (Chat ID) بنفسه والضغط على (حفظ الإعدادات سحابياً). يتم حفظ هذه البيانات في سجل عيادتك السحابي لتتم المزامنة على كافة أجهزتك.
-              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  رمز بوت تليجرام (Telegram Bot Token)
+                  رمز البوت (Bot Token)
                 </label>
                 <div className="relative">
                   <input
@@ -1370,14 +1345,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  معرّف المحادثة أو القناة الخاصة (Telegram Chat ID)
+                  معرّف القناة (Chat ID)
                 </label>
                 <input
                   type="text"
                   dir="ltr"
                   value={currentTelegramConfig.chatId}
                   onChange={(e) => handleTelegramFieldChange('chatId', e.target.value)}
-                  placeholder="مثال: 987654321 أو -100123456789"
+                  placeholder="987654321"
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -1392,9 +1367,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 }
                 className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
               />
-              <span>
-                إرسال نسخة احتياطية تلقائية إلى تليجرام عند حفظ أي سند جديد أو تسديد دين
-              </span>
+              <span>نسخ تلقائي عند حفظ السندات</span>
             </label>
 
             <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -1410,15 +1383,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   <Send className="w-4 h-4 shrink-0" />
                 )}
                 <span>
-                  {isSendingTelegram
-                    ? 'جاري إرسال النسخة الاحتياطية إلى تليجرام...'
-                    : 'إرسال نسخة احتياطية فورية إلى تليجرام الآن'}
+                  {isSendingTelegram ? 'جاري الإرسال...' : 'إرسال لتليجرام الآن'}
                 </span>
               </button>
 
               {currentTelegramConfig.lastBackupAt && (
                 <div className="text-[11px] font-mono tabular-nums text-slate-500 text-center sm:text-left shrink-0">
-                  آخر إرسال ناجح: {currentTelegramConfig.lastBackupAt.replace('T', ' ').slice(0, 16)}
+                  آخر إرسال: {currentTelegramConfig.lastBackupAt.replace('T', ' ').slice(0, 16)}
                 </div>
               )}
             </div>
@@ -1436,18 +1407,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
                   <Crown className="w-4 h-4" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">
-                      إدارة مفاتيح الذكاء الاصطناعي للعيادات
-                    </h2>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
-                      للمطور فقط
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    أدخل مفاتيح الذكاء لكل عيادة أو عمّمها على جميع العيادات المسجلة (لا تظهر خيارات المفاتيح داخل حسابات العيادات)
-                  </p>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">
+                    مفاتيح الذكاء الاصطناعي
+                  </h2>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                    للمطور
+                  </span>
                 </div>
               </div>
 
@@ -1458,23 +1424,16 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDevClinics ? 'animate-spin' : ''}`} />
-                <span>تحديث قائمة العيادات ({devClinicsList.length})</span>
+                <span>تحديث ({devClinicsList.length})</span>
               </button>
             </div>
 
             {/* Target Clinic Picker for AI Keys */}
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 dark:bg-amber-950/20 p-3.5 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <label className="text-xs font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                  <span>اختر العيادة المستهدفة لإدخال أو تعديل مفاتيح الذكاء لها:</span>
-                </label>
-                {selectedDevClinicId && (
-                  <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                    معرّف العيادة: {selectedDevClinicId.slice(0, 10)}...
-                  </span>
-                )}
-              </div>
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 dark:bg-amber-950/20 p-3.5 space-y-2.5">
+              <label className="text-xs font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>العيادة المستهدفة:</span>
+              </label>
 
               <select
                 value={selectedDevClinicId}
@@ -1495,73 +1454,12 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     return (
                       <option key={clinic.id} value={clinic.id}>
                         {idx + 1}. {clinic.clinicAr} ({clinic.doctorAr || clinic.ownerEmail}){' '}
-                        {hasKeys ? '— [مفاتيح مضافة ✓]' : '— [بدون مفاتيح مخصصة]'}
+                        {hasKeys ? '— [مفعل ✓]' : ''}
                       </option>
                     );
                   })
                 )}
               </select>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                <button
-                  type="button"
-                  disabled={isSavingClinicAi}
-                  onClick={handleSaveAiSettings}
-                  className="py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xs transition-colors"
-                >
-                  {isSavingClinicAi ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4" />
-                  )}
-                  <span>حفظ وتفعيل المفاتيح للعيادة المحددة فقط</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isApplyingAiToAll}
-                  onClick={handleApplyAiSettingsToAllClinics}
-                  className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xs transition-colors"
-                >
-                  {isApplyingAiToAll ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                  <span>تعميم وحفظ المفاتيح لجميع العيادات ({devClinicsList.length || 1})</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Architecture Visual Pipeline Banner */}
-            <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 dark:bg-sky-950/30 p-3.5 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-black text-sky-700 dark:text-sky-300 flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5" />
-                  <span>سلسلة التبديل الذكي التلقائي (Automatic Failover Chain):</span>
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
-                  مزامنة سحابية فورية للعيادة
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold font-mono">
-                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-sky-500/40 text-sky-600 dark:text-sky-400 shadow-2xs">
-                  1. Google Gemini
-                </span>
-                <span className="text-slate-400">←</span>
-                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-500/40 text-amber-600 dark:text-amber-400 shadow-2xs">
-                  2. Groq Cloud
-                </span>
-                <span className="text-slate-400">←</span>
-                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-purple-500/40 text-purple-600 dark:text-purple-400 shadow-2xs">
-                  3. OpenRouter
-                </span>
-                <span className="text-slate-400">←</span>
-                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 shadow-2xs">
-                  4. خادم المنصة الاحتياطي
-                </span>
-              </div>
             </div>
           </section>
 
@@ -1573,11 +1471,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   G
                 </div>
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <span>Google Gemini</span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20">
-                      المزود الأساسي
-                    </span>
+                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Google Gemini
                   </h3>
                   <a
                     href="https://aistudio.google.com/app/apikey"
@@ -1585,7 +1480,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-[10px] text-sky-600 dark:text-sky-400 hover:underline"
                   >
-                    <span>احصل على مفتاح مجاني من Google AI Studio</span>
+                    <span>Google AI Studio</span>
                     <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 </div>
@@ -1622,7 +1517,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  مفتاح Gemini API Key
+                  مفتاح Gemini API
                 </label>
                 <div className="relative">
                   <input
@@ -1646,7 +1541,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  النموذج الافتراضي (Default Model)
+                  النموذج
                 </label>
                 <select
                   value={aiConfig.geminiModel}
@@ -1655,7 +1550,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 >
                   {GEMINI_CANDIDATE_MODELS.map((m) => (
                     <option key={m} value={m}>
-                      {formatModelDisplayLabel(m)} {m === 'gemini-2.5-flash' ? '(موصى به)' : ''}
+                      {formatModelDisplayLabel(m)}
                     </option>
                   ))}
                 </select>
@@ -1671,9 +1566,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               />
               <span className="flex items-center gap-1.5">
                 <Globe className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                <span>
-                  تفعيل البحث الحي عبر الويب (Web Search Grounding) لدعم الإرشادات السريرية بمصادر طبية موثوقة
-                </span>
+                <span>البحث عبر الويب</span>
               </span>
             </label>
           </section>
@@ -1686,11 +1579,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   Q
                 </div>
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <span>Groq Cloud (LPU Inference)</span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20">
-                      سرعة استجابة خارقة
-                    </span>
+                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Groq Cloud
                   </h3>
                   <a
                     href="https://console.groq.com/keys"
@@ -1698,7 +1588,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 hover:underline"
                   >
-                    <span>احصل على مفتاح مجاني من console.groq.com</span>
+                    <span>console.groq.com</span>
                     <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 </div>
@@ -1735,7 +1625,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  مفتاح Groq API Key
+                  مفتاح Groq API
                 </label>
                 <div className="relative">
                   <input
@@ -1760,7 +1650,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    نموذج النصوص والتحليل
+                    نموذج النصوص
                   </label>
                   <select
                     value={aiConfig.groqTextModel}
@@ -1777,7 +1667,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    نموذج تحليل الصور (Vision)
+                    نموذج الصور
                   </label>
                   <select
                     value={aiConfig.groqVisionModel}
@@ -1794,7 +1684,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    نموذج تفريغ الصوت (STT)
+                    نموذج الصوت
                   </label>
                   <select
                     value={aiConfig.groqWhisperModel}
@@ -1820,11 +1710,8 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   OR
                 </div>
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <span>OpenRouter (Multi-Model Hub)</span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20">
-                      DeepSeek & Claude
-                    </span>
+                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                    OpenRouter
                   </h3>
                   <a
                     href="https://openrouter.ai/keys"
@@ -1832,7 +1719,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-[10px] text-purple-600 dark:text-purple-400 hover:underline"
                   >
-                    <span>احصل على مفتاح من openrouter.ai</span>
+                    <span>openrouter.ai</span>
                     <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 </div>
@@ -1869,7 +1756,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  مفتاح OpenRouter API Key
+                  مفتاح OpenRouter API
                 </label>
                 <div className="relative">
                   <input
@@ -1893,7 +1780,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  النموذج الافتراضي (Default Model)
+                  النموذج
                 </label>
                 <select
                   value={aiConfig.openrouterModel}
@@ -1911,17 +1798,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
           </section>
 
           {/* SECTION 4: Voice & Speech Engine Settings */}
-          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
-            <div className="flex items-center gap-2 pb-2.5 border-b border-slate-200 dark:border-slate-800">
+          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
               <Mic className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
-                إعدادات الإدخال والتفريغ الصوتي (Speech-to-Text & Voice)
+                محرك الصوت
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <label
-                className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 ${
+                className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center gap-2.5 ${
                   aiConfig.sttEngine === 'browser'
                     ? 'border-sky-500 bg-sky-500/5 dark:bg-sky-950/40'
                     : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40'
@@ -1932,20 +1819,15 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   name="sttEngine"
                   checked={aiConfig.sttEngine === 'browser'}
                   onChange={() => handleAiFieldChange('sttEngine', 'browser')}
-                  className="mt-1 text-sky-600"
+                  className="text-sky-600"
                 />
-                <div className="space-y-1">
-                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    محرك المتصفح المدمج (Web Speech API)
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                    استجابة مباشرة ولحظية داخل المتصفح بدون استهلاك أي مفاتيح أو بيانات خارجية.
-                  </div>
-                </div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  المتصفح المباشر
+                </span>
               </label>
 
               <label
-                className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 ${
+                className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center gap-2.5 ${
                   aiConfig.sttEngine === 'groq'
                     ? 'border-amber-500 bg-amber-500/5 dark:bg-amber-950/40'
                     : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40'
@@ -1956,25 +1838,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   name="sttEngine"
                   checked={aiConfig.sttEngine === 'groq'}
                   onChange={() => handleAiFieldChange('sttEngine', 'groq')}
-                  className="mt-1 text-amber-600"
+                  className="text-amber-600"
                 />
-                <div className="space-y-1">
-                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <span>محرك Groq Whisper Large-v3</span>
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                      دقة طبية
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                    تسجيل صوتي وتفريغ سحابي دقيق للمصطلحات السنية واللهجات العربية (يتطلب مفتاح Groq).
-                  </div>
-                </div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  Groq Whisper
+                </span>
               </label>
             </div>
           </section>
 
-          {/* Bottom Save Actions for Selected Clinic or All Clinics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+          {/* Single Action Bar for Selected Clinic or All Clinics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <button
               type="button"
               disabled={isSavingClinicAi}
@@ -1986,7 +1860,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               ) : (
                 <Save className="w-4 h-4" />
               )}
-              <span>حفظ وتفعيل المفاتيح للعيادة المحددة سحابياً</span>
+              <span>حفظ للعيادة المحددة</span>
             </button>
 
             <button
@@ -2000,7 +1874,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              <span>تعميم وحفظ المفاتيح لجميع العيادات المسجلة</span>
+              <span>تعميم لجميع العيادات ({devClinicsList.length || 1})</span>
             </button>
           </div>
         </div>

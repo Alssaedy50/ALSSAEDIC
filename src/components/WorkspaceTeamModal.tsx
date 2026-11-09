@@ -417,9 +417,9 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
               <Building2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
               <div>
                 <h4 className="text-xs font-black text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
-                  <span>إحصائيات العيادات وإدارة مفاتيح الذكاء الاصطناعي لكل عيادة</span>
+                  <span>إدارة العيادات</span>
                   <span className="text-[10px] bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-mono font-normal">
-                    لوحة المطور فقط
+                    للمطور
                   </span>
                 </h4>
               </div>
@@ -456,7 +456,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                 onClick={() => setShowClinicsList((p) => !p)}
                 className="text-xs font-black text-amber-600 dark:text-amber-400 hover:underline"
               >
-                {showClinicsList ? 'إخفاء سجل العيادات ▲' : 'عرض العيادات المسجلة ▼'}
+                {showClinicsList ? 'إخفاء العيادات ▲' : 'عرض العيادات ▼'}
               </button>
             </div>
           </div>
@@ -488,28 +488,19 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                           <span>
                             {idx + 1}. {c.clinicAr}
                           </span>
-                          {hasCustomAiKeys ? (
+                          {hasCustomAiKeys && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
                               <Sparkles className="w-2.5 h-2.5" />
-                              <span>مفاتيح الذكاء مضافة ✅</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              <span>بدون مفاتيح مخصصة</span>
+                              <span>مفعل ✓</span>
                             </span>
                           )}
                         </div>
                         <div className="text-[11px] font-bold text-slate-500">
                           {c.doctorAr} {c.address ? `— ${c.address}` : ''}
                         </div>
-                        {c.ownerEmail ? (
+                        {c.ownerEmail && (
                           <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-bold" dir="ltr">
                             {c.ownerEmail}
-                          </div>
-                        ) : (
-                          <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                            حساب عيادة مسجل (المعرّف: {c.id.slice(0, 12)})
                           </div>
                         )}
                       </div>
@@ -532,7 +523,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                         }`}
                       >
                         <Sparkles className="w-3 h-3" />
-                        <span>{isEditingAi ? 'إغلاق إعدادات المفاتيح ▲' : 'إدخال / تعديل مفاتيح الذكاء للعيادة ⚙️'}</span>
+                        <span>{isEditingAi ? 'إغلاق ▲' : 'مفاتيح الذكاء'}</span>
                       </button>
 
                       {!isPrimaryDevClinic ? (
@@ -544,7 +535,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                               onClick={() => handleDeleteRegisteredClinic(c)}
                               className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black"
                             >
-                              تأكيد الحذف النهائي
+                              تأكيد الحذف
                             </button>
                             <button
                               type="button"
@@ -563,13 +554,13 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-[11px] font-bold transition-colors"
                           >
                             <Trash2 className="w-3 h-3" />
-                            <span>حذف العيادة</span>
+                            <span>حذف</span>
                           </button>
                         )
                       ) : (
                         <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                           <Crown className="w-3 h-3" />
-                          <span>عيادة المطور الأساسية</span>
+                          <span>عيادة المطور</span>
                         </span>
                       )}
                     </div>
@@ -580,7 +571,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                         <div className="flex items-center justify-between gap-2">
                           <div className="font-black text-sky-700 dark:text-sky-300 text-xs flex items-center gap-1.5">
                             <KeyRound className="w-3.5 h-3.5" />
-                            <span>تخصيص مفاتيح الذكاء الاصطناعي لـ: {c.clinicAr}</span>
+                            <span>مفاتيح الذكاء: {c.clinicAr}</span>
                           </div>
                           <button
                             type="button"
@@ -752,7 +743,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                             className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] shadow-xs transition-colors"
                           >
                             <Save className="w-3.5 h-3.5" />
-                            <span>حفظ وتفعيل المفاتيح لهذه العيادة</span>
+                            <span>حفظ المفاتيح</span>
                           </button>
                         </div>
                       </div>
@@ -765,8 +756,8 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
         </section>
       )}
 
-      {/* Primary Clinic Owner Card (صاحب العيادة الأساسي المنشئ) */}
-      <section className="rounded-2xl border-2 border-amber-500/40 bg-slate-50 dark:bg-slate-950 p-4 space-y-3">
+      {/* Primary Clinic Owner Card */}
+      <section className="rounded-2xl border-2 border-amber-500/40 bg-slate-50 dark:bg-slate-950 p-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start sm:items-center gap-3 min-w-0">
             <div className="w-11 h-11 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0">
@@ -779,21 +770,14 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                 </h3>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
                   <ShieldCheck className="w-3 h-3" />
-                  <span>صاحب العيادة (مالك / مدير)</span>
+                  <span>مدير العيادة</span>
                 </span>
-                {isCurrentUserTheOwner && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>حسابك الحالي المفتوح الآن</span>
-                  </span>
-                )}
               </div>
 
               <div className="text-xs font-bold text-slate-600 dark:text-slate-400 truncate">
                 {effectiveClinicTitle}
               </div>
 
-              {/* Owner Email with Copy button and certified badge */}
               <div className="flex items-center gap-2 pt-0.5 flex-wrap">
                 <div
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono font-black text-slate-900 dark:text-slate-100"
@@ -812,31 +796,9 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                   <Copy className="w-3 h-3" />
                   <span>{copiedEmail ? 'تم النسخ!' : 'نسخ'}</span>
                 </button>
-
-                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                  (البريد الإلكتروني الذي تم إنشاء وتوثيق العيادة به)
-                </span>
               </div>
             </div>
           </div>
-
-          <div className="flex sm:flex-col items-end justify-between sm:justify-center gap-1 text-[11px] font-bold text-slate-500 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200 dark:border-slate-800">
-            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-black">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>مفعل ونشط سحابياً</span>
-            </span>
-            <span className="text-[10px] text-slate-400 flex items-center gap-1">
-              <Lock className="w-3 h-3" />
-              <span>محمي وغير قابل للحذف</span>
-            </span>
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 flex flex-wrap items-center justify-between gap-2">
-          <span className="font-bold">مستوى التحكم:</span>
-          <span className="font-bold text-slate-800 dark:text-slate-200">
-            كامل الصلاحيات (إدارة الفريق، إصدار وتعديل وحذف السندات، المخزون، والتقارير المالية)
-          </span>
         </div>
       </section>
 
@@ -847,7 +809,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             <div className="flex items-center gap-2">
               <UserPlus className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               <h4 className="text-xs font-black text-slate-900 dark:text-slate-100">
-                إضافة حساب جديد (محاسب / طبيب / موظف)
+                إضافة عضو
               </h4>
             </div>
           </div>
@@ -856,7 +818,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                  البريد الإلكتروني للحساب
+                  البريد الإلكتروني
                 </label>
                 <div className="relative">
                   <input
@@ -874,13 +836,13 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                  اسم الموظف / الصفة (اختياري)
+                  الاسم
                 </label>
                 <input
                   type="text"
                   value={newDisplayName}
                   onChange={(e) => setNewDisplayName(e.target.value)}
-                  placeholder="مثال: أحمد (محاسب العيادة)"
+                  placeholder="أحمد"
                   className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
@@ -888,7 +850,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
             <div>
               <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                اختر نوع الحساب (الدور والصلاحيات):
+                الدور:
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                 {ALL_ROLES.map((r) => {
@@ -918,33 +880,25 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
               className="w-full py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              <span>إضافة وتفعيل حساب ({ROLES_INFO[selectedRole].label})</span>
+              <span>إضافة عضو</span>
             </button>
           </form>
         </section>
       ) : (
         <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-400 font-bold">
-          أنت عضو في مساحة العمل هذه. المالك فقط يمكنه إضافة أو ترقية الأعضاء.
+          أنت عضو في مساحة العمل هذه.
         </div>
       )}
 
       {/* Additional Members List */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs font-black text-slate-700 dark:text-slate-300 px-1">
-          <span>الحسابات الإضافية لفريق العمل ({displayMembers.length})</span>
-          <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
-            حفظ محلي وسحابي فوري
-          </span>
+          <span>أعضاء الفريق ({displayMembers.length})</span>
         </div>
 
         {displayMembers.length === 0 ? (
-          <div className="p-5 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-1">
-            <div className="font-bold text-slate-700 dark:text-slate-300">
-              لا توجد حسابات إضافية مضافة بعد.
-            </div>
-            <div className="text-[11px] text-slate-500">
-              حساب صاحب العيادة موثق في الأعلى. يمكنك إضافة حسابات جديدة للمحاسبين، الأطباء، أو موظفي الاستقبال من النموذج أعلاه.
-            </div>
+          <div className="p-4 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-bold">
+            لا يوجد أعضاء إضافيون.
           </div>
         ) : (
           displayMembers.map((m) => {
@@ -952,7 +906,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
             return (
               <div
                 key={m.uid || m.email}
-                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-3"
+                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
               >
                 <div className="flex items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -971,10 +925,8 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                       >
                         {formatVisibleEmail(m.email)}
                       </div>
-                      <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1.5 mt-0.5">
-                        <span>الرتبة الحالية: {ROLES_INFO[m.role]?.label || m.role}</span>
-                        <span className="text-slate-400">·</span>
-                        <span className="text-emerald-600 dark:text-emerald-400">مفعّل</span>
+                      <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
+                        {ROLES_INFO[m.role]?.label || m.role}
                       </div>
                     </div>
                   </div>
@@ -993,7 +945,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-sky-500/40 bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 hover:bg-sky-600 hover:text-white transition-colors"
                       >
                         <ArrowUpCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>ترقية وصلاحيات</span>
+                        <span>الصلاحيات</span>
                       </button>
 
                       {confirmRemoveEmail === m.email ? (
@@ -1019,7 +971,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                           type="button"
                           onClick={() => setConfirmRemoveEmail(m.email)}
                           className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-rose-500 hover:bg-rose-600 hover:text-white transition-colors"
-                          title="إزالة"
+                          title="حذف"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1027,27 +979,6 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                     </div>
                   )}
                 </div>
-
-                {effectiveIsOwner && (
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-1">
-                    <span className="text-[10px] font-bold text-slate-500 ml-1">تغيير سريع للدور:</span>
-                    {ALL_ROLES.map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        disabled={loading}
-                        onClick={() => handleQuickRoleUpgrade(m, r)}
-                        className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-colors ${
-                          m.role === r
-                            ? 'bg-sky-600 border-sky-500 text-white'
-                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-sky-500/40'
-                        }`}
-                      >
-                        {ROLES_INFO[r].label}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })
@@ -1130,7 +1061,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                 className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black flex items-center justify-center gap-1.5"
               >
                 <Check className="w-3.5 h-3.5" />
-                <span>حفظ الترقية والصلاحيات</span>
+                <span>حفظ</span>
               </button>
             </div>
           </div>

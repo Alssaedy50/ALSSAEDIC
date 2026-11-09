@@ -149,7 +149,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
     }
 
     if (!isValidRealEmail(cleanEmail)) {
-      setAuthError('يرجى إدخال بريد إلكتروني حقيقي وصحيح (مثال: example@gmail.com).');
+      setAuthError('يرجى إدخال بريد إلكتروني صحيح.');
       return;
     }
 
@@ -199,13 +199,13 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
         let msg = 'حدث خطأ أثناء إنشاء الحساب.';
         if (code === 'auth/operation-not-allowed' || rawErr.includes('operation-not-allowed')) {
           setIsOpNotAllowed(true);
-          msg = 'تسجيل الحساب بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام زر الدخول الفوري عبر Google.';
+          msg = 'التسجيل بالبريد غير مفعّل. يرجى الدخول عبر Google.';
         } else if (code === 'auth/email-already-in-use') {
-          msg = 'هذا البريد الإلكتروني مسجل مسبقاً. اضغط أدناه للانتقال إلى "دخول".';
+          msg = 'البريد الإلكتروني مسجل مسبقاً.';
         } else if (code === 'auth/invalid-email') {
-          msg = 'صيغة البريد الإلكتروني غير صالحة. يرجى استخدام بريد حقيقي.';
+          msg = 'صيغة البريد الإلكتروني غير صالحة.';
         } else if (code === 'auth/weak-password') {
-          msg = 'كلمة المرور ضعيفة. يجب أن لا تقل عن 8 خانات وتتضمن أحرفاً وأرقاماً.';
+          msg = 'كلمة المرور ضعيفة (8 خانات على الأقل).';
         } else if (err instanceof Error) {
           msg = err.message;
         }
@@ -229,9 +229,9 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
       let msg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
       if (code === 'auth/operation-not-allowed' || rawErr.includes('operation-not-allowed')) {
         setIsOpNotAllowed(true);
-        msg = 'تسجيل الدخول بالبريد وكلمة المرور غير مفعّل في Firebase. يرجى استخدام الدخول الفوري عبر Google أدناه.';
+        msg = 'الدخول بالبريد غير مفعّل. يرجى الدخول عبر Google.';
       } else if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-        msg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة، أو الحساب غير مسجل بعد.';
+        msg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
       } else if (code === 'auth/wrong-password') {
         msg = 'كلمة المرور غير صحيحة.';
       } else if (code === 'auth/too-many-requests') {
@@ -356,10 +356,6 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   user.email &&
                   !isEmailVerifiedState && (
                     <div className="mt-2 pt-2 border-t border-amber-500/30 text-amber-800 dark:text-amber-300 text-[11px] font-bold space-y-2">
-                      <div className="flex items-center gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                        <span>إذا قمت بالضغط على رابط التوثيق في بريدك، اضغط "تحقق الآن" لتحديث الحالة.</span>
-                      </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
@@ -373,7 +369,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                                 notify('تم توثيق البريد الإلكتروني بنجاح!', 'success');
                               } else {
                                 notify(
-                                  'لم يتم تأكيد الرابط بعد. يرجى فتح الرسالة في بريدك (أو الرسائل غير المرغوب فيها Spam) والضغط على الرابط.',
+                                  'لم يتم تأكيد الرابط بعد. يرجى فتح الرسالة في بريدك والضغط على الرابط.',
                                   'info'
                                 );
                               }
@@ -383,7 +379,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                           }}
                           className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black transition-colors disabled:opacity-50"
                         >
-                          {checkingVerification ? 'جارٍ التحقق...' : 'تحقق الآن (تم التوثيق)'}
+                          {checkingVerification ? 'جارٍ التحقق...' : 'تحديث الحالة'}
                         </button>
                         {onResendVerification && (
                           <button
@@ -456,13 +452,13 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-slate-900 dark:text-slate-100 mb-1">
-                      تم إنشاء الحساب وإرسال رابط التأكيد بنجاح!
+                      تم إرسال رابط التفعيل
                     </h4>
                     <p className="text-xs text-slate-700 dark:text-slate-300 font-mono font-bold dir-ltr break-all bg-white dark:bg-slate-900 py-1.5 px-3 rounded-lg border border-emerald-500/30 inline-block my-1">
                       {registrationSuccessEmail}
                     </p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-2 leading-relaxed">
-                      أرسلنا رابط التحقق وتفعيل الحساب إلى بريدك الإلكتروني. يرجى فتح صندوق الوارد (أو مجلد الرسائل غير المرغوب فيها Spam) والضغط على الرابط لتأكيد ملكية البريد وتفعيل الحساب والمزامنة السحابية.
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
+                      يرجى فتح الرابط المرسل إلى بريدك الإلكتروني لتفعيل الحساب.
                     </p>
                   </div>
 
@@ -488,7 +484,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                             notify('تم توثيق البريد وتفعيل الحساب بنجاح!', 'success');
                             onClose();
                           } else {
-                            setAuthError('لم يتم تأكيد الرابط بعد. يرجى فتح الرابط المرسل إلى بريدك أولاً، ثم الضغط هنا مجدداً.');
+                            setAuthError('لم يتم تأكيد الرابط بعد. يرجى فتح الرابط المرسل إلى بريدك أولاً.');
                           }
                         } catch {
                           setAuthError('تعذر التحقق حالياً. يرجى المحاولة بعد لحظات.');
@@ -499,7 +495,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                       className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-colors disabled:opacity-50"
                     >
                       {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
-                      <span>لقد قمت بالضغط على الرابط (تحقق وتفعيل الآن)</span>
+                      <span>تأكيد التفعيل</span>
                     </button>
 
                     <button
@@ -520,7 +516,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                       className="w-full py-2 px-3 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
                     >
                       <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-                      <span>إعادة إرسال رابط التحقق</span>
+                      <span>إعادة إرسال الرابط</span>
                     </button>
 
                     <button
@@ -538,26 +534,21 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                 </div>
               ) : (
                 <>
-                  {/* Primary Instant Google Login Button */}
-                  <div className="space-y-1">
-                    <button
-                      type="button"
-                      disabled={authLoading}
-                      onClick={handleGoogleLogin}
-                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm hover:shadow transition-all"
-                    >
-                      <Cloud className="w-4 h-4 shrink-0 text-white" />
-                      <span>تسجيل الدخول الفوري عبر Google (موثّق تلقائياً)</span>
-                    </button>
-                    <div className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400">
-                      مفعل تلقائياً لمزامنة البيانات السحابية بضغطة زر
-                    </div>
-                  </div>
+                  {/* Primary Google Login Button */}
+                  <button
+                    type="button"
+                    disabled={authLoading}
+                    onClick={handleGoogleLogin}
+                    className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm hover:shadow transition-all"
+                  >
+                    <Cloud className="w-4 h-4 shrink-0 text-white" />
+                    <span>تسجيل الدخول عبر Google</span>
+                  </button>
 
                   <div className="relative flex items-center justify-center my-1">
                     <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
                     <span className="bg-white dark:bg-slate-900 px-2.5 text-[10px] font-bold text-slate-400 shrink-0">
-                      أو ببريد إلكتروني حقيقي وكلمة مرور
+                      أو بالبريد الإلكتروني
                     </span>
                     <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
                   </div>
@@ -611,7 +602,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                   <form onSubmit={handleSubmit} className="space-y-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        البريد الإلكتروني (حقيقي)
+                        البريد الإلكتروني
                       </label>
                       <div className="relative">
                         <input
@@ -667,16 +658,10 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                                 dir="ltr"
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                placeholder="أعد كتابة كلمة المرور"
+                                placeholder="••••••••"
                                 className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-9 pr-9 py-2.5 text-xs font-bold text-slate-900 dark:text-slate-100 font-mono"
                               />
                               <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                            </div>
-                            <div className="mt-1.5 p-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[10px] text-slate-600 dark:text-slate-400 space-y-0.5">
-                              <p className="font-bold text-slate-700 dark:text-slate-300">شروط الأمان الصارمة:</p>
-                              <p>• كلمة المرور 8 خانات على الأقل تجمع بين أحرف وأرقام.</p>
-                              <p>• بريد حقيقي فقط (لا يُقبل البريد الوهمي أو المؤقت).</p>
-                              <p>• إرسال رابط تأكيد وتفعيل إلزامي قبل فتح الحساب.</p>
                             </div>
                           </div>
                         )}
@@ -713,7 +698,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                         className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
                       >
                         <Cloud className="w-4 h-4 shrink-0" />
-                        <span>متابعة الدخول الفوري عبر Google الآن ←</span>
+                        <span>الدخول عبر Google</span>
                       </button>
                     ) : (
                       <>
@@ -726,7 +711,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                             }}
                             className="text-sky-600 dark:text-sky-400 underline font-black block pr-6 text-xs hover:text-sky-500"
                           >
-                            اضغط هنا لتسجيل الدخول بهذا البريد الإلكتروني ←
+                            تسجيل الدخول بهذا البريد
                           </button>
                         )}
                         {authMode === 'login' && (
@@ -738,7 +723,7 @@ export const CloudAccountModal: React.FC<CloudAccountModalProps> = ({
                             }}
                             className="text-emerald-600 dark:text-emerald-400 underline font-black block pr-6 text-xs hover:text-emerald-500"
                           >
-                            حساب جديد؟ اضغط هنا لإنشاء حساب الآن ←
+                            إنشاء حساب جديد
                           </button>
                         )}
                       </>

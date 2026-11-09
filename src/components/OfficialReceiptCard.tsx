@@ -1162,8 +1162,8 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 onChange={(e) => onPaperFormatChange?.(e.target.value as PaperFormat)}
                 className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               >
-                <option value="a5">A5 عمودي معتمد (قياسي)</option>
-                <option value="thermal80">حراري 80mm (طابعة إيصالات)</option>
+                <option value="a5">A5 عمودي</option>
+                <option value="thermal80">حراري 80mm</option>
               </select>
             </div>
 
@@ -1175,14 +1175,14 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 disabled={busyAction !== null}
                 onClick={handleDownloadHDImage}
                 className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/60 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-xs font-bold transition-colors disabled:opacity-50 shadow-2xs"
-                title="حفظ السند كصورة PNG عمودية عالية الدقة (300 DPI)"
+                title="حفظ صورة"
               >
                 {busyAction === 'png' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <ImageIcon className="w-3.5 h-3.5 shrink-0" />
                 )}
-                <span>حفظ صورة</span>
+                <span>صورة</span>
               </button>
 
               {/* 2. Save as PDF File */}
@@ -1191,14 +1191,14 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                 disabled={busyAction !== null}
                 onClick={handleDownloadPDFFile}
                 className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-2xs"
-                title="حفظ السند كملف PDF عمودي A5 قابل للطباعة والمشاركة"
+                title="حفظ PDF"
               >
                 {busyAction === 'pdf' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <FileDown className="w-3.5 h-3.5 shrink-0" />
                 )}
-                <span>حفظ PDF</span>
+                <span>PDF</span>
               </button>
 
               {/* 3. Share Dropdown / Popover */}
@@ -1208,7 +1208,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                   disabled={busyAction !== null}
                   onClick={() => setIsShareMenuOpen((prev) => !prev)}
                   className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors disabled:opacity-50 shadow-2xs"
-                  title="خيارات مشاركة السند مع المريض"
+                  title="مشاركة"
                 >
                   {busyAction?.startsWith('share_') ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1221,7 +1221,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
 
                 {isShareMenuOpen && (
                   <div
-                    className="absolute left-0 mt-1.5 w-52 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl p-1.5 z-30 space-y-1 animate-in fade-in zoom-in-95 duration-100"
+                    className="absolute left-0 mt-1.5 w-44 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl p-1.5 z-30 space-y-1 animate-in fade-in zoom-in-95 duration-100"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
@@ -1230,7 +1230,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-right transition-colors"
                     >
                       <ImageIcon className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                      <span>مشاركة صورة السند (PNG)</span>
+                      <span>مشاركة صورة</span>
                     </button>
 
                     <button
@@ -1239,7 +1239,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-right transition-colors"
                     >
                       <FileDown className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                      <span>مشاركة ملف السند (PDF)</span>
+                      <span>مشاركة PDF</span>
                     </button>
 
                     <button
@@ -1248,7 +1248,7 @@ export const OfficialReceiptCard: React.FC<OfficialReceiptCardProps> = ({
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 rounded-lg text-right transition-colors"
                     >
                       <MessageCircle className="w-3.5 h-3.5 shrink-0" />
-                      <span>إرسال واتساب للمريض</span>
+                      <span>إرسال واتساب</span>
                     </button>
                   </div>
                 )}

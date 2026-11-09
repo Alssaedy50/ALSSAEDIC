@@ -595,7 +595,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
                   }`}
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isListening ? 'إنهاء الإملاء والتحليل' : 'إملاء صوتي'}</span>
+                  <span>{isListening ? 'إيقاف الإملاء' : 'إملاء صوتي'}</span>
                 </button>
 
                 <button
@@ -910,9 +910,7 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               >
                 <PenTool className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">
-                  {accountantSig
-                    ? 'تعديل توقيع المستلم (المحاسب / الطبيب)'
-                    : 'توقيع المستلم (المحاسب / الطبيب)'}
+                  {accountantSig ? 'تعديل توقيع المستلم' : 'توقيع المستلم'}
                 </span>
               </button>
 
@@ -923,15 +921,13 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               >
                 <PenTool className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">
-                  {receiverSig
-                    ? 'تعديل توقيع الدافع (المريض/ولي الأمر)'
-                    : 'توقيع الدافع (المريض/ولي الأمر)'}
+                  {receiverSig ? 'تعديل توقيع المريض' : 'توقيع المريض'}
                 </span>
               </button>
             </div>
 
-            {/* أزرار الحفظ والمعاينة (بدون أي تكرار) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
+            {/* زر الحفظ (بدون تكرار زر المعاينة الموجود في الأعلى) */}
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 onClick={handleSave}
@@ -939,15 +935,6 @@ export const ReceiptStudio: React.FC<ReceiptStudioProps> = ({
               >
                 <Save className="w-4 h-4" />
                 <span>{editingReceipt ? 'تحديث السند' : 'حفظ السند'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSubTab('preview')}
-                className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-sm transition-colors"
-              >
-                <Eye className="w-4 h-4" />
-                <span>معاينة وطباعة</span>
               </button>
             </div>
           </section>

@@ -245,7 +245,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 text-xs font-black shrink-0 transition-colors shadow-xs hover:bg-sky-100 dark:hover:bg-sky-900/60"
                     >
                       <Users className="w-3.5 h-3.5 shrink-0" />
-                      <span>بيانات العميل</span>
+                      <span>التفاصيل</span>
                     </button>
                   </div>
                 );
@@ -612,7 +612,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                   className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold transition-colors"
                 >
                   <Eye className="w-4 h-4 shrink-0" />
-                  <span>معاينة السند</span>
+                  <span>معاينة</span>
                 </button>
 
                 <a
@@ -622,7 +622,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                   className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors"
                 >
                   <MessageCircle className="w-4 h-4 shrink-0" />
-                  <span>مشاركة واتساب</span>
+                  <span>واتساب</span>
                 </a>
 
                 {(Number(selectedClientReceipt.remainingAmount) || 0) > 0 && (
@@ -636,7 +636,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                     className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold transition-colors"
                   >
                     <CreditCard className="w-4 h-4 shrink-0" />
-                    <span>تسديد الدين</span>
+                    <span>تسديد</span>
                   </button>
                 )}
 
@@ -652,7 +652,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                   }`}
                 >
                   <Edit3 className="w-4 h-4 shrink-0" />
-                  <span>تعديل السند</span>
+                  <span>تعديل</span>
                 </button>
 
                 <button
@@ -665,7 +665,7 @@ export const RecordsLedger: React.FC<RecordsLedgerProps> = ({
                   className="col-span-2 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 font-bold transition-colors"
                 >
                   <Trash2 className="w-4 h-4 shrink-0" />
-                  <span>حذف السند</span>
+                  <span>حذف</span>
                 </button>
               </div>
             </div>

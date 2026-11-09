@@ -726,15 +726,14 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     <div className="flex-1 min-h-0 w-full h-full sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs">
       {/* Quick Prompts Strip + Clear Chat Action + Developer-Only Quick AI Settings Button */}
       <div className="shrink-0 px-3 sm:px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-        {isPlatformDev && (
+        {isPlatformDev && onOpenSettings && (
           <button
             type="button"
-            onClick={() => (onOpenSettings ? onOpenSettings('ai') : setIsAiSettingsModalOpen(true))}
+            onClick={() => onOpenSettings('ai')}
             className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl transition-colors whitespace-nowrap"
-            title="إعدادات مفاتيح الذكاء الاصطناعي للعيادات (خاص بالمطور)"
           >
             <Crown className="w-3.5 h-3.5 shrink-0" />
-            <span>مفاتيح الذكاء (للمطور)</span>
+            <span>مفاتيح الذكاء</span>
           </button>
         )}
 
@@ -939,7 +938,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       {attachment && (
         <div className="shrink-0 px-4 py-2 bg-sky-50 dark:bg-sky-950/60 border-t border-sky-200 dark:border-sky-900 flex items-center justify-between text-xs">
           <span className="font-bold text-sky-800 dark:text-sky-300 truncate">
-            مرفق جاهز للتحليل: {attachment.name}
+            مرفق: {attachment.name}
           </span>
           <button
             type="button"
@@ -955,7 +954,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       {isTranscribingGroq && (
         <div className="shrink-0 px-4 py-2 bg-amber-500/10 border-t border-amber-500/20 flex items-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-          <span>جارٍ تفريغ التسجيل الصوتي بدقة طبية عبر Groq Whisper...</span>
+          <span>جارٍ تفريغ الصوت...</span>
         </div>
       )}
 
@@ -1042,229 +1041,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           )}
         </div>
       </form>
-
-      {/* QUICK AI SETTINGS MODAL (STRICTLY DEVELOPER ONLY) */}
-      {isAiSettingsModalOpen && isPlatformDev && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
-          onClick={() => setIsAiSettingsModalOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-2xl space-y-4"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  إعدادات مفاتيح ونماذج الذكاء الاصطناعي (BYOK)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAiSettingsModalOpen(false)}
-                className="p-1 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Quick Gemini Key & Model */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/50 dark:bg-slate-950/40">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-sky-600 dark:text-sky-400">
-                  Google Gemini (الأساسي)
-                </span>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[10px] text-sky-600 hover:underline flex items-center gap-1"
-                >
-                  <span>الحصول على مفتاح</span>
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              </div>
-              <input
-                type="password"
-                dir="ltr"
-                value={aiConfig.geminiApiKey}
-                onChange={(e) =>
-                  setAiConfig((prev) => ({ ...prev, geminiApiKey: e.target.value }))
-                }
-                placeholder="AIzaSy..."
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-mono"
-              />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                <select
-                  value={aiConfig.geminiModel}
-                  onChange={(e) =>
-                    setAiConfig((prev) => ({ ...prev, geminiModel: e.target.value }))
-                  }
-                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold"
-                >
-                  {GEMINI_CANDIDATE_MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {formatModelDisplayLabel(m)}
-                    </option>
-                  ))}
-                </select>
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-[11px] text-slate-700 dark:text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={aiConfig.enableWebGrounding}
-                    onChange={(e) =>
-                      setAiConfig((prev) => ({ ...prev, enableWebGrounding: e.target.checked }))
-                    }
-                    className="rounded text-sky-600"
-                  />
-                  <span>بحث ويب حي (Web Grounding)</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Quick Groq Key & Model */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/50 dark:bg-slate-950/40">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
-                  Groq Cloud (فائق السرعة + Whisper)
-                </span>
-                <a
-                  href="https://console.groq.com/keys"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[10px] text-amber-600 hover:underline flex items-center gap-1"
-                >
-                  <span>الحصول على مفتاح</span>
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              </div>
-              <input
-                type="password"
-                dir="ltr"
-                value={aiConfig.groqApiKey}
-                onChange={(e) =>
-                  setAiConfig((prev) => ({ ...prev, groqApiKey: e.target.value }))
-                }
-                placeholder="gsk_..."
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-mono"
-              />
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <select
-                  value={aiConfig.groqTextModel}
-                  onChange={(e) =>
-                    setAiConfig((prev) => ({ ...prev, groqTextModel: e.target.value }))
-                  }
-                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-bold"
-                >
-                  {GROQ_TEXT_MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {formatModelDisplayLabel(m)}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={aiConfig.groqWhisperModel}
-                  onChange={(e) =>
-                    setAiConfig((prev) => ({ ...prev, groqWhisperModel: e.target.value }))
-                  }
-                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-bold"
-                >
-                  {GROQ_WHISPER_MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {formatModelDisplayLabel(m)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Quick OpenRouter Key & Model */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/50 dark:bg-slate-950/40">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-purple-600 dark:text-purple-400">
-                  OpenRouter (DeepSeek / Claude)
-                </span>
-                <a
-                  href="https://openrouter.ai/keys"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[10px] text-purple-600 hover:underline flex items-center gap-1"
-                >
-                  <span>الحصول على مفتاح</span>
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              </div>
-              <input
-                type="password"
-                dir="ltr"
-                value={aiConfig.openrouterApiKey}
-                onChange={(e) =>
-                  setAiConfig((prev) => ({ ...prev, openrouterApiKey: e.target.value }))
-                }
-                placeholder="sk-or-v1-..."
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-mono"
-              />
-              <select
-                value={aiConfig.openrouterModel}
-                onChange={(e) =>
-                  setAiConfig((prev) => ({ ...prev, openrouterModel: e.target.value }))
-                }
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold"
-              >
-                {OPENROUTER_MODELS.map((m) => (
-                  <option key={m} value={m}>
-                    {formatModelDisplayLabel(m)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Voice STT engine selection */}
-            <div className="space-y-1.5 text-xs">
-              <label className="font-bold text-slate-700 dark:text-slate-300">
-                محرك التسجيل والتفريغ الصوتي (STT Engine):
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 dark:border-slate-800 cursor-pointer font-bold">
-                  <input
-                    type="radio"
-                    name="modalSttEngine"
-                    checked={aiConfig.sttEngine === 'browser'}
-                    onChange={() => setAiConfig((prev) => ({ ...prev, sttEngine: 'browser' }))}
-                    className="text-sky-600"
-                  />
-                  <span>المتصفح المباشر</span>
-                </label>
-                <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 dark:border-slate-800 cursor-pointer font-bold">
-                  <input
-                    type="radio"
-                    name="modalSttEngine"
-                    checked={aiConfig.sttEngine === 'groq'}
-                    onChange={() => setAiConfig((prev) => ({ ...prev, sttEngine: 'groq' }))}
-                    className="text-amber-600"
-                  />
-                  <span>Groq Whisper</span>
-                </label>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  saveAIProviderConfig(aiConfig);
-                  setIsAiSettingsModalOpen(false);
-                  notify('تم حفظ إعدادات ومفاتيح الذكاء الاصطناعي بنجاح', 'success');
-                }}
-                className="w-full py-2.5 rounded-xl font-bold text-xs bg-sky-600 hover:bg-sky-500 text-white transition-colors"
-              >
-                حفظ وإغلاق
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
