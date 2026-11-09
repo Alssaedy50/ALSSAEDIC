@@ -3674,10 +3674,19 @@ export async function applyAiConfigToAllClinicsByDeveloper(
 }
 
 export async function deleteClinicByDeveloper(
-  targetClinic: RegisteredClinicSummary
+  targetClinic: RegisteredClinicSummary,
+  typedClinicNameConfirmation?: string
 ): Promise<void> {
   if (!auth.currentUser || !isSuperAdminEmail(auth.currentUser.email)) {
     throw new Error('غير مصرح: حذف العيادات مخصص لمطور المنصة فقط.');
+  }
+
+  const expectedName = String(targetClinic.clinicAr || '').trim();
+  if (
+    typedClinicNameConfirmation !== undefined &&
+    String(typedClinicNameConfirmation || '').trim() !== expectedName
+  ) {
+    throw new Error(`يرجى كتابة اسم العيادة المحدد بالضبط (${expectedName}) لتأكيد الحذف.`);
   }
 
   const cleanClinicId = String(targetClinic.id || '').trim();
@@ -3722,6 +3731,95 @@ export async function deleteClinicByDeveloper(
 
   // 4. Delete primary clinics/{clinicId} document
   await deleteDoc(doc(db, 'clinics', cleanClinicId));
+}
+
+export async function deleteClinicByOwner(params: {
+  clinicId: string;
+  workspaceId: string;
+  expectedClinicName: string;
+  typedClinicName: string;
+  ownerEmail?: string | null;
+}): Promise<void> {
+  const expectedName = String(params.expectedClinicName || '').trim();
+  const typedName = String(params.typedClinicName || '').trim();
+
+  if (!expectedName || typedName !== expectedName) {
+    throw new Error(`يرجى كتابة اسم العيادة المحدد بالضبط (${expectedName}) لتأكيد الحذف.`);
+  }
+
+  const cleanClinicId = String(params.clinicId || auth.currentUser?.uid || '').trim();
+  const cleanWsId = String(params.workspaceId || cleanClinicId || '').trim();
+
+  if (auth.currentUser) {
+    const isSuper = isSuperAdminEmail(auth.currentUser.email);
+    const isOwnerMatch = auth.currentUser.uid === cleanClinicId || cleanClinicId === 'local_owner';
+    if (!isSuper && !isOwnerMatch) {
+      throw new Error('غير مصرح: حذف العيادة متاح لمالك العيادة أو مطور المنصة فقط.');
+    }
+
+    if (
+      isSuper &&
+      (cleanClinicId === auth.currentUser.uid || cleanClinicId === 'alssaedy-clinic')
+    ) {
+      throw new Error('لا يمكن حذف العيادة الرئيسية الخاصة بمطور المنصة.');
+    }
+
+    if (cleanClinicId && cleanClinicId !== 'local_owner') {
+      const subCollections = ['services', 'receipts', 'inventory', 'expenses'] as const;
+      await Promise.allSettled(
+        subCollections.map(async (colName) => {
+          const snap = await getDocs(
+            query(collection(db, colName), where('ownerId', '==', cleanClinicId))
+          );
+          await Promise.allSettled(snap.docs.map((d) => deleteDoc(d.ref)));
+        })
+      );
+
+      const wsIds = Array.from(new Set([cleanClinicId, cleanWsId])).filter(Boolean);
+      for (const wsId of wsIds) {
+        if (wsId === 'alssaedy-clinic') continue;
+        try {
+          const membersSnap = await getDocs(collection(db, 'clinic_workspaces', wsId, 'members'));
+          await Promise.allSettled(membersSnap.docs.map((m) => deleteDoc(m.ref)));
+        } catch {
+          // Ignore
+        }
+        await deleteDoc(doc(db, 'clinic_workspaces', wsId)).catch(() => {});
+      }
+
+      const emailToClean = params.ownerEmail || auth.currentUser.email;
+      if (emailToClean && !isSuperAdminEmail(emailToClean)) {
+        await deleteDoc(doc(db, 'user_workspaces', normalizeEmailKey(emailToClean))).catch(
+          () => {}
+        );
+      }
+
+      await deleteDoc(doc(db, 'clinics', cleanClinicId)).catch(() => {});
+    }
+  }
+
+  // Clear local clinic data and sign out cleanly
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const keysToRemove = [
+        'alssaed_clinic_settings_v4',
+        'alssaed_clinic_receipts_v4',
+        'alssaed_clinic_inventory_v4',
+        'alssaed_clinic_expenses_v4',
+        'docai_chat_history_v2',
+        'docai_chat_sessions_v1',
+        `docai_workspace_members_${cleanWsId}`,
+        `docai_owner_email_${cleanWsId}`,
+      ];
+      keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+
+  if (auth.currentUser && !isSuperAdminEmail(auth.currentUser.email)) {
+    await signOut(auth).catch(() => {});
+  }
 }
 
 // ==================== TELEGRAM CLOUD BACKUP & CHANNEL DISPATCHERS ====================

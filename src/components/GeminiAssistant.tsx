@@ -56,9 +56,11 @@ import { SmartNumberInput } from './SmartNumberInput';
 import {
   convertAmountToYer,
   findMatchingPatientAccount,
+  generateLocalClinicalResponse,
   getStoredExchangeRates,
   isDestructiveSystemIntent,
   isDirectDataEntryIntent,
+  isHallucinatedDataRequestReply,
   loadAIProviderConfig,
   parseDirectDataEntryProposal,
   queryClinicAssistantDetailed,
@@ -635,6 +637,67 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       },
     ];
   }, [receipts, expenses, settings]);
+
+  // Auto-repair any cached assistant messages that hallucinated asking the user for patient lists/data
+  useEffect(() => {
+    if (!onSetMessages || messages.length === 0) return;
+    const hasHallucinatedMsg = messages.some(
+      (m) => m.role === 'assistant' && isHallucinatedDataRequestReply(m.text)
+    );
+    if (!hasHallucinatedMsg) return;
+
+    const unifiedSummary = currencySummaries[0];
+    const debtors = receipts.filter((r) => (Number(r.remainingAmount) || 0) > 0);
+    const lowStock = inventory.filter((i) => Number(i.qty) <= Number(i.minQty));
+    const liveCtx = {
+      identity: settings.identity,
+      features: settings.features,
+      telegramBackup: settings.telegramBackup,
+      servicesCatalog: settings.services,
+      currencySummaries,
+      financialSummary: {
+        totalReceipts: receipts.length,
+        totalDebtors: debtors.length,
+        totalBilled: unifiedSummary?.totalBilledAmount || 0,
+        totalCollected: unifiedSummary?.totalCollectedRevenue || 0,
+        totalPendingDebts: unifiedSummary?.totalPendingDebts || 0,
+        totalExpenses: unifiedSummary?.totalExpenses || 0,
+      },
+      allReceipts: receipts,
+      pendingDebtsPatients: debtors.map((r) => ({
+        receiptNo: r.receiptNo,
+        patientName: r.patientName,
+        phone: r.patientPhone,
+        remainingAmount: convertAmountToYer(Number(r.remainingAmount) || 0, r.currency, settings).yerAmount,
+        currency: 'ريال يمني',
+        date: r.date,
+      })),
+      allInventory: inventory,
+      lowStockAlerts: lowStock,
+      allExpenses: expenses,
+      recentReceipts: receipts,
+      inventoryStatus: inventory,
+      recentExpenses: expenses,
+    };
+
+    const repaired = messages.map((m, idx) => {
+      if (m.role !== 'assistant' || !isHallucinatedDataRequestReply(m.text)) {
+        return m;
+      }
+      let prevUserPrompt = 'كشف ديون المرضى بالتفصيل';
+      for (let j = idx - 1; j >= 0; j--) {
+        if (messages[j].role === 'user' && messages[j].text.trim()) {
+          prevUserPrompt = messages[j].text.trim();
+          break;
+        }
+      }
+      return {
+        ...m,
+        text: generateLocalClinicalResponse(prevUserPrompt, liveCtx),
+      };
+    });
+    onSetMessages(repaired);
+  }, [messages, receipts, inventory, expenses, settings, currencySummaries, onSetMessages]);
 
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -1273,16 +1336,17 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           byCurrency: currencySummaries,
         },
         allReceipts: receipts.map((r) => ({
+          id: r.id,
           receiptNo: r.receiptNo,
           date: r.date,
           patientName: r.patientName,
           patientPhone: r.patientPhone,
           services: r.services,
           toothFDI: r.toothFDI,
-          totalAmount: r.totalAmount,
-          paidAmount: r.paidAmount,
-          remainingAmount: r.remainingAmount,
-          currency: r.currency,
+          totalAmount: convertAmountToYer(Number(r.totalAmount) || 0, r.currency, settings).yerAmount,
+          paidAmount: convertAmountToYer(Number(r.paidAmount) || 0, r.currency, settings).yerAmount,
+          remainingAmount: convertAmountToYer(Number(r.remainingAmount) || 0, r.currency, settings).yerAmount,
+          currency: 'ريال يمني',
           paymentMethod: r.paymentMethod,
           notes: r.notes,
         })),
@@ -1290,15 +1354,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           receiptNo: r.receiptNo,
           patientName: r.patientName,
           phone: r.patientPhone,
-          remainingAmount: r.remainingAmount,
-          currency: r.currency,
+          remainingAmount: convertAmountToYer(Number(r.remainingAmount) || 0, r.currency, settings).yerAmount,
+          currency: 'ريال يمني',
           date: r.date,
         })),
         allInventory: inventory.map((i) => ({
           name: i.name,
+          location: i.location,
           qty: i.qty,
           minQty: i.minQty,
           unit: i.unit,
+          usageUnit: i.usageUnit,
+          remainingSubUnits: i.remainingSubUnits,
           unitPrice: i.unitPrice,
           totalCost: i.totalCost,
           linkedService: i.linkedService,
@@ -1306,8 +1373,8 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         lowStockAlerts: lowStock,
         allExpenses: expenses.map((e) => ({
           title: e.title,
-          amount: e.amount,
-          currency: e.currency,
+          amount: convertAmountToYer(Number(e.amount) || 0, e.currency, settings).yerAmount,
+          currency: 'ريال يمني',
           category: e.category,
           date: e.date,
         })),

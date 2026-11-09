@@ -34,8 +34,8 @@ export const GROQ_TEXT_MODELS = [
   'qwen/qwen3.8-27b',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
-  'allam-2-7b',
   'openai/gpt-oss-safeguard-20b',
+  'allam-2-7b',
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
   'deepseek-r1-distill-llama-70b',
@@ -444,34 +444,58 @@ export function generateLocalClinicalResponse(
     defaultCurrency?: string;
   };
 
-  const defaultCurr = ctx.identity?.defaultCurrency || ctx.defaultCurrency || 'ريال يمني';
+  const defaultCurr = 'ريال يمني';
   const clinicName = ctx.identity?.clinicAr || 'عيادة طب وجراحة الفم والأسنان';
   const doctorName = ctx.identity?.doctorAr || 'الطبيب المعالج';
 
-  // 1. البحث عن مريض معين أو سند معين بالاسم أو الهاتف أو رقم السند
   const recList = Array.isArray(ctx.allReceipts)
     ? ctx.allReceipts
     : Array.isArray(ctx.recentReceipts)
       ? ctx.recentReceipts
       : [];
-  const matchedReceipts = recList.filter(
-    (r) =>
-      (r.patientName && r.patientName.trim().length >= 3 && p.includes(r.patientName.trim())) ||
-      (r.patientPhone && r.patientPhone.trim().length >= 6 && p.includes(r.patientPhone.trim())) ||
-      (r.receiptNo && p.includes(String(r.receiptNo)))
+
+  const activeReceipts = recList.filter((r) => !isReceiptArchived(r));
+  const groupedAccounts = buildPatientAccountsFromReceipts(activeReceipts, defaultCurr);
+
+  // 1. البحث عن مريض معين أو سند معين بالاسم أو الهاتف أو رقم السند
+  const cleanSearchPrompt = normalizePatientNameKey(p);
+  const matchedAccounts = groupedAccounts.filter((acc) => {
+    if (!acc.accountKey || acc.accountKey.length < 3) return false;
+    return (
+      cleanSearchPrompt.includes(acc.accountKey) ||
+      (acc.patientPhone && acc.patientPhone.trim().length >= 6 && p.includes(acc.patientPhone.trim()))
+    );
+  });
+
+  const matchedReceiptsByNo = recList.filter(
+    (r) => r.receiptNo && new RegExp(`(?:#|\\b)${r.receiptNo}\\b`).test(p)
   );
 
-  if (matchedReceipts.length > 0) {
-    const details = matchedReceipts
-      .map(
-        (r) =>
-          `• سند #${r.receiptNo} (${r.date}) — المريض: ${r.patientName}\n  الخدمات: ${(r.services || []).join(' + ') || '—'}${r.toothFDI ? ` | الأسنان: ${r.toothFDI}` : ''}\n  الإجمالي: ${Number(r.totalAmount).toLocaleString()} | المدفوع: ${Number(r.paidAmount).toLocaleString()} | المتبقي: ${Number(r.remainingAmount).toLocaleString()} ${r.currency}`
-      )
-      .join('\n\n');
-    return `🔍 نتائج البحث في سجلات المرضى والسندات (${clinicName}):\n\n${details}`;
+  if (matchedAccounts.length > 0 && !/(كشف ديون|جميع المرضى|كل المرضى|نواقص المخزون|صافي الأرباح)/i.test(p)) {
+    const accBlocks = matchedAccounts.map((acc) => {
+      const recLines = acc.receipts
+        .slice(0, 8)
+        .map(
+          (r) =>
+            `   - سند #${r.receiptNo} (${r.date}): ${(r.services || []).join(' + ') || '—'}${r.toothFDI ? ` [سن: ${r.toothFDI}]` : ''} | الإجمالي: ${Number(r.totalAmount).toLocaleString()} | المدفوع: ${Number(r.paidAmount).toLocaleString()} | المتبقي: ${Number(r.remainingAmount).toLocaleString()} ريال يمني`
+        )
+        .join('\n');
+      return `👤 المريض: ${acc.patientName}${acc.patientPhone ? ` (هاتف: ${acc.patientPhone})` : ''}\n• عدد السندات/الزيارات: ${acc.visitsCount} | العودات: ${acc.returnVisitsCount}\n• إجمالي الحساب: ${acc.totalBilled.toLocaleString()} ريال يمني | المسدد: ${acc.totalPaid.toLocaleString()} ريال يمني | المتبقي (الدين): ${acc.totalRemaining.toLocaleString()} ريال يمني\n• السجل العلاجي:\n${recLines}`;
+    });
+    return `🔍 كشف حساب المريض من سجلات (${clinicName}):\n\n${accBlocks.join('\n\n')}`;
   }
 
-  // 2. كشف ديون المرضى بالتفصيل
+  if (matchedReceiptsByNo.length > 0) {
+    const details = matchedReceiptsByNo
+      .map(
+        (r) =>
+          `• سند #${r.receiptNo} (${r.date}) — المريض: ${r.patientName}${r.patientPhone ? ` (${r.patientPhone})` : ''}\n  الخدمات: ${(r.services || []).join(' + ') || '—'}${r.toothFDI ? ` | الأسنان: ${r.toothFDI}` : ''}\n  الإجمالي: ${Number(r.totalAmount).toLocaleString()} | المدفوع: ${Number(r.paidAmount).toLocaleString()} | المتبقي: ${Number(r.remainingAmount).toLocaleString()} ريال يمني`
+      )
+      .join('\n\n');
+    return `🔍 نتائج البحث في السندات (${clinicName}):\n\n${details}`;
+  }
+
+  // 2. كشف ديون المرضى بالتفصيل (مجمّع حسب حساب كل مريض بالريال اليمني)
   if (
     p.includes('ديون') ||
     p.includes('مديون') ||
@@ -480,24 +504,55 @@ export function generateLocalClinicalResponse(
     p.includes('اجل') ||
     p.includes('ذمم')
   ) {
-    const debtors = Array.isArray(ctx.pendingDebtsPatients) ? ctx.pendingDebtsPatients : [];
-    if (debtors.length === 0) {
-      return `✅ كشف ديون المرضى في ${clinicName}:\n\nلا توجد أي مبالغ متبقية أو ديون آجلة حالياً.\nجميع السندات المسجلة مسددة بالكامل.`;
+    const debtorAccounts = groupedAccounts
+      .filter((acc) => acc.totalRemaining > 0)
+      .sort((a, b) => b.totalRemaining - a.totalRemaining);
+
+    if (debtorAccounts.length > 0) {
+      let grandTotalDebt = 0;
+      let grandTotalBilled = 0;
+      let grandTotalPaid = 0;
+
+      const lines = debtorAccounts.map((acc, idx) => {
+        grandTotalDebt += acc.totalRemaining;
+        grandTotalBilled += acc.totalBilled;
+        grandTotalPaid += acc.totalPaid;
+        const recNums = acc.receipts
+          .filter((r) => (Number(r.remainingAmount) || 0) > 0)
+          .map((r) => `#${r.receiptNo}`)
+          .join('، ');
+        const srvSummary = acc.allServices.slice(0, 4).join(' + ') || 'خدمات علاجية';
+        return (
+          `${idx + 1}. ${acc.patientName}${acc.patientPhone ? ` — جوال: ${acc.patientPhone}` : ''}\n` +
+          `   • السندات الآجلة: ${recNums || `#${acc.receipts[0]?.receiptNo || '—'}`} (آخر زيارة: ${acc.lastVisitDate || '—'})\n` +
+          `   • الخدمات: ${srvSummary}${acc.allTeethFDI.length > 0 ? ` | الأسنان (FDI): ${acc.allTeethFDI.join(' - ')}` : ''}\n` +
+          `   • إجمالي الحساب: ${acc.totalBilled.toLocaleString()} ريال يمني | المسدد: ${acc.totalPaid.toLocaleString()} ريال يمني | المتبقي (الدين): ${acc.totalRemaining.toLocaleString()} ريال يمني`
+        );
+      });
+
+      return (
+        `📋 كشف ديون المرضى بالتفصيل في (${clinicName}) — (${debtorAccounts.length} مريض عليه رصيد متبقٍ):\n\n` +
+        `${lines.join('\n\n')}\n\n` +
+        `────────────────────\n` +
+        `💰 إجمالي فواتير المرضى المديونين: ${grandTotalBilled.toLocaleString()} ريال يمني\n` +
+        `✅ إجمالي المسدد منهم: ${grandTotalPaid.toLocaleString()} ريال يمني\n` +
+        `⚠️ إجمالي الديون المتبقية للتحصيل: ${grandTotalDebt.toLocaleString()} ريال يمني`
+      );
     }
 
-    const byCurrency = new Map<string, number>();
-    const lines = debtors.map((d, idx) => {
-      const curr = String(d.currency || defaultCurr);
+    const fallbackDebtors = Array.isArray(ctx.pendingDebtsPatients) ? ctx.pendingDebtsPatients : [];
+    if (fallbackDebtors.length === 0) {
+      return `✅ كشف ديون المرضى في (${clinicName}):\n\nلا توجد أي مبالغ متبقية أو ديون آجلة على المرضى حالياً.\nجميع الحسابات والسندات المسجلة مسددة بالكامل (0 ريال يمني).`;
+    }
+
+    let totalFallbackYer = 0;
+    const lines = fallbackDebtors.map((d, idx) => {
       const amt = Number(d.remainingAmount || 0);
-      byCurrency.set(curr, (byCurrency.get(curr) || 0) + amt);
-      return `${idx + 1}. ${d.patientName || 'مريض'} — سند #${d.receiptNo || '—'} (${d.date || ''})\n   • المبلغ المتبقي: ${amt.toLocaleString()} ${curr}${d.phone ? ` | جوال: ${d.phone}` : ''}`;
+      totalFallbackYer += amt;
+      return `${idx + 1}. ${d.patientName || 'مريض'} — سند #${d.receiptNo || '—'} (${d.date || ''})\n   • المبلغ المتبقي: ${amt.toLocaleString()} ريال يمني${d.phone ? ` | جوال: ${d.phone}` : ''}`;
     });
 
-    const totalsSummary = Array.from(byCurrency.entries())
-      .map(([curr, sum]) => `${sum.toLocaleString()} ${curr}`)
-      .join(' + ');
-
-    return `📋 كشف ديون المرضى بالتفصيل (${debtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المستحقة للتحصيل (حسب كل عملة): ${totalsSummary}\n💡 يمكنك تسديد أي دفعة مباشرة أو إرسال مطالبة واتساب من قسم "السندات".`;
+    return `📋 كشف ديون المرضى بالتفصيل (${fallbackDebtors.length} حالة آجلة):\n\n${lines.join('\n\n')}\n\n💰 إجمالي الديون المستحقة للتحصيل: ${totalFallbackYer.toLocaleString()} ريال يمني`;
   }
 
   // 3. تقرير نواقص المخزون الطبي / جرد المخزون
@@ -526,30 +581,33 @@ export function generateLocalClinicalResponse(
     );
 
     if (allItems.length === 0) {
-      return `📦 لا توجد أصناف مسجلة حالياً في مخزون ${clinicName}.\nيمكنك إضافة المواد والمستلزمات الطبية من قسم "المخزون".`;
+      return `📦 لا توجد أصناف مسجلة حالياً في مخزون (${clinicName}).\nيمكنك إضافة المواد والمستلزمات الطبية من قسم "المخزون".`;
     }
 
     if (lowList.length === 0) {
       const topItems = allItems
-        .slice(0, 6)
-        .map((i, idx) => `${idx + 1}. ${i.name}: متوفر (${i.qty} ${i.unit})`)
+        .slice(0, 10)
+        .map(
+          (i, idx) =>
+            `${idx + 1}. ${i.name} (${i.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة'}): متوفر ${i.qty} ${i.unit} (${i.remainingSubUnits ?? i.qty} ${i.usageUnit || i.unit}) — القيمة: ${((Number(i.qty) || 0) * (Number(i.unitPrice) || 0)).toLocaleString()} ريال يمني`
+        )
         .join('\n');
 
-      return `📦 تقرير حالة المخزون (${clinicName}):\n• إجمالي الأصناف المسجلة: ${allItems.length} صنف\n• القيمة الإجمالية للمخزون: ${totalVal.toLocaleString()} ${defaultCurr}\n• النواقص الحالية: 0 (جميع الأصناف متوفرة فوق الحد الأدنى ✅)\n\nأبرز المواد المتوفرة:\n${topItems}`;
+      return `📦 تقرير جرد وحالة المخزون (${clinicName}):\n• إجمالي الأصناف المسجلة: ${allItems.length} صنف\n• القيمة الإجمالية للمخزون: ${totalVal.toLocaleString()} ريال يمني\n• النواقص الحالية: 0 (جميع الأصناف متوفرة فوق الحد الأدنى ✅)\n\n📋 قائمة المواد المتوفرة:\n${topItems}`;
     }
 
     let totalRestockCost = 0;
     const lowLines = lowList.map((item, idx) => {
-      const needed = Math.max(5, (Number(item.minQty) || 5) * 2 - (Number(item.qty) || 0));
+      const needed = Math.max(2, Math.ceil((Number(item.minQty) || 2) * 2 - (Number(item.qty) || 0)));
       const estCost = needed * (Number(item.unitPrice) || 0);
       totalRestockCost += estCost;
-      return `${idx + 1}. ${item.name}\n   • المتبقي حالياً: ${item.qty} ${item.unit} (الحد الأدنى: ${item.minQty} ${item.unit})\n   • الكمية المقترح شراؤها: ${needed} ${item.unit} (بتكلفة تقديرية: ${estCost.toLocaleString()} ${defaultCurr})`;
+      return `${idx + 1}. ${item.name} (${item.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة'})\n   • المتبقي حالياً: ${item.qty} ${item.unit} (${item.remainingSubUnits ?? item.qty} ${item.usageUnit || item.unit}) | الحد الأدنى: ${item.minQty} ${item.unit}\n   • الكمية المقترح توفيرها: ${needed} ${item.unit} (بتكلفة تقديرية: ${estCost.toLocaleString()} ريال يمني)`;
     });
 
-    return `⚠️ تقرير نواقص وتحليل المخزون (${clinicName}):\n• إجمالي الأصناف في العيادة: ${allItems.length} صنف (بقيمة ${totalVal.toLocaleString()} ${defaultCurr})\n• عدد الأصناف التي وصلت لحد النقص: ${lowList.length} صنف\n\n${lowLines.join('\n\n')}\n\n💰 التكلفة التقديرية لإعادة التزويد: ${totalRestockCost.toLocaleString()} ${defaultCurr}\n💡 التوصية: سرعة توفير الأصناف أعلاه لضمان عدم توقف الجلسات العلاجية المرتبطة بها.`;
+    return `⚠️ تقرير نواقص وتحليل المخزون (${clinicName}):\n• إجمالي الأصناف في العيادة: ${allItems.length} صنف (بقيمة إجمالية ${totalVal.toLocaleString()} ريال يمني)\n• عدد الأصناف التي وصلت لحد النقص: ${lowList.length} صنف\n\n${lowLines.join('\n\n')}\n\n💰 التكلفة التقديرية لإعادة التزويد: ${totalRestockCost.toLocaleString()} ريال يمني`;
   }
 
-  // 4. ملخص صافي الأرباح والمصروفات / التقرير المالي
+  // 4. ملخص صافي الأرباح والمصروفات / التقرير المالي الموحد بالريال اليمني
   if (
     p.includes('أرباح') ||
     p.includes('ارباح') ||
@@ -562,18 +620,6 @@ export function generateLocalClinicalResponse(
     p.includes('ميزان') ||
     p.includes('دخل')
   ) {
-    if (Array.isArray(ctx.currencySummaries) && ctx.currencySummaries.length > 0) {
-      const blocks = ctx.currencySummaries.map((c) => {
-        const rate =
-          (c.totalBilledAmount || 0) > 0
-            ? Math.round(((c.totalCollectedRevenue || 0) / (c.totalBilledAmount || 1)) * 100)
-            : 100;
-        return `💵 عملة (${c.currency}):\n• إجمالي المفوتر: ${Number(c.totalBilledAmount || 0).toLocaleString()} (${c.receiptsCount || 0} سند)\n• الإيراد المقبوض نقداً: ${Number(c.totalCollectedRevenue || 0).toLocaleString()} (نسبة التحصيل: ${rate}%)\n• الديون الآجلة على المرضى: ${Number(c.totalPendingDebts || 0).toLocaleString()} (${c.debtorsCount || 0} حالة)\n• إجمالي المصروفات: ${Number(c.totalExpenses || 0).toLocaleString()}\n• صافي الربح النقدي: ${Number(c.netCashProfit || 0).toLocaleString()} ${c.currency}`;
-      });
-
-      return `📊 التقرير المالي التنفيذي (${clinicName}):\n\n${blocks.join('\n\n')}\n\n💡 التوصيات المالية والتشغيلية:\n1. متابعة تحصيل الذمم الآجلة لرفع نسبة السيولة النقدية.\n2. ضبط المصروفات التشغيلية وربط مشتريات المواد بالمخزون تلقائياً.\n3. التركيز على الخدمات العلاجية ذات العائد الأعلى وتوفير مستلزماتها مسبقاً.`;
-    }
-
     const fin = ctx.financialSummary || {};
     const billed = Number(fin.totalBilled || 0);
     const collected = Number(fin.totalCollected || 0);
@@ -581,17 +627,18 @@ export function generateLocalClinicalResponse(
     const expensesTotal = Number(fin.totalExpenses || 0);
     const net = collected - expensesTotal;
     const rate = billed > 0 ? Math.round((collected / billed) * 100) : 100;
+    const debtorsCount = groupedAccounts.filter((a) => a.totalRemaining > 0).length;
 
-    const expList = Array.isArray(ctx.recentExpenses) ? ctx.recentExpenses.slice(0, 5) : [];
+    const expList = Array.isArray(ctx.recentExpenses) ? ctx.recentExpenses.slice(0, 6) : [];
     const expText =
       expList.length > 0
         ? `\n\n📌 آخر المصروفات المسجلة:\n` +
           expList
-            .map((e, i) => `${i + 1}. ${e.title} (${e.category}): ${Number(e.amount).toLocaleString()} ${e.currency}`)
+            .map((e, i) => `${i + 1}. ${e.title} (${e.category} — ${e.date || ''}): ${Number(e.amount).toLocaleString()} ريال يمني`)
             .join('\n')
         : '';
 
-    return `📊 ملخص صافي الأرباح والمصروفات (${clinicName}):\n\n• إجمالي السندات المصدرة: ${fin.totalReceipts || 0} سند\n• إجمالي قيمة العلاجات المفوترة: ${billed.toLocaleString()} ${defaultCurr}\n• الإيراد المقبوض فعلياً: ${collected.toLocaleString()} ${defaultCurr} (نسبة التحصيل: ${rate}%)\n• ديون المرضى المتبقية: ${debts.toLocaleString()} ${defaultCurr}\n• إجمالي المصروفات: ${expensesTotal.toLocaleString()} ${defaultCurr}\n• صافي الربح النقدي الفعلي: ${net.toLocaleString()} ${defaultCurr}${expText}`;
+    return `📊 ملخص صافي الأرباح والمصروفات الموحد (${clinicName}):\n\n• إجمالي السندات الفعالة: ${fin.totalReceipts || activeReceipts.length} سند\n• إجمالي قيمة العلاجات المفوترة: ${billed.toLocaleString()} ريال يمني\n• الإيراد المقبوض فعلياً: ${collected.toLocaleString()} ريال يمني (نسبة التحصيل: ${rate}%)\n• ديون المرضى المتبقية: ${debts.toLocaleString()} ريال يمني (${debtorsCount} مريض)\n• إجمالي المصروفات: ${expensesTotal.toLocaleString()} ريال يمني\n• صافي الدخل النقدي الفعلي: ${net.toLocaleString()} ريال يمني${expText}`;
   }
 
   // 5. قائمة أسعار وخدمات العيادة
@@ -970,6 +1017,84 @@ export async function fetchLiveExchangeRateToYer(
   };
 }
 
+export function isHallucinatedDataRequestReply(replyText: string): boolean {
+  const norm = String(replyText || '').trim();
+  if (!norm) return false;
+  return /(?:يرجى|يُرجى|ارجو|أرجو|ممكن|فضلاً|من فضلك)\s*(?:مشاركة|تزويدي|إرسال|ارسال|كتابة|ادخال|إدخال|توضيح)\s*(?:قائمة|بيانات|أسماء|اسماء|المبالغ|السندات|الفواتير|الديون|المخزون)|(?:تزويدي|مشاركتي)\s*(?:بقائمة|ببيانات|بأسماء|باسماء|بالمبالغ)|(?:شاركني|زودني|أرسل لي|ارسل لي)\s*(?:قائمة|بيانات|أسماء|اسماء)|(?:بعد\s*(?:الحصول على|استلام)\s*هذه\s*(?:البيانات|المعلومات|القائمة))|(?:لا\s*(?:تتوفر|توجد|أملك|املك)\s*(?:لدي|عندي)\s*(?:قائمة|بيانات|معلومات|سجلات))/i.test(
+    norm
+  );
+}
+
+export function isClinicDatabaseReportQuery(
+  promptText: string,
+  clinicContext?: Record<string, unknown> | null
+): boolean {
+  const p = String(promptText || '').trim();
+  if (!p) return false;
+
+  // Do not classify medical/clinical protocol questions as database report queries
+  if (
+    /(?:مضاد|دواء|أدوية|ادوية|مسكن|وصفة|روشيتة|اموكسيسيلين|أموكسيسيلين|اوجمنتين|أوجمنتين|فلاجيل|بروفين|جرعة|تعليمات بعد|خلع|قلع|ضرس العقل|بروتوكول|تخدير|بنج)/i.test(
+      p
+    ) &&
+    !/(?:كشف ديون|نواقص المخزون|صافي الأرباح|سند رقم|#\d+)/i.test(p)
+  ) {
+    return false;
+  }
+
+  if (
+    /(?:كشف ديون|ديون المرضى|المديونين|الذمم الآجلة|المبالغ المتبقية|من عليهم دين|تقرير نواقص|نواقص المخزون|جرد المخزون|حالة المخزون|ملخص صافي الأرباح|صافي الأرباح والمصروفات|التقرير المالي|ملخص الأرباح|إجمالي الإيرادات|قائمة أسعار|قائمة الخدمات|أسعار الخدمات)/i.test(
+      p
+    )
+  ) {
+    return true;
+  }
+
+  const ctx = (clinicContext || {}) as {
+    allReceipts?: ReceiptRecord[];
+    recentReceipts?: ReceiptRecord[];
+  };
+  const recList = Array.isArray(ctx.allReceipts)
+    ? ctx.allReceipts
+    : Array.isArray(ctx.recentReceipts)
+      ? ctx.recentReceipts
+      : [];
+
+  if (recList.length > 0) {
+    const cleanP = normalizePatientNameKey(p);
+    const accounts = buildPatientAccountsFromReceipts(
+      recList.filter((r) => !isReceiptArchived(r)),
+      'ريال يمني'
+    );
+    const hasMatchedAccount = accounts.some(
+      (acc) =>
+        (acc.accountKey && acc.accountKey.length >= 3 && cleanP.includes(acc.accountKey)) ||
+        (acc.patientPhone && acc.patientPhone.trim().length >= 6 && p.includes(acc.patientPhone.trim()))
+    );
+    const hasMatchedReceiptNo = recList.some(
+      (r) => r.receiptNo && new RegExp(`(?:#|\\b)${r.receiptNo}\\b`).test(p)
+    );
+    if (hasMatchedAccount || hasMatchedReceiptNo) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function buildAugmentedUserPrompt(
+  promptText: string,
+  clinicContext?: Record<string, unknown> | null
+): string {
+  const cleanPrompt = String(promptText || '').trim() || 'تحليل السجلات الطبية والمالية للعيادة.';
+  if (!clinicContext || !isClinicDatabaseReportQuery(cleanPrompt, clinicContext)) {
+    return cleanPrompt;
+  }
+
+  const exactVerifiedReport = generateLocalClinicalResponse(cleanPrompt, clinicContext);
+  return `${cleanPrompt}\n\n[بيانات وسجلات العيادة الفعلية المعتمدة للرد المباشر — اعتمد هذه الأرقام والأسماء حرفياً ولا تطلب من المستخدم تزويدك بأي قائمة لأن هذه هي القائمة الكاملة من قاعدة بيانات العيادة]:\n${exactVerifiedReport}`;
+}
+
 export function buildClinicalSystemPrompt(
   clinicContext?: Record<string, unknown> | null,
   _prompt?: string
@@ -986,31 +1111,65 @@ export function buildClinicalSystemPrompt(
   const usdRate = Number(feat.usdToYerRate || tg.usdToYerRate || 535);
   const allowAiDataEntry = feat.allowAiDataEntry !== false;
 
+  const rawReceipts = (
+    Array.isArray(ctx.allReceipts)
+      ? ctx.allReceipts
+      : Array.isArray(ctx.recentReceipts)
+        ? ctx.recentReceipts
+        : []
+  ) as ReceiptRecord[];
+  const activeReceipts = rawReceipts.filter((r) => !isReceiptArchived(r));
+  const groupedAccounts = buildPatientAccountsFromReceipts(activeReceipts, defaultCurr);
+  const debtorAccounts = groupedAccounts
+    .filter((a) => a.totalRemaining > 0)
+    .sort((a, b) => b.totalRemaining - a.totalRemaining);
+
   let contextSnippet = '';
   if (ctx.financialSummary) {
     const fin = ctx.financialSummary as Record<string, unknown>;
-    contextSnippet += `\n- الحساب المالي الموحد (بالريال اليمني فقط): إجمالي السندات: ${fin.totalReceipts || 0} | إجمالي الفواتير: ${Number(fin.totalBilled || 0).toLocaleString()} ريال يمني | المقبوض الفعلي: ${Number(fin.totalCollected || 0).toLocaleString()} ريال يمني | الديون المتبقية: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ريال يمني (${fin.totalDebtors || 0} مريض) | المصروفات: ${Number(fin.totalExpenses || 0).toLocaleString()} ريال يمني`;
+    contextSnippet += `\n- الحساب المالي الموحد (بالريال اليمني فقط): إجمالي السندات: ${fin.totalReceipts || activeReceipts.length} | إجمالي الفواتير: ${Number(fin.totalBilled || 0).toLocaleString()} ريال يمني | المقبوض الفعلي: ${Number(fin.totalCollected || 0).toLocaleString()} ريال يمني | الديون المتبقية: ${Number(fin.totalPendingDebts || 0).toLocaleString()} ريال يمني (${debtorAccounts.length} مريض) | المصروفات: ${Number(fin.totalExpenses || 0).toLocaleString()} ريال يمني`;
   }
   contextSnippet += `\n- أسعار الصرف المعتمدة للتحويل الفوري إلى الريال اليمني: 1 ريال سعودي = ${sarRate} ريال يمني | 1 دولار أمريكي = ${usdRate} ريال يمني`;
   contextSnippet += `\n- حالة إدخال البيانات المباشر عبر المحادثة: ${allowAiDataEntry ? 'مفعّل (بموافقة المستخدم)' : 'مغلق من الإعدادات'}`;
 
-  if (Array.isArray(ctx.pendingDebtsPatients) && ctx.pendingDebtsPatients.length > 0) {
+  if (debtorAccounts.length > 0) {
+    const debtsDetailed = debtorAccounts
+      .slice(0, 25)
+      .map(
+        (acc, idx) =>
+          `${idx + 1}) ${acc.patientName} (هاتف: ${acc.patientPhone || '—'} | السندات: ${acc.receipts.map((r) => `#${r.receiptNo}`).join('، ')} | الخدمات: ${acc.allServices.slice(0, 3).join(' + ') || '—'} | الإجمالي: ${acc.totalBilled.toLocaleString()} ريال يمني | المسدد: ${acc.totalPaid.toLocaleString()} ريال يمني | المتبقي/الدين: ${acc.totalRemaining.toLocaleString()} ريال يمني)`
+      )
+      .join('\n  ');
+    contextSnippet += `\n- كشف ديون المرضى المسجلين في العيادة حالياً (${debtorAccounts.length} مريض):\n  ${debtsDetailed}`;
+  } else if (Array.isArray(ctx.pendingDebtsPatients) && ctx.pendingDebtsPatients.length > 0) {
     const topDebts = ctx.pendingDebtsPatients
-      .slice(0, 8)
-      .map((d: Record<string, unknown>) => `${d.patientName}: ${Number(d.remainingAmount).toLocaleString()} ريال يمني`)
-      .join('، ');
-    contextSnippet += `\n- أبرز حالات الذمم الآجلة: ${topDebts}`;
+      .slice(0, 15)
+      .map(
+        (d: Record<string, unknown>) =>
+          `${d.patientName} (سند #${d.receiptNo || '—'}): متبقٍ ${Number(d.remainingAmount).toLocaleString()} ريال يمني`
+      )
+      .join(' | ');
+    contextSnippet += `\n- كشف ديون المرضى المسجلين: ${topDebts}`;
+  } else {
+    contextSnippet += `\n- كشف ديون المرضى المسجلين: لا توجد أي ديون متبقية حالياً (0 ريال يمني — جميع الحسابات مسددة بالكامل).`;
   }
+
   if (Array.isArray(ctx.lowStockAlerts) && ctx.lowStockAlerts.length > 0) {
     const lowNames = ctx.lowStockAlerts
-      .slice(0, 6)
-      .map((i: Record<string, unknown>) => `${i.name} [${i.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة'}] (المتبقي: ${i.qty} ${i.unit} / ${i.remainingSubUnits ?? i.qty} ${i.usageUnit || i.unit})`)
+      .slice(0, 15)
+      .map(
+        (i: Record<string, unknown>) =>
+          `${i.name} [${i.location === 'lab' ? 'مخزن المعمل' : 'مخزن العيادة'}] (المتبقي: ${i.qty} ${i.unit} / ${i.remainingSubUnits ?? i.qty} ${i.usageUnit || i.unit})`
+      )
       .join('، ');
     contextSnippet += `\n- نواقص المخزون الطبي والمعمل: ${lowNames}`;
+  } else {
+    contextSnippet += `\n- نواقص المخزون الطبي والمعمل: 0 (جميع الأصناف متوفرة فوق الحد الأدنى).`;
   }
+
   if (Array.isArray(ctx.servicesCatalog) && ctx.servicesCatalog.length > 0) {
     const srvNames = ctx.servicesCatalog
-      .slice(0, 12)
+      .slice(0, 20)
       .map((s: Record<string, unknown>) => `${s.name}: ${Number(s.price).toLocaleString()} ${defaultCurr}`)
       .join(' | ');
     contextSnippet += `\n- خدمات العيادة وأسعارها بالريال اليمني: ${srvNames}`;
@@ -1026,14 +1185,14 @@ export function buildClinicalSystemPrompt(
 3. المخزون المزدوج (مخزن العيادة ومخزن المعمل): يدعم النظام الجرد بالعبوات والوحدات الجزئية الدقيقة (مل، جرام، كبسولة، قطعة) مع تنبيهات النواقص.
 4. أتمتة قناة تليجرام: يمكن من الإعدادات تفعيل/إلغاء الإرسال التلقائي للسندات، أو إرسال ملف المخزون والنواقص (CSV)، أو ملف المالية الموحد (CSV) إلى قناة أرشيف العيادة.
 
-بيانات العيادة الحية المتاحة لديك:
-${contextSnippet || '- لا توجد بيانات إضافية محددة.'}
+بيانات وسجلات العيادة الحية المتاحة لديك بالكامل الآن:
+${contextSnippet}
 
 إرشادات العمل الصارمة:
-1. قدّم إجابات إكلينيكية، مالية، ومحاسبية دقيقة واحترافية باللغة العربية، واعتمد الريال اليمني في جميع الملخصات المالية.
-2. يُمنع منعاً باتاً تكرار الجمل أو الفقرات أو إعادة صياغة نفس الإجابة مرتين في الرسالة الواحدة.
-3. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات باختصار واضح.
-4. عند تحليل صور الأشعة أو الحالات السريرية المرفقة، بيّن الملاحظات التشخيصية وخطة العلاج التقديرية بدقة.`;
+1. يُمنع منعاً باتاً أن تطلب من المستخدم تزويدك بقائمة أسماء المرضى أو المبالغ أو الديون أو المخزون (مثل قول: "يرجى مشاركة قائمة..." أو "يرجى تزويدي بقائمة...")؛ فجميع سجلات العيادة وحسابات المرضى موجودة لديك بالكامل في هذا السياق وتحت تصرفك المباشر.
+2. عند طلب "كشف ديون المرضى بالتفصيل" أو "تقرير نواقص المخزون" أو "ملخص صافي الأرباح والمصروفات"، اعرض الأسماء والأرقام الفعلية الموجودة في بيانات العيادة أعلاه فوراً وبدقة بالريال اليمني.
+3. يُمنع منعاً باتاً تكرار الجمل أو الفقرات أو إعادة صياغة نفس الإجابة مرتين في الرسالة الواحدة.
+4. عند الاستفسار عن بروتوكولات الأدوية (المضادات، المسكنات، التخدير)، اذكر الجرعات المعتمدة علمياً والاحتياطات باختصار واضح.`;
 }
 
 /**
@@ -1162,6 +1321,9 @@ async function callGeminiDirect(
   if (Array.isArray(payload.history)) {
     for (const h of payload.history.slice(-6)) {
       if (h.text && h.text.trim()) {
+        if (h.role === 'assistant' && isHallucinatedDataRequestReply(h.text)) {
+          continue;
+        }
         contents.push({
           role: h.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: h.text.trim() }],
@@ -1181,8 +1343,12 @@ async function callGeminiDirect(
       },
     });
   }
+  const effectiveUserText = hasAttachment
+    ? payload.prompt || 'يرجى تقديم المشورة الطبية والمالية بناءً على سياق العيادة.'
+    : buildAugmentedUserPrompt(payload.prompt, payload.clinicContext);
+
   userParts.push({
-    text: payload.prompt || 'يرجى تقديم المشورة الطبية والمالية بناءً على سياق العيادة.',
+    text: effectiveUserText,
   });
 
   contents.push({
@@ -1246,7 +1412,16 @@ async function callGeminiDirect(
         .filter(Boolean)
         .join('\n\n')
         .trim();
-      const textReply = cleanAndDeduplicateAssistantReply(rawReply);
+      let textReply = cleanAndDeduplicateAssistantReply(rawReply);
+      if (
+        !hasImage &&
+        payload.clinicContext &&
+        (isHallucinatedDataRequestReply(textReply) ||
+          (isClinicDatabaseReportQuery(payload.prompt, payload.clinicContext) &&
+            textReply.length < 40))
+      ) {
+        textReply = generateLocalClinicalResponse(payload.prompt, payload.clinicContext);
+      }
 
       if (textReply) {
         if (!hasImage && targetModel !== config.geminiModel) {
@@ -1389,8 +1564,8 @@ export async function discoverLiveGroqModels(
       'qwen/qwen3.8-27b',
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
-      'allam-2-7b',
       'openai/gpt-oss-safeguard-20b',
+      'allam-2-7b',
       ...GROQ_TEXT_MODELS,
     ];
 
@@ -1434,6 +1609,8 @@ async function callGroqDirect(
   const apiKey = sanitizeApiKeyInput(config.groqApiKey);
   if (!apiKey) throw new Error('مفتاح Groq Cloud API غير مدخل.');
 
+  const isReportQuery = !hasImage && isClinicDatabaseReportQuery(payload.prompt, payload.clinicContext);
+
   const cachedVerified = (config.verifiedModels?.groq || []).filter(
     (m) => !LEGACY_GROQ_MODELS.has(m)
   );
@@ -1448,13 +1625,15 @@ async function callGroqDirect(
       )
     : Array.from(
         new Set([
-          sanitizeGroqTextModel(config.groqTextModel),
+          ...(isReportQuery && config.groqTextModel === 'allam-2-7b'
+            ? ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b']
+            : [sanitizeGroqTextModel(config.groqTextModel)]),
           ...cachedVerified,
           'qwen/qwen3.8-27b',
           'openai/gpt-oss-120b',
           'openai/gpt-oss-20b',
-          'allam-2-7b',
           'openai/gpt-oss-safeguard-20b',
+          'allam-2-7b',
         ])
       );
 
@@ -1466,6 +1645,9 @@ async function callGroqDirect(
   if (Array.isArray(payload.history)) {
     for (const h of payload.history.slice(-4)) {
       if (h.text && h.text.trim()) {
+        if (h.role === 'assistant' && isHallucinatedDataRequestReply(h.text)) {
+          continue;
+        }
         messages.push({
           role: h.role === 'assistant' ? 'assistant' : 'user',
           content: h.text.trim(),
@@ -1488,7 +1670,7 @@ async function callGroqDirect(
   } else {
     messages.push({
       role: 'user',
-      content: payload.prompt || 'تحليل السجلات الطبية والمالية للعيادة.',
+      content: buildAugmentedUserPrompt(payload.prompt, payload.clinicContext),
     });
   }
 
@@ -1523,9 +1705,18 @@ async function callGroqDirect(
     if (res.ok) {
       const data = await res.json();
       const rawReply = String(data?.choices?.[0]?.message?.content || '').trim();
-      const reply = cleanAndDeduplicateAssistantReply(rawReply);
+      let reply = cleanAndDeduplicateAssistantReply(rawReply);
+      if (
+        !hasImage &&
+        payload.clinicContext &&
+        (isHallucinatedDataRequestReply(reply) ||
+          (isReportQuery && targetModel === 'allam-2-7b'))
+      ) {
+        reply = generateLocalClinicalResponse(payload.prompt, payload.clinicContext);
+      }
+
       if (reply) {
-        if (!hasImage && targetModel !== config.groqTextModel) {
+        if (!hasImage && targetModel !== config.groqTextModel && !isReportQuery) {
           config.groqTextModel = targetModel;
           saveAIProviderConfig(config);
         } else if (hasImage && targetModel !== config.groqVisionModel) {
@@ -1597,6 +1788,9 @@ async function callOpenRouterDirect(
   if (Array.isArray(payload.history)) {
     for (const h of payload.history.slice(-6)) {
       if (h.text && h.text.trim()) {
+        if (h.role === 'assistant' && isHallucinatedDataRequestReply(h.text)) {
+          continue;
+        }
         messages.push({
           role: h.role === 'assistant' ? 'assistant' : 'user',
           content: h.text.trim(),
@@ -1619,7 +1813,7 @@ async function callOpenRouterDirect(
   } else {
     messages.push({
       role: 'user',
-      content: payload.prompt || 'تحليل السجلات الطبية والمالية للعيادة.',
+      content: buildAugmentedUserPrompt(payload.prompt, payload.clinicContext),
     });
   }
 
@@ -1652,7 +1846,10 @@ async function callOpenRouterDirect(
     if (res.ok) {
       const data = await res.json();
       const rawReply = String(data?.choices?.[0]?.message?.content || '').trim();
-      const reply = cleanAndDeduplicateAssistantReply(rawReply);
+      let reply = cleanAndDeduplicateAssistantReply(rawReply);
+      if (!hasImage && payload.clinicContext && isHallucinatedDataRequestReply(reply)) {
+        reply = generateLocalClinicalResponse(payload.prompt, payload.clinicContext);
+      }
       if (reply) {
         if (!hasImage && targetModel !== config.openrouterModel) {
           config.openrouterModel = targetModel;
@@ -2324,8 +2521,12 @@ export async function queryClinicAssistantDetailed(
         String(parsed.data.modelLabel || '').trim() || formatModelDisplayLabel(model);
       const modelLabel =
         failoverCount > 0 ? `${baseLabel} — (خادم العيادة الاحتياطي)` : baseLabel;
+      let serverReply = cleanAndDeduplicateAssistantReply(String(parsed.data.reply).trim());
+      if (!hasImage && payload.clinicContext && isHallucinatedDataRequestReply(serverReply)) {
+        serverReply = generateLocalClinicalResponse(payload.prompt, payload.clinicContext);
+      }
       return {
-        reply: cleanAndDeduplicateAssistantReply(String(parsed.data.reply).trim()),
+        reply: serverReply,
         model,
         modelLabel,
         providerUsed: 'server',

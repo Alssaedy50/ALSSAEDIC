@@ -50,6 +50,8 @@ import {
   RegisteredClinicSummary,
   applyAiConfigToAllClinicsByDeveloper,
   auth,
+  deleteClinicByDeveloper,
+  deleteClinicByOwner,
   fetchRegisteredSystemDirectory,
   flushPendingSyncQueue,
   getActiveCloudDiagnostics,
@@ -232,6 +234,75 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   React.useEffect(() => {
     setFormState(settings);
   }, [settings]);
+
+  const [showSettingsDeleteClinicBox, setShowSettingsDeleteClinicBox] = useState(false);
+  const [settingsDeleteClinicInput, setSettingsDeleteClinicInput] = useState('');
+  const [isDeletingClinicFromSettings, setIsDeletingClinicFromSettings] = useState(false);
+
+  const [showDevTargetDeleteBox, setShowDevTargetDeleteBox] = useState(false);
+  const [devTargetDeleteInput, setDevTargetDeleteInput] = useState('');
+  const [isDeletingDevTargetClinic, setIsDeletingDevTargetClinic] = useState(false);
+
+  const handleOwnerDeleteClinicFromSettings = async () => {
+    const expectedName = String(
+      formState.identity.clinicAr || settings.identity.clinicAr || 'عيادة طب وجراحة الفم والأسنان'
+    ).trim();
+    if (settingsDeleteClinicInput.trim() !== expectedName) {
+      notify(`يرجى كتابة اسم العيادة المحدد بالضبط (${expectedName}) لتأكيد الحذف`, 'warning');
+      return;
+    }
+    setIsDeletingClinicFromSettings(true);
+    try {
+      await deleteClinicByOwner({
+        clinicId: ownerUid || workspaceId || 'local_owner',
+        workspaceId: workspaceId || ownerUid || 'alssaedy-clinic',
+        expectedClinicName: expectedName,
+        typedClinicName: settingsDeleteClinicInput.trim(),
+        ownerEmail: ownerEmail || formState.identity.ownerEmail,
+      });
+      setShowSettingsDeleteClinicBox(false);
+      setSettingsDeleteClinicInput('');
+      notify(`تم حذف العيادة (${expectedName}) وكافة بياناتها نهائياً`, 'info');
+      setTimeout(() => {
+        window.location.reload();
+      }, 600);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر حذف العيادة', 'error');
+    } finally {
+      setIsDeletingClinicFromSettings(false);
+    }
+  };
+
+  const selectedDevClinicObj = devClinicsList.find((c) => c.id === selectedDevClinicId) || null;
+  const isSelectedDevClinicPrimary = Boolean(
+    !selectedDevClinicObj ||
+      selectedDevClinicObj.isDeveloperClinic ||
+      selectedDevClinicObj.id === auth.currentUser?.uid ||
+      selectedDevClinicObj.id === 'alssaedy-clinic'
+  );
+
+  const handleDeveloperDeleteSelectedClinic = async () => {
+    if (!selectedDevClinicObj) return;
+    const expectedName = String(selectedDevClinicObj.clinicAr || '').trim();
+    if (devTargetDeleteInput.trim() !== expectedName) {
+      notify(`يرجى كتابة اسم العيادة المحدد بالضبط (${expectedName}) لتأكيد الحذف`, 'warning');
+      return;
+    }
+    setIsDeletingDevTargetClinic(true);
+    try {
+      await deleteClinicByDeveloper(selectedDevClinicObj, devTargetDeleteInput.trim());
+      const remaining = devClinicsList.filter((item) => item.id !== selectedDevClinicObj.id);
+      setDevClinicsList(remaining);
+      setSelectedDevClinicId(remaining[0]?.id || ownerUid || auth.currentUser?.uid || '');
+      setShowDevTargetDeleteBox(false);
+      setDevTargetDeleteInput('');
+      notify(`تم حذف العيادة (${expectedName}) وبياناتها من السحابة نهائياً`, 'info');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر حذف العيادة', 'error');
+    } finally {
+      setIsDeletingDevTargetClinic(false);
+    }
+  };
 
   React.useEffect(() => {
     if (isNewAccountSetup) {
@@ -1507,6 +1578,76 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 <span>حفظ الإعدادات</span>
               </button>
             </div>
+
+            {isOwner && !isPlatformDev && (
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-black text-rose-600 dark:text-rose-400">
+                      حذف العيادة نهائياً
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      حذف بيانات العيادة وسنداتها ومخزونها بعد كتابة اسم العيادة للتأكيد.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettingsDeleteClinicBox((prev) => !prev);
+                      setSettingsDeleteClinicInput('');
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-xs font-bold transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{showSettingsDeleteClinicBox ? 'إغلاق ▲' : 'حذف العيادة'}</span>
+                  </button>
+                </div>
+
+                {showSettingsDeleteClinicBox && (
+                  <div className="mt-3 p-3.5 rounded-xl border border-rose-500/40 bg-rose-500/10 space-y-2.5 text-xs">
+                    <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 leading-relaxed">
+                      لتأكيد حذف العيادة نهائياً، اكتب اسم العيادة المحدد بالضبط:
+                      <span className="inline-block mx-1 px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-rose-500/30 font-black text-rose-600 dark:text-rose-400 select-all">
+                        {(formState.identity.clinicAr || settings.identity.clinicAr || 'عيادة طب وجراحة الفم والأسنان').trim()}
+                      </span>
+                    </p>
+                    <input
+                      type="text"
+                      value={settingsDeleteClinicInput}
+                      onChange={(e) => setSettingsDeleteClinicInput(e.target.value)}
+                      placeholder={`اكتب "${(formState.identity.clinicAr || settings.identity.clinicAr || '').trim()}" هنا للتأكيد`}
+                      className="w-full rounded-lg border border-rose-500/40 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-rose-500"
+                    />
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={isDeletingClinicFromSettings}
+                        onClick={() => {
+                          setShowSettingsDeleteClinicBox(false);
+                          setSettingsDeleteClinicInput('');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold"
+                      >
+                        إلغاء
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          isDeletingClinicFromSettings ||
+                          settingsDeleteClinicInput.trim() !==
+                            (formState.identity.clinicAr || settings.identity.clinicAr || 'عيادة طب وجراحة الفم والأسنان').trim()
+                        }
+                        onClick={handleOwnerDeleteClinicFromSettings}
+                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-black transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{isDeletingClinicFromSettings ? 'جارٍ الحذف...' : 'تأكيد حذف العيادة نهائياً'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -2065,7 +2206,11 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <select
                 value={selectedDevClinicId}
-                onChange={(e) => handleSelectDevClinicForAi(e.target.value)}
+                onChange={(e) => {
+                  handleSelectDevClinicForAi(e.target.value);
+                  setShowDevTargetDeleteBox(false);
+                  setDevTargetDeleteInput('');
+                }}
                 className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100"
               >
                 {devClinicsList.length === 0 ? (
@@ -2088,6 +2233,67 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   })
                 )}
               </select>
+
+              {selectedDevClinicObj && !isSelectedDevClinicPrimary && (
+                <div className="pt-2 flex flex-col gap-2">
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDevTargetDeleteBox((prev) => !prev);
+                        setDevTargetDeleteInput('');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-xs font-bold transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{showDevTargetDeleteBox ? 'إغلاق الحذف ▲' : 'حذف هذه العيادة'}</span>
+                    </button>
+                  </div>
+
+                  {showDevTargetDeleteBox && (
+                    <div className="p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 space-y-2.5 text-xs">
+                      <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 leading-relaxed">
+                        لتأكيد حذف العيادة المحددة نهائياً، اكتب اسم العيادة بالضبط:
+                        <span className="inline-block mx-1 px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-rose-500/30 font-black text-rose-600 dark:text-rose-400 select-all">
+                          {selectedDevClinicObj.clinicAr}
+                        </span>
+                      </p>
+                      <input
+                        type="text"
+                        value={devTargetDeleteInput}
+                        onChange={(e) => setDevTargetDeleteInput(e.target.value)}
+                        placeholder={`اكتب "${selectedDevClinicObj.clinicAr}" هنا للتأكيد`}
+                        className="w-full rounded-lg border border-rose-500/40 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-rose-500"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          disabled={isDeletingDevTargetClinic}
+                          onClick={() => {
+                            setShowDevTargetDeleteBox(false);
+                            setDevTargetDeleteInput('');
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold"
+                        >
+                          إلغاء
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            isDeletingDevTargetClinic ||
+                            devTargetDeleteInput.trim() !== String(selectedDevClinicObj.clinicAr || '').trim()
+                          }
+                          onClick={handleDeveloperDeleteSelectedClinic}
+                          className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-black transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>{isDeletingDevTargetClinic ? 'جارٍ الحذف...' : 'تأكيد حذف العيادة نهائياً'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </section>
 

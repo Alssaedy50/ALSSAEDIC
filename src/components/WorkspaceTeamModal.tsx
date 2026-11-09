@@ -36,6 +36,7 @@ import {
   addWorkspaceMemberInCloud,
   auth,
   deleteClinicByDeveloper,
+  deleteClinicByOwner,
   fetchRegisteredSystemDirectory,
   isSuperAdminEmail,
   isValidRealEmail,
@@ -147,6 +148,10 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   const [copiedEmail, setCopiedEmail] = useState(false);
   const [busyClinicId, setBusyClinicId] = useState<string | null>(null);
   const [confirmDeleteClinicId, setConfirmDeleteClinicId] = useState<string | null>(null);
+  const [devDeleteClinicNameInput, setDevDeleteClinicNameInput] = useState<string>('');
+  const [showOwnerDeleteConfirm, setShowOwnerDeleteConfirm] = useState<boolean>(false);
+  const [ownerDeleteClinicNameInput, setOwnerDeleteClinicNameInput] = useState<string>('');
+  const [isDeletingOwnClinic, setIsDeletingOwnClinic] = useState<boolean>(false);
   const [editingAiClinicId, setEditingAiClinicId] = useState<string | null>(null);
   const [clinicAiDraft, setClinicAiDraft] = useState<AIProviderConfig>(() => loadAIProviderConfig());
   const [showInlineKeys, setShowInlineKeys] = useState<boolean>(false);
@@ -282,16 +287,50 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
   };
 
   const handleDeleteRegisteredClinic = async (clinic: RegisteredClinicSummary) => {
+    const expectedName = String(clinic.clinicAr || '').trim();
+    if (devDeleteClinicNameInput.trim() !== expectedName) {
+      notify(`يرجى كتابة اسم العيادة المحدد بالضبط (${expectedName}) لتأكيد الحذف`, 'warning');
+      return;
+    }
     setBusyClinicId(clinic.id);
     try {
-      await deleteClinicByDeveloper(clinic);
+      await deleteClinicByDeveloper(clinic, devDeleteClinicNameInput.trim());
       setRegisteredClinics((prev) => prev.filter((item) => item.id !== clinic.id));
       setConfirmDeleteClinicId(null);
+      setDevDeleteClinicNameInput('');
       notify(`تم حذف العيادة (${clinic.clinicAr}) وبياناتها من السحابة نهائياً`, 'info');
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'تعذر حذف العيادة', 'error');
     } finally {
       setBusyClinicId(null);
+    }
+  };
+
+  const handleDeleteOwnClinicByOwner = async () => {
+    const expectedName = String(effectiveClinicTitle || '').trim();
+    if (ownerDeleteClinicNameInput.trim() !== expectedName) {
+      notify(`يرجى كتابة اسم العيادة المحدد بالضبط (${expectedName}) لتأكيد الحذف`, 'warning');
+      return;
+    }
+    setIsDeletingOwnClinic(true);
+    try {
+      await deleteClinicByOwner({
+        clinicId: ownerUid || effectiveWsId,
+        workspaceId: effectiveWsId,
+        expectedClinicName: expectedName,
+        typedClinicName: ownerDeleteClinicNameInput.trim(),
+        ownerEmail: effectiveOwnerEmail,
+      });
+      setShowOwnerDeleteConfirm(false);
+      setOwnerDeleteClinicNameInput('');
+      notify(`تم حذف العيادة (${expectedName}) وكافة بياناتها نهائياً`, 'info');
+      setTimeout(() => {
+        window.location.reload();
+      }, 600);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'تعذر حذف العيادة', 'error');
+    } finally {
+      setIsDeletingOwnClinic(false);
     }
   };
 
@@ -529,36 +568,23 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                       </button>
 
                       {!isPrimaryDevClinic ? (
-                        confirmDeleteClinicId === c.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => handleDeleteRegisteredClinic(c)}
-                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black"
-                            >
-                              تأكيد الحذف
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => setConfirmDeleteClinicId(null)}
-                              className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold"
-                            >
-                              إلغاء
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => setConfirmDeleteClinicId(c.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-[11px] font-bold transition-colors"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>حذف</span>
-                          </button>
-                        )
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => {
+                            if (confirmDeleteClinicId === c.id) {
+                              setConfirmDeleteClinicId(null);
+                              setDevDeleteClinicNameInput('');
+                            } else {
+                              setConfirmDeleteClinicId(c.id);
+                              setDevDeleteClinicNameInput('');
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-[11px] font-bold transition-colors"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>{confirmDeleteClinicId === c.id ? 'إغلاق الحذف ▲' : 'حذف العيادة'}</span>
+                        </button>
                       ) : (
                         <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                           <Crown className="w-3 h-3" />
@@ -566,6 +592,50 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                         </span>
                       )}
                     </div>
+
+                    {/* Developer Clinic Deletion Confirmation Box Requiring Exact Clinic Name */}
+                    {!isPrimaryDevClinic && confirmDeleteClinicId === c.id && (
+                      <div className="mt-2 p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 space-y-2.5 text-xs">
+                        <div className="font-black text-rose-700 dark:text-rose-300">
+                          تأكيد حذف العيادة نهائياً من السحابة
+                        </div>
+                        <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 leading-relaxed">
+                          لتأكيد حذف العيادة مع كافة سنداتها ومخزونها وبياناتها، يرجى كتابة اسم العيادة المحدد بالضبط:
+                          <span className="inline-block mx-1 px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-rose-500/30 font-black text-rose-600 dark:text-rose-400 select-all">
+                            {c.clinicAr}
+                          </span>
+                        </p>
+                        <input
+                          type="text"
+                          value={devDeleteClinicNameInput}
+                          onChange={(e) => setDevDeleteClinicNameInput(e.target.value)}
+                          placeholder={`اكتب "${c.clinicAr}" هنا للتأكيد`}
+                          className="w-full rounded-lg border border-rose-500/40 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-rose-500"
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => {
+                              setConfirmDeleteClinicId(null);
+                              setDevDeleteClinicNameInput('');
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-bold"
+                          >
+                            إلغاء
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy || devDeleteClinicNameInput.trim() !== String(c.clinicAr || '').trim()}
+                            onClick={() => handleDeleteRegisteredClinic(c)}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-black transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>{isBusy ? 'جارٍ الحذف...' : 'تأكيد حذف العيادة نهائياً'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Inline Developer AI Keys Editor for this specific clinic */}
                     {isEditingAi && (
@@ -845,7 +915,71 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
               </div>
             </div>
           </div>
+
+          {effectiveIsOwner && !isDeveloperSuperAdmin && (
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOwnerDeleteConfirm((prev) => !prev);
+                  setOwnerDeleteClinicNameInput('');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white text-xs font-bold transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{showOwnerDeleteConfirm ? 'إلغاء حذف العيادة ▲' : 'حذف العيادة'}</span>
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* Clinic Owner Delete Confirmation Box Requiring Exact Clinic Name */}
+        {effectiveIsOwner && !isDeveloperSuperAdmin && showOwnerDeleteConfirm && (
+          <div className="mt-3 pt-3 border-t border-rose-500/30 bg-rose-500/10 rounded-xl p-3.5 space-y-2.5 text-xs">
+            <div className="font-black text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+              <Trash2 className="w-4 h-4 shrink-0" />
+              <span>تأكيد حذف العيادة نهائياً</span>
+            </div>
+            <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 leading-relaxed">
+              سيؤدي هذا الإجراء إلى حذف العيادة وكافة سنداتها وسجلاتها ومخزونها نهائياً. للتأكيد، يرجى كتابة اسم العيادة المحدد بالضبط:
+              <span className="inline-block mx-1 px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-rose-500/30 font-black text-rose-600 dark:text-rose-400 select-all">
+                {effectiveClinicTitle}
+              </span>
+            </p>
+            <input
+              type="text"
+              value={ownerDeleteClinicNameInput}
+              onChange={(e) => setOwnerDeleteClinicNameInput(e.target.value)}
+              placeholder={`اكتب "${effectiveClinicTitle}" هنا للتأكيد`}
+              className="w-full rounded-lg border border-rose-500/40 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-rose-500"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isDeletingOwnClinic}
+                onClick={() => {
+                  setShowOwnerDeleteConfirm(false);
+                  setOwnerDeleteClinicNameInput('');
+                }}
+                className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={
+                  isDeletingOwnClinic ||
+                  ownerDeleteClinicNameInput.trim() !== String(effectiveClinicTitle || '').trim()
+                }
+                onClick={handleDeleteOwnClinicByOwner}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-black transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingOwnClinic ? 'جارٍ الحذف...' : 'تأكيد حذف العيادة نهائياً'}</span>
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Add Member Form */}
