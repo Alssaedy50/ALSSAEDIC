@@ -1058,6 +1058,11 @@ function sanitizeAiConfigPayload(cfg: Partial<AIProviderConfig>): AIProviderConf
   return {
     geminiApiKey: sanitizeStr(cfg.geminiApiKey || '', 300, ''),
     geminiModel: sanitizeStr(cfg.geminiModel || DEFAULT_AI_CONFIG.geminiModel, 100, DEFAULT_AI_CONFIG.geminiModel),
+    geminiVisionModel: sanitizeStr(
+      cfg.geminiVisionModel || DEFAULT_AI_CONFIG.geminiVisionModel || 'gemini-2.5-flash',
+      100,
+      DEFAULT_AI_CONFIG.geminiVisionModel || 'gemini-2.5-flash'
+    ),
     enableWebGrounding: cfg.enableWebGrounding !== false,
     groqApiKey: sanitizeStr(cfg.groqApiKey || '', 300, ''),
     groqTextModel: sanitizeStr(cfg.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel, 120, DEFAULT_AI_CONFIG.groqTextModel),
@@ -1065,7 +1070,18 @@ function sanitizeAiConfigPayload(cfg: Partial<AIProviderConfig>): AIProviderConf
     groqWhisperModel: sanitizeStr(cfg.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel, 100, DEFAULT_AI_CONFIG.groqWhisperModel),
     openrouterApiKey: sanitizeStr(cfg.openrouterApiKey || '', 300, ''),
     openrouterModel: sanitizeStr(cfg.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel, 120, DEFAULT_AI_CONFIG.openrouterModel),
+    openrouterVisionModel: sanitizeStr(
+      cfg.openrouterVisionModel || DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.0-flash-exp:free',
+      120,
+      DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.0-flash-exp:free'
+    ),
     sttEngine: cfg.sttEngine === 'groq' ? 'groq' : 'browser',
+    ttsModel: sanitizeStr(cfg.ttsModel || DEFAULT_AI_CONFIG.ttsModel, 100, DEFAULT_AI_CONFIG.ttsModel),
+    dataEntryModel: sanitizeStr(
+      cfg.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel,
+      120,
+      DEFAULT_AI_CONFIG.dataEntryModel
+    ),
     customPriority: ['gemini', 'groq', 'openrouter'],
   };
 }

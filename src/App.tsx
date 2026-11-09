@@ -1855,7 +1855,71 @@ export default function App() {
               expenses={expenses}
               messages={chatMessages}
               onAddMessage={(msg) => setChatMessages((prev) => [...prev, msg])}
+              onSetMessages={(msgs) => setChatMessages(msgs)}
               onClearMessages={() => setChatMessages([])}
+              onApproveReceiptEntry={(recData) => {
+                const maxNo = receipts.reduce((max, r) => Math.max(max, Number(r.receiptNo) || 0), 0);
+                const nextReceiptNo = maxNo + 1;
+                const totalAmount = Math.max(0, Number(recData.totalAmount) || 0);
+                const paidAmount = Math.max(0, Number(recData.paidAmount) || 0);
+                const remainingAmount = Math.max(0, +(totalAmount - paidAmount).toFixed(2));
+                const currency = recData.currency || settings.identity.defaultCurrency;
+                handleSaveReceipt({
+                  receiptNo: nextReceiptNo,
+                  date: new Date().toISOString().slice(0, 10),
+                  patientName: recData.patientName.trim(),
+                  patientPhone: (recData.patientPhone || '').trim(),
+                  services:
+                    Array.isArray(recData.services) && recData.services.length > 0
+                      ? recData.services
+                      : ['كشفية طبية'],
+                  toothFDI: '',
+                  totalAmount,
+                  paidAmount,
+                  remainingAmount,
+                  currency,
+                  paymentMethod: recData.paymentMethod || 'نقداً',
+                  amountWords: numberToArabicWords(paidAmount, String(currency)),
+                  notes: (recData.notes || 'إدخال مباشر عبر المساعد الذكي').trim(),
+                  accountantSig: '',
+                  receiverSig: '',
+                  paperFormat: 'a5',
+                  createdAt: new Date().toISOString(),
+                });
+              }}
+              onApproveInventoryEntry={(invData) => {
+                const targetName = invData.name.trim();
+                const existing = inventory.find(
+                  (item) => item.name.trim().toLowerCase() === targetName.toLowerCase()
+                );
+                const qty = Math.max(0.01, Number(invData.qty) || 1);
+                if (invData.operation === 'consume' && existing) {
+                  handleQuickConsumeInventory(existing.id, qty);
+                } else if (invData.operation === 'restock' && existing) {
+                  handleQuickRestockInventory(existing.id, qty, Boolean(invData.recordAsExpense));
+                } else {
+                  const unitPrice = Math.max(
+                    0,
+                    Number(invData.unitPrice ?? existing?.unitPrice ?? 0) || 0
+                  );
+                  const nextQty =
+                    invData.operation === 'restock' && existing ? existing.qty + qty : qty;
+                  handleSaveInventoryItem(
+                    {
+                      id: existing?.id,
+                      name: targetName,
+                      qty: nextQty,
+                      unit: (invData.unit || existing?.unit || 'قطعة').trim(),
+                      minQty: Math.max(0, Number(invData.minQty ?? existing?.minQty ?? 5) || 5),
+                      unitPrice,
+                      totalCost: +(nextQty * unitPrice).toFixed(2),
+                      linkedService: invData.linkedService || existing?.linkedService || '',
+                      notes: (invData.notes || existing?.notes || 'إدخال مباشر عبر المساعد الذكي').trim(),
+                    },
+                    Boolean(invData.recordAsExpense)
+                  );
+                }
+              }}
               onExitFullScreen={() => navigateToSection('receipt')}
               onOpenMenu={() => setIsDrawerOpen(true)}
               onOpenSettings={(tab) => {

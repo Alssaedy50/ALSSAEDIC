@@ -128,6 +128,7 @@ export interface ClinicSettings {
 export interface AIProviderConfig {
   geminiApiKey: string;
   geminiModel: string;
+  geminiVisionModel?: string;
   enableWebGrounding: boolean;
 
   groqApiKey: string;
@@ -137,27 +138,95 @@ export interface AIProviderConfig {
 
   openrouterApiKey: string;
   openrouterModel: string;
+  openrouterVisionModel?: string;
 
   sttEngine: 'browser' | 'groq';
+  ttsModel: string;
+  dataEntryModel: string;
   customPriority: ('gemini' | 'groq' | 'openrouter')[];
+  verifiedModels?: {
+    gemini?: string[];
+    groq?: string[];
+    openrouter?: string[];
+    lastCheckedAt?: string;
+  };
 }
 
 export const DEFAULT_AI_CONFIG: AIProviderConfig = {
   geminiApiKey: '',
   geminiModel: 'gemini-2.5-flash',
+  geminiVisionModel: 'gemini-2.5-flash',
   enableWebGrounding: true,
 
   groqApiKey: '',
   groqTextModel: 'llama-3.3-70b-versatile',
   groqVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
-  groqWhisperModel: 'whisper-large-v3',
+  groqWhisperModel: 'whisper-large-v3-turbo',
 
   openrouterApiKey: '',
   openrouterModel: 'google/gemini-2.5-flash',
+  openrouterVisionModel: 'google/gemini-2.5-flash',
 
-  sttEngine: 'browser',
-  customPriority: ['gemini', 'groq', 'openrouter'],
+  sttEngine: 'groq',
+  ttsModel: 'playai-tts-arabic',
+  dataEntryModel: 'llama-3.3-70b-versatile',
+  customPriority: ['groq', 'gemini', 'openrouter'],
 };
+
+export interface PendingReceiptEntryData {
+  patientName: string;
+  patientPhone: string;
+  services: string[];
+  toothFDI: string;
+  totalAmount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  currency: CurrencyCode | string;
+  paymentMethod: string;
+  notes: string;
+}
+
+export interface PendingInventoryEntryData {
+  operation: 'add_new' | 'restock' | 'consume';
+  existingItemId?: string;
+  name: string;
+  qty: number;
+  unit: string;
+  minQty: number;
+  unitPrice: number;
+  totalCost: number;
+  linkedService: string;
+  recordAsExpense: boolean;
+  notes: string;
+}
+
+export interface PendingDataEntryProposal {
+  id: string;
+  type: 'receipt' | 'inventory';
+  status: 'pending' | 'approved' | 'rejected';
+  summaryText: string;
+  modelUsed?: string;
+  receiptData?: PendingReceiptEntryData;
+  inventoryData?: PendingInventoryEntryData;
+}
+
+export interface ChatAppearanceSettings {
+  fontFamily: 'Tajawal' | 'Cairo' | 'IBM Plex Sans Arabic' | 'Plus Jakarta Sans';
+  fontSize: 'sm' | 'base' | 'lg' | 'xl';
+  accentColor: 'sky' | 'emerald' | 'indigo' | 'violet' | 'amber' | 'slate';
+  sessionDurationMinutes: number; // 0 = unlimited, or 15, 30, 60, 120
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  durationMinutes: number;
+  expiresAt?: string;
+  isPinned?: boolean;
+  messages: ChatMessage[];
+}
 
 export interface ChatMessage {
   id: string;
@@ -169,7 +238,9 @@ export interface ChatMessage {
   isFallbackApplied?: boolean;
   webSources?: Array<{ title: string; uri: string }>;
   attachmentName?: string;
+  attachmentMimeType?: string;
   attachmentPreview?: string;
+  dataEntryProposal?: PendingDataEntryProposal;
 }
 
 export interface CurrencyFinancialSummary {

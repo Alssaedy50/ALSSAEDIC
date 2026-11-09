@@ -46,6 +46,8 @@ import {
   updateWorkspaceMemberRoleInCloud,
 } from '../firebase';
 import {
+  AI_TTS_MODELS,
+  DIRECT_DATA_ENTRY_MODELS,
   GEMINI_CANDIDATE_MODELS,
   GROQ_TEXT_MODELS,
   GROQ_VISION_MODELS,
@@ -724,6 +726,50 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                             >
                               <option value="browser">المتصفح المباشر (Web Speech)</option>
                               <option value="groq">Groq Whisper ({GROQ_WHISPER_MODELS[0]})</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              نموذج القراءة الصوتية (TTS)
+                            </label>
+                            <select
+                              value={clinicAiDraft.ttsModel || 'playai-tts-arabic'}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({
+                                  ...prev,
+                                  ttsModel: e.target.value,
+                                }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              {AI_TTS_MODELS.map((m) => (
+                                <option key={m} value={m}>
+                                  {formatModelDisplayLabel(m)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              نموذج الإدخال المباشر للسندات والمخزون
+                            </label>
+                            <select
+                              value={clinicAiDraft.dataEntryModel || 'llama-3.3-70b-versatile'}
+                              onChange={(e) =>
+                                setClinicAiDraft((prev) => ({
+                                  ...prev,
+                                  dataEntryModel: e.target.value,
+                                }))
+                              }
+                              className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/5 dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            >
+                              {DIRECT_DATA_ENTRY_MODELS.map((m) => (
+                                <option key={m} value={m}>
+                                  {formatModelDisplayLabel(m)}
+                                </option>
+                              ))}
                             </select>
                           </div>
                         </div>
