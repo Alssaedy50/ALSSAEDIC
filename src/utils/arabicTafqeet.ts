@@ -104,7 +104,7 @@ export function numberToArabicWords(amount: number, currency = 'ريال يمن�
 export function parseFDIToothNumbers(value: string): { values: string[]; invalid: string[] } {
   const tokens = String(value || '')
     .trim()
-    .split(/[,،;\s-]+/)
+    .split(/[,،;/\s-]+/)
     .filter(Boolean);
   const valid = new Set<string>();
   [11, 21, 31, 41, 51, 61, 71, 81].forEach((start) => {
@@ -118,6 +118,73 @@ export function parseFDIToothNumbers(value: string): { values: string[]; invalid
     values: unique.filter((n) => valid.has(n)),
     invalid: unique.filter((n) => !valid.has(n)),
   };
+}
+
+/**
+ * Parses a service label that may contain embedded tooth numbers,
+ * e.g. "علاج عصب وجذور (سن: 12 / 14)" -> { serviceName: "علاج عصب وجذور", teeth: ["12", "14"] }
+ */
+export function parseServiceWithTeeth(rawService: string): {
+  serviceName: string;
+  teeth: string[];
+} {
+  const raw = String(rawService || '').trim();
+  if (!raw) return { serviceName: '', teeth: [] };
+
+  const match = raw.match(/^(.*?)\s*\(\s*(?:سن|أسنان|اسنان|FDI)\s*[:：]?\s*([^)]+)\)\s*$/i);
+  if (match) {
+    const serviceName = match[1].trim();
+    const teeth = parseFDIToothNumbers(match[2]).values;
+    return { serviceName: serviceName || raw, teeth };
+  }
+
+  return { serviceName: raw, teeth: [] };
+}
+
+/**
+ * Formats a base service name with its assigned FDI teeth so each service retains its exact tooth numbers.
+ */
+export function formatServiceWithTeeth(serviceName: string, teeth: string[]): string {
+  const baseName = parseServiceWithTeeth(serviceName).serviceName;
+  if (!baseName) return '';
+  const validTeeth = parseFDIToothNumbers((teeth || []).join(' / ')).values;
+  if (validTeeth.length === 0) return baseName;
+  return `${baseName} (سن: ${validTeeth.join(' / ')})`;
+}
+
+/**
+ * Splits a raw service string or array into individual service entries without breaking parenthesized tooth lists.
+ */
+export function splitServiceEntriesPreservingTeeth(servicesInput: string[] | string): string[] {
+  const rawList = Array.isArray(servicesInput) ? servicesInput : [servicesInput];
+  const result: string[] = [];
+
+  for (const item of rawList) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+
+    // Split on '+' or commas ONLY when outside parentheses
+    let current = '';
+    let depth = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch === '(') depth++;
+      else if (ch === ')' && depth > 0) depth--;
+
+      if (depth === 0 && (ch === '+' || ch === '،' || ch === ',')) {
+        if (current.trim()) result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    if (current.trim()) {
+      result.push(current.trim());
+    }
+  }
+
+  return result;
 }
 
 export interface FDITeethConsumptionAnalysis {
@@ -186,10 +253,10 @@ export function getEffectiveRemainingSubUnits(
   const pkgSize = getEffectivePackageSize(item);
   const rawSub = Number(item.remainingSubUnits);
   if (Number.isFinite(rawSub) && rawSub >= 0) {
-    return +rawSub.toFixed(3);
+    return +rawSub.toFixed(4);
   }
   const safeQty = Math.max(0, Number(item.qty) || 0);
-  return +(safeQty * pkgSize).toFixed(3);
+  return +(safeQty * pkgSize).toFixed(4);
 }
 
 export function isServiceAlreadyBilledForPatient(
@@ -197,8 +264,12 @@ export function isServiceAlreadyBilledForPatient(
   toothFDI: string,
   previousReceipts: ReceiptRecord[]
 ): { isAlreadyBilled: boolean; unbilledTeeth: string[] } {
-  const cleanName = String(serviceName || '').trim();
-  const currentTeeth = parseFDIToothNumbers(toothFDI).values;
+  const parsedCurrent = parseServiceWithTeeth(serviceName);
+  const cleanName = parsedCurrent.serviceName;
+  const currentTeeth =
+    parsedCurrent.teeth.length > 0
+      ? parsedCurrent.teeth
+      : parseFDIToothNumbers(toothFDI).values;
 
   if (!cleanName || !Array.isArray(previousReceipts) || previousReceipts.length === 0) {
     return {
@@ -209,9 +280,14 @@ export function isServiceAlreadyBilledForPatient(
 
   // Find all previous receipts of this patient that included this service name
   const matchingPrevious = previousReceipts.filter((r) =>
-    (Array.isArray(r.services) ? r.services : []).some(
-      (s) => s.trim() === cleanName || cleanName.includes(s.trim()) || s.trim().includes(cleanName)
-    )
+    splitServiceEntriesPreservingTeeth(Array.isArray(r.services) ? r.services : []).some((s) => {
+      const prevBase = parseServiceWithTeeth(s).serviceName;
+      return (
+        prevBase === cleanName ||
+        cleanName.includes(prevBase) ||
+        prevBase.includes(cleanName)
+      );
+    })
   );
 
   if (matchingPrevious.length === 0) {
@@ -221,16 +297,36 @@ export function isServiceAlreadyBilledForPatient(
     };
   }
 
-  // Collect all teeth previously treated for this service
+  // Collect all teeth previously treated for this specific service
   const previouslyTreatedTeeth = new Set<string>();
   let previousHadNoTeeth = false;
 
   for (const prev of matchingPrevious) {
-    const prevTeeth = parseFDIToothNumbers(prev.toothFDI || '').values;
-    if (prevTeeth.length === 0) {
-      previousHadNoTeeth = true;
-    } else {
-      prevTeeth.forEach((t) => previouslyTreatedTeeth.add(t));
+    const prevServices = splitServiceEntriesPreservingTeeth(
+      Array.isArray(prev.services) ? prev.services : []
+    );
+    let foundSpecificServiceTeeth = false;
+    for (const rawSrv of prevServices) {
+      const parsedPrev = parseServiceWithTeeth(rawSrv);
+      if (
+        parsedPrev.serviceName === cleanName ||
+        cleanName.includes(parsedPrev.serviceName) ||
+        parsedPrev.serviceName.includes(cleanName)
+      ) {
+        if (parsedPrev.teeth.length > 0) {
+          parsedPrev.teeth.forEach((t) => previouslyTreatedTeeth.add(t));
+          foundSpecificServiceTeeth = true;
+        }
+      }
+    }
+
+    if (!foundSpecificServiceTeeth) {
+      const prevTeeth = parseFDIToothNumbers(prev.toothFDI || '').values;
+      if (prevTeeth.length === 0) {
+        previousHadNoTeeth = true;
+      } else {
+        prevTeeth.forEach((t) => previouslyTreatedTeeth.add(t));
+      }
     }
   }
 
@@ -253,69 +349,93 @@ export function isServiceAlreadyBilledForPatient(
   return { isAlreadyBilled: false, unbilledTeeth };
 }
 
+export interface CalculateConsumptionOptions {
+  /**
+   * When true (return visit / installment), services already billed on the same teeth in earlier receipts are skipped.
+   * When false or omitted (new primary receipt), ALL selected services deduct materials for their assigned teeth.
+   */
+  isReturnVisit?: boolean;
+  /**
+   * Optional explicit mapping from base service name to its assigned FDI tooth numbers.
+   */
+  serviceTeethMap?: Record<string, string[]>;
+}
+
 export function calculateReceiptMaterialsConsumption(
   servicesNames: string[],
   toothFDI: string,
   servicesCatalog: DentalServiceItem[],
   inventory: InventoryItem[],
-  patientPreviousReceipts: ReceiptRecord[] = []
+  patientPreviousReceipts: ReceiptRecord[] = [],
+  options?: CalculateConsumptionOptions
 ): ConsumedMaterialEntry[] {
   const validInventoryIds = new Set(inventory.map((i) => i.id));
   const fullTeethAnalysis = analyzeFDITeethForConsumption(toothFDI);
+  const isReturnVisit = Boolean(options?.isReturnVisit);
+  const explicitServiceTeethMap = options?.serviceTeethMap || {};
 
-  // 1. Identify which services are newly billable for this patient
   interface ServiceToDeductInfo {
     serviceItem: DentalServiceItem;
-    unbilledTeeth: string[];
+    assignedTeeth: string[];
     teethAnalysis: FDITeethConsumptionAnalysis;
     totalSessions: number;
   }
 
   const servicesToDeduct: ServiceToDeductInfo[] = [];
+  const flattenedServices = splitServiceEntriesPreservingTeeth(servicesNames);
 
-  const flattenedServices: string[] = [];
-  for (const raw of servicesNames) {
-    if (typeof raw === 'string') {
-      const parts = raw
-        .split(/\s*(?:[-–—+]|،|,|\band\b)\s*/)
-        .map((p) => p.trim())
-        .filter(Boolean);
-      if (parts.length > 0) {
-        flattenedServices.push(...parts);
-      } else if (raw.trim()) {
-        flattenedServices.push(raw.trim());
-      }
-    }
-  }
-
-  for (const cleanName of flattenedServices) {
+  for (const rawEntry of flattenedServices) {
+    const parsed = parseServiceWithTeeth(rawEntry);
+    const cleanName = parsed.serviceName;
     if (!cleanName) continue;
 
-    // Check if already billed in previous receipts for this patient
-    const check = isServiceAlreadyBilledForPatient(cleanName, toothFDI, patientPreviousReceipts);
-    if (check.isAlreadyBilled) {
-      // Service was already billed in a previous receipt for this patient => 0 deduction!
-      continue;
+    // Determine specific teeth assigned to this service:
+    // 1. Explicit serviceTeethMap passed from UI
+    // 2. Embedded teeth in the service string e.g. "علاج عصب وجذور (سن: 12)"
+    // 3. General receipt toothFDI
+    const mappedTeeth = explicitServiceTeethMap[cleanName];
+    const initialServiceTeeth =
+      Array.isArray(mappedTeeth) && mappedTeeth.length > 0
+        ? parseFDIToothNumbers(mappedTeeth.join(' / ')).values
+        : parsed.teeth.length > 0
+          ? parsed.teeth
+          : fullTeethAnalysis.teeth;
+
+    let finalTeethForService = initialServiceTeeth;
+
+    // Only skip previously billed services if this receipt is a Return Visit / Follow-up
+    if (isReturnVisit && patientPreviousReceipts.length > 0) {
+      const check = isServiceAlreadyBilledForPatient(
+        cleanName,
+        initialServiceTeeth.join(' - '),
+        patientPreviousReceipts
+      );
+      if (check.isAlreadyBilled) {
+        continue;
+      }
+      if (check.unbilledTeeth.length > 0) {
+        finalTeethForService = check.unbilledTeeth;
+      }
     }
 
-    const matchedService = servicesCatalog.find(
-      (s) =>
-        s.name.trim() === cleanName ||
-        cleanName.includes(s.name.trim()) ||
-        s.name.trim().includes(cleanName)
-    );
-
-    const teethForThisService =
-      check.unbilledTeeth.length > 0 ? check.unbilledTeeth : fullTeethAnalysis.teeth;
+    // Match service in catalog (exact match first, then case-insensitive, then substring)
+    const matchedService =
+      servicesCatalog.find((s) => s.name.trim() === cleanName) ||
+      servicesCatalog.find((s) => s.name.trim().toLowerCase() === cleanName.toLowerCase()) ||
+      servicesCatalog.find(
+        (s) =>
+          cleanName.includes(s.name.trim()) ||
+          s.name.trim().includes(cleanName)
+      );
 
     const analysisForThisService =
-      check.unbilledTeeth.length > 0
-        ? analyzeFDITeethForConsumption(check.unbilledTeeth.join(' - '))
+      finalTeethForService.length > 0
+        ? analyzeFDITeethForConsumption(finalTeethForService.join(' - '))
         : fullTeethAnalysis;
 
     const totalSessions = Math.max(
       1,
-      Number((matchedService as any)?.sessionsCount) ||
+      Number((matchedService as { sessionsCount?: number } | undefined)?.sessionsCount) ||
         Number(matchedService?.totalSessions) ||
         1
     );
@@ -323,7 +443,7 @@ export function calculateReceiptMaterialsConsumption(
     if (matchedService) {
       servicesToDeduct.push({
         serviceItem: matchedService,
-        unbilledTeeth: teethForThisService,
+        assignedTeeth: finalTeethForService,
         teethAnalysis: analysisForThisService,
         totalSessions,
       });
@@ -336,7 +456,7 @@ export function calculateReceiptMaterialsConsumption(
           category: 'عام',
           keywords: [cleanName],
         },
-        unbilledTeeth: teethForThisService,
+        assignedTeeth: finalTeethForService,
         teethAnalysis: analysisForThisService,
         totalSessions: 1,
       });
@@ -347,50 +467,62 @@ export function calculateReceiptMaterialsConsumption(
     return [];
   }
 
-  // 2. Prevent duplication of shared materials:
-  // - per_session materials: take the maximum across services (based on highest session requirement)
-  // - per_arch materials: take max qtyFixed * actual affected arches (calculated once per actual arch)
-  // - by_tooth_type & per_tooth_unit: tooth-specific, summed for each new service
-
   const perSessionMaxByMaterial = new Map<string, number>();
   const perArchMaxFixedByMaterial = new Map<string, number>();
   const directTotalsByMaterial = new Map<string, number>();
-  const coveredByRecipeServiceNames = new Set<string>();
 
   for (const info of servicesToDeduct) {
     const srv = info.serviceItem;
-    const recipe = srv.materialsRecipe || [];
+    const recipe = Array.isArray(srv.materialsRecipe) ? srv.materialsRecipe : [];
     const analysis = info.teethAnalysis;
     const totalSessions = info.totalSessions;
+    const DeductedMaterialsForThisService = new Set<string>();
 
     if (recipe.length > 0) {
-      coveredByRecipeServiceNames.add(srv.name.trim());
       for (const rule of recipe) {
-        if (!rule || !rule.materialId || !validInventoryIds.has(rule.materialId)) continue;
+        if (!rule || !rule.materialId) continue;
 
-        // How many times does this rule execute across the service sessions?
-        // If sessionNumber === 'all', it runs every session (= totalSessions times).
-        // If sessionNumber is a specific number (e.g. 1, 2), it runs 1 time for that specific session.
+        let resolvedMaterialId = rule.materialId;
+        if (!validInventoryIds.has(resolvedMaterialId)) {
+          // Fallback: if materialId was recreated, try matching by materialName if present
+          const ruleMatName = String((rule as { materialName?: string }).materialName || '').trim();
+          const matchedInv = ruleMatName
+            ? inventory.find((i) => i.name.trim() === ruleMatName)
+            : undefined;
+          if (matchedInv) {
+            resolvedMaterialId = matchedInv.id;
+          } else {
+            continue;
+          }
+        }
+
         const sessionMultiplier = rule.sessionNumber === 'all' ? totalSessions : 1;
+        const fallbackFixed = Math.max(
+          0,
+          Number(rule.qtyFixed) || Number(rule.qtyMolar) || Number(rule.qtyAnterior) || 1
+        );
 
         if (rule.consumptionType === 'per_session') {
-          const serviceQtyForThisMaterial =
-            (Math.max(0, Number(rule.qtyFixed) || 0)) * sessionMultiplier;
-          const currentMax = perSessionMaxByMaterial.get(rule.materialId) || 0;
+          const serviceQtyForThisMaterial = +(fallbackFixed * sessionMultiplier).toFixed(4);
+          const currentMax = perSessionMaxByMaterial.get(resolvedMaterialId) || 0;
           perSessionMaxByMaterial.set(
-            rule.materialId,
+            resolvedMaterialId,
             Math.max(currentMax, serviceQtyForThisMaterial)
           );
+          DeductedMaterialsForThisService.add(resolvedMaterialId);
         } else if (rule.consumptionType === 'per_arch') {
-          const ruleFixed = (Math.max(0, Number(rule.qtyFixed) || 0)) * sessionMultiplier;
-          const currentMaxFixed = perArchMaxFixedByMaterial.get(rule.materialId) || 0;
+          const ruleFixed = +(fallbackFixed * sessionMultiplier).toFixed(4);
+          const currentMaxFixed = perArchMaxFixedByMaterial.get(resolvedMaterialId) || 0;
           perArchMaxFixedByMaterial.set(
-            rule.materialId,
+            resolvedMaterialId,
             Math.max(currentMaxFixed, ruleFixed)
           );
+          DeductedMaterialsForThisService.add(resolvedMaterialId);
         } else if (rule.consumptionType === 'by_tooth_type') {
-          const qtyAnt = Math.max(0, Number(rule.qtyAnterior) || 0);
-          const qtyMol = Math.max(0, Number(rule.qtyMolar) || 0);
+          const rawAnt = Math.max(0, Number(rule.qtyAnterior) || Number(rule.qtyFixed) || 0);
+          const rawMol = Math.max(0, Number(rule.qtyMolar) || Number(rule.qtyFixed) || 0);
+          const qtyAnt = rawAnt === 0 && rawMol === 0 ? 1 : rawAnt;
+          const qtyMol = rawAnt === 0 && rawMol === 0 ? 1 : rawMol;
           let ruleAmount = 0;
           if (analysis.totalTeeth > 0) {
             ruleAmount =
@@ -399,15 +531,33 @@ export function calculateReceiptMaterialsConsumption(
           } else {
             ruleAmount = (qtyMol > 0 ? qtyMol : qtyAnt) * sessionMultiplier;
           }
-          const prev = directTotalsByMaterial.get(rule.materialId) || 0;
-          directTotalsByMaterial.set(rule.materialId, +(prev + ruleAmount).toFixed(4));
+          const prev = directTotalsByMaterial.get(resolvedMaterialId) || 0;
+          directTotalsByMaterial.set(resolvedMaterialId, +(prev + ruleAmount).toFixed(4));
+          DeductedMaterialsForThisService.add(resolvedMaterialId);
         } else if (rule.consumptionType === 'per_tooth_unit') {
-          const qtyPerUnit = Math.max(0, Number(rule.qtyFixed) || 0);
           const unitsCount = Math.max(1, analysis.totalTeeth);
-          const ruleAmount = unitsCount * qtyPerUnit * sessionMultiplier;
-          const prev = directTotalsByMaterial.get(rule.materialId) || 0;
-          directTotalsByMaterial.set(rule.materialId, +(prev + ruleAmount).toFixed(4));
+          const ruleAmount = unitsCount * fallbackFixed * sessionMultiplier;
+          const prev = directTotalsByMaterial.get(resolvedMaterialId) || 0;
+          directTotalsByMaterial.set(resolvedMaterialId, +(prev + ruleAmount).toFixed(4));
+          DeductedMaterialsForThisService.add(resolvedMaterialId);
         }
+      }
+    }
+
+    // Also check any inventory item explicitly linked to this service via `linkedService`
+    const srvName = srv.name.trim();
+    for (const invItem of inventory) {
+      if (
+        invItem.linkedService &&
+        (invItem.linkedService.trim() === srvName ||
+          srvName.includes(invItem.linkedService.trim()) ||
+          invItem.linkedService.trim().includes(srvName)) &&
+        !DeductedMaterialsForThisService.has(invItem.id)
+      ) {
+        const unitsCount = Math.max(1, analysis.totalTeeth);
+        const prev = directTotalsByMaterial.get(invItem.id) || 0;
+        directTotalsByMaterial.set(invItem.id, +(prev + unitsCount).toFixed(4));
+        DeductedMaterialsForThisService.add(invItem.id);
       }
     }
   }
@@ -415,14 +565,12 @@ export function calculateReceiptMaterialsConsumption(
   // Combine results into final deductions map
   const finalMap = new Map<string, number>();
 
-  // Add per_session materials
   for (const [matId, maxAmount] of perSessionMaxByMaterial.entries()) {
     if (maxAmount > 0) {
       finalMap.set(matId, +((finalMap.get(matId) || 0) + maxAmount).toFixed(4));
     }
   }
 
-  // Add per_arch materials (once per actual affected arch)
   const actualAffectedArches = Math.max(1, fullTeethAnalysis.affectedArches);
   for (const [matId, maxFixed] of perArchMaxFixedByMaterial.entries()) {
     if (maxFixed > 0) {
@@ -431,29 +579,16 @@ export function calculateReceiptMaterialsConsumption(
     }
   }
 
-  // Add direct totals (by_tooth_type and per_tooth_unit)
   for (const [matId, amount] of directTotalsByMaterial.entries()) {
     if (amount > 0) {
       finalMap.set(matId, +((finalMap.get(matId) || 0) + amount).toFixed(4));
     }
   }
 
-  // Legacy fallback: if an inventory item has `linkedService` matching any newly billed service
-  for (const info of servicesToDeduct) {
-    const srvName = info.serviceItem.name.trim();
-    if (!coveredByRecipeServiceNames.has(srvName)) {
-      for (const invItem of inventory) {
-        if (invItem.linkedService && invItem.linkedService.trim() === srvName) {
-          finalMap.set(invItem.id, +((finalMap.get(invItem.id) || 0) + 1).toFixed(4));
-        }
-      }
-    }
-  }
-
   return Array.from(finalMap.entries())
     .map(([materialId, amountDeducted]) => ({
       materialId,
-      amountDeducted: +amountDeducted.toFixed(3),
+      amountDeducted: +amountDeducted.toFixed(4),
     }))
     .filter((e) => e.amountDeducted > 0);
 }
@@ -473,7 +608,10 @@ export function applyMaterialDeductionsToInventory(
     if (!entry?.materialId) continue;
     const amt = Number(entry.amountDeducted);
     if (!Number.isFinite(amt) || amt <= 0) continue;
-    deltaByMaterialId.set(entry.materialId, (deltaByMaterialId.get(entry.materialId) || 0) + amt);
+    deltaByMaterialId.set(
+      entry.materialId,
+      +((deltaByMaterialId.get(entry.materialId) || 0) + amt).toFixed(4)
+    );
   }
 
   if (deltaByMaterialId.size === 0) {
@@ -489,10 +627,10 @@ export function applyMaterialDeductionsToInventory(
     const currentSubUnits = getEffectiveRemainingSubUnits(item);
     const nextSubUnits =
       mode === 'deduct'
-        ? Math.max(0, +(currentSubUnits - deltaSubUnits).toFixed(3))
-        : +(currentSubUnits + deltaSubUnits).toFixed(3);
+        ? Math.max(0, +(currentSubUnits - deltaSubUnits).toFixed(4))
+        : +(currentSubUnits + deltaSubUnits).toFixed(4);
 
-    const nextQty = Math.max(0, +(nextSubUnits / pkgSize).toFixed(2));
+    const nextQty = Math.max(0, +(nextSubUnits / pkgSize).toFixed(4));
     const nextTotalCost = +(nextQty * Number(item.unitPrice || 0)).toFixed(2);
 
     const updatedItem: InventoryItem = {

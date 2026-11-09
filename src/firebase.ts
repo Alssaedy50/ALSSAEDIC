@@ -512,7 +512,7 @@ function decodeReceiptNotesAndConsumedMaterials(rawNotes: unknown): {
     if (matId && Number.isFinite(amt) && amt > 0) {
       consumedMaterials.push({
         materialId: matId.trim(),
-        amountDeducted: +amt.toFixed(3),
+        amountDeducted: +amt.toFixed(4),
       });
     }
   }
@@ -547,7 +547,7 @@ export function validateAndNormalizeReceipt(receipt: ReceiptRecord): ReceiptReco
         .filter((c) => c && c.materialId && Number(c.amountDeducted) > 0)
         .map((c) => ({
           materialId: String(c.materialId),
-          amountDeducted: +(Number(c.amountDeducted) || 0).toFixed(3),
+          amountDeducted: +(Number(c.amountDeducted) || 0).toFixed(4),
         }))
     : decodedNotes.consumedMaterials;
 
@@ -599,14 +599,14 @@ export function validateAndNormalizeInventoryItem(item: InventoryItem): Inventor
   const unit = sanitizeStr(item.unit, 50, 'قطعة');
   const location: 'clinic' | 'lab' = item.location === 'lab' ? 'lab' : 'clinic';
   const rawPkg = Number(item.packageSize);
-  const packageSize = Number.isFinite(rawPkg) && rawPkg > 0 ? +rawPkg.toFixed(3) : 1;
+  const packageSize = Number.isFinite(rawPkg) && rawPkg > 0 ? +rawPkg.toFixed(4) : 1;
   const usageUnit = sanitizeStr(item.usageUnit, 50, unit);
   const qty = sanitizeNum(item.qty, 0, 1000000);
   const rawSub = Number(item.remainingSubUnits);
   const remainingSubUnits =
     Number.isFinite(rawSub) && rawSub >= 0
-      ? +rawSub.toFixed(3)
-      : Math.max(0, +(qty * packageSize).toFixed(3));
+      ? +rawSub.toFixed(4)
+      : Math.max(0, +(qty * packageSize).toFixed(4));
   const minQty = sanitizeNum(item.minQty, 0, 1000000);
   const unitPrice = sanitizeNum(item.unitPrice, 0, 100000000);
   const totalCost = sanitizeNum(+(qty * unitPrice).toFixed(2), 0, 1000000000);
@@ -1463,6 +1463,39 @@ export async function saveClinicSettingsToCloud(
   }
 }
 
+async function upsertClinicCollectionDoc(
+  ref: ReturnType<typeof doc>,
+  docId: string,
+  safeUid: string,
+  mutableFields: Record<string, unknown>
+): Promise<void> {
+  if (knownExistingDocIds.has(docId)) {
+    await updateDoc(ref, mutableFields);
+    return;
+  }
+  try {
+    await updateDoc(ref, mutableFields);
+    knownExistingDocIds.add(docId);
+  } catch (err: unknown) {
+    const code = String((err as { code?: string })?.code || '');
+    const msg = String((err as { message?: string })?.message || '');
+    if (code.includes('not-found') || msg.includes('No document to update')) {
+      await setDoc(
+        ref,
+        {
+          ownerId: safeUid,
+          ...mutableFields,
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      knownExistingDocIds.add(docId);
+    } else {
+      throw err;
+    }
+  }
+}
+
 export async function saveServiceToCloud(
   uid: string,
   service: DentalServiceItem
@@ -1514,20 +1547,7 @@ export async function saveServiceToCloud(
         keywords: cloudKeywords,
         updatedAt: serverTimestamp(),
       };
-      if (knownExistingDocIds.has(docId)) {
-        await updateDoc(ref, mutableFields);
-      } else {
-        await setDoc(
-          ref,
-          {
-            ownerId: safeUid,
-            ...mutableFields,
-            createdAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        knownExistingDocIds.add(docId);
-      }
+      await upsertClinicCollectionDoc(ref, docId, safeUid, mutableFields);
     });
     clearPendingUpsert(safeUid, 'services', safeServiceId);
   } catch (error) {
@@ -1598,20 +1618,7 @@ export async function saveReceiptToCloud(
         updatedAt: serverTimestamp(),
       };
 
-      if (knownExistingDocIds.has(docId)) {
-        await updateDoc(ref, mutableFields);
-      } else {
-        await setDoc(
-          ref,
-          {
-            ownerId: safeUid,
-            ...mutableFields,
-            createdAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        knownExistingDocIds.add(docId);
-      }
+      await upsertClinicCollectionDoc(ref, docId, safeUid, mutableFields);
     });
     clearPendingUpsert(safeUid, 'receipts', validated.id);
   } catch (error) {
@@ -1668,20 +1675,7 @@ export async function saveInventoryItemToCloud(
         updatedAt: serverTimestamp(),
       };
 
-      if (knownExistingDocIds.has(docId)) {
-        await updateDoc(ref, mutableFields);
-      } else {
-        await setDoc(
-          ref,
-          {
-            ownerId: safeUid,
-            ...mutableFields,
-            createdAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        knownExistingDocIds.add(docId);
-      }
+      await upsertClinicCollectionDoc(ref, docId, safeUid, mutableFields);
     });
     clearPendingUpsert(safeUid, 'inventory', validated.id);
   } catch (error) {
@@ -1735,20 +1729,7 @@ export async function saveExpenseToCloud(
         updatedAt: serverTimestamp(),
       };
 
-      if (knownExistingDocIds.has(docId)) {
-        await updateDoc(ref, mutableFields);
-      } else {
-        await setDoc(
-          ref,
-          {
-            ownerId: safeUid,
-            ...mutableFields,
-            createdAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        knownExistingDocIds.add(docId);
-      }
+      await upsertClinicCollectionDoc(ref, docId, safeUid, mutableFields);
     });
     clearPendingUpsert(safeUid, 'expenses', validated.id);
   } catch (error) {

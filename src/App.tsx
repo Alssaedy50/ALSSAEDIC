@@ -44,6 +44,7 @@ import {
   getEffectivePackageSize,
   getEffectiveRemainingSubUnits,
   numberToArabicWords,
+  splitServiceEntriesPreservingTeeth,
 } from './utils/arabicTafqeet';
 import {
   ARCHIVE_NOTE_MARKER,
@@ -749,10 +750,29 @@ export default function App() {
       },
       onServicesUpdate: (cloudServices) => {
         if (cloudServices.length > 0) {
-          setSettings((prev) => ({
-            ...prev,
-            services: cloudServices,
-          }));
+          setSettings((prev) => {
+            const prevMap = new Map(prev.services.map((s) => [s.id, s]));
+            const mergedServices = cloudServices.map((cs) => {
+              const existing = prevMap.get(cs.id);
+              if (
+                existing &&
+                Array.isArray(existing.materialsRecipe) &&
+                existing.materialsRecipe.length > 0 &&
+                (!Array.isArray(cs.materialsRecipe) || cs.materialsRecipe.length === 0)
+              ) {
+                return {
+                  ...cs,
+                  materialsRecipe: existing.materialsRecipe,
+                  totalSessions: existing.totalSessions || cs.totalSessions,
+                };
+              }
+              return cs;
+            });
+            return {
+              ...prev,
+              services: mergedServices,
+            };
+          });
         }
       },
       onReceiptsUpdate: (cloudReceipts) => {
@@ -1167,15 +1187,12 @@ export default function App() {
     let workingInventory = inventory;
     const touchedInventoryMap = new Map<string, InventoryItem>();
 
-    // Extract all selected services even if merged in serviceType and separated by " - ", "، ", ",", or "+"
+    // Extract all selected services while preserving per-service tooth assignments like "علاج عصب (سن: 12)"
     const rawServices = payload.services || [];
-    const rawServiceType = (payload as any).serviceType;
+    const rawServiceType = (payload as { serviceType?: string }).serviceType;
     const extractedServices: string[] = [];
     const addCleanService = (s: string) => {
-      const parts = String(s || '')
-        .split(/\s*(?:[-–—+]|،|,|\band\b)\s*/)
-        .map((p) => p.trim())
-        .filter(Boolean);
+      const parts = splitServiceEntriesPreservingTeeth(s);
       for (const p of parts) {
         if (!extractedServices.includes(p)) {
           extractedServices.push(p);
@@ -1201,6 +1218,11 @@ export default function App() {
           ? rawServices
           : ['خدمات علاجية للأسنان'];
 
+    const isExistingReturnVisit = Boolean(
+      existingReceipt && String(existingReceipt.notes || '').includes('[عودة/مراجعة]')
+    );
+    const isPayloadReturnVisit = String(payload.notes || '').includes('[عودة/مراجعة]');
+
     // 1. If editing an existing receipt, first restore its previously deducted materials
     if (isEdit && existingReceipt && settings.features.autoInventory) {
       const previousDeductions =
@@ -1212,7 +1234,8 @@ export default function App() {
               existingReceipt.toothFDI || '',
               settings.services,
               workingInventory,
-              patientPreviousReceipts
+              patientPreviousReceipts,
+              { isReturnVisit: isExistingReturnVisit }
             );
 
       if (previousDeductions.length > 0) {
@@ -1230,14 +1253,16 @@ export default function App() {
     }
 
     // 2. Calculate new material consumption for this receipt (Clinic & Lab materials)
-    // Only deducts if this service is new for this patient, and deduplicates shared materials
+    // Primary receipts deduct materials for all selected services on their assigned teeth;
+    // return visits only deduct if the service/teeth were not previously billed.
     const computedConsumedMaterials = settings.features.autoInventory
       ? calculateReceiptMaterialsConsumption(
           effectiveServices,
           payload.toothFDI || '',
           settings.services,
           workingInventory,
-          patientPreviousReceipts
+          patientPreviousReceipts,
+          { isReturnVisit: isPayloadReturnVisit }
         )
       : [];
 
@@ -2020,6 +2045,7 @@ export default function App() {
           <ReceiptStudio
             settings={settings}
             receipts={receipts}
+            inventory={inventory}
             editingReceipt={editingReceipt}
             prefillPatient={prefillPatientForStudio}
             onClearPrefillPatient={() => setPrefillPatientForStudio(null)}
@@ -2355,14 +2381,12 @@ export default function App() {
               const targetClinicUid = cloudTargetUid;
               if (targetClinicUid) {
                 setIsSyncingCloud(true);
-                saveClinicSettingsToCloud(targetClinicUid, normalizedNext)
-                  .then(() =>
-                    Promise.all(
-                      normalizedNext.services.map((srv) =>
-                        saveServiceToCloud(targetClinicUid, srv)
-                      )
-                    )
-                  )
+                Promise.all([
+                  saveClinicSettingsToCloud(targetClinicUid, normalizedNext),
+                  ...normalizedNext.services.map((srv) =>
+                    saveServiceToCloud(targetClinicUid, srv)
+                  ),
+                ])
                   .then(() => {
                     notify('تم حفظ إعدادات عيادتك ومزامنتها سحابياً بنجاح', 'success');
                   })

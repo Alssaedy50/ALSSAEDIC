@@ -2,9 +2,12 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Edit3,
+  Link2,
   Loader2,
   Minus,
+  MoreVertical,
   PackagePlus,
   Plus,
   Sparkles,
@@ -77,6 +80,23 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   const [auditReport, setAuditReport] = useState<string>('');
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [openItemMenuId, setOpenItemMenuId] = useState<string | null>(null);
+
+  const getLinkedServicesForMaterial = (item: InventoryItem): string[] => {
+    const names = new Set<string>();
+    if (item.linkedService && item.linkedService.trim()) {
+      names.add(item.linkedService.trim());
+    }
+    for (const srv of services) {
+      if (
+        Array.isArray(srv.materialsRecipe) &&
+        srv.materialsRecipe.some((r) => r.materialId === item.id)
+      ) {
+        names.add(srv.name);
+      }
+    }
+    return Array.from(names);
+  };
 
   const USAGE_UNIT_SUGGESTIONS = [
     'حبة',
@@ -201,7 +221,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     const sub =
       item.remainingSubUnits !== undefined && Number(item.remainingSubUnits) >= 0
         ? Number(item.remainingSubUnits)
-        : Number((itemQty * pkg).toFixed(2));
+        : Number((itemQty * pkg).toFixed(4));
     setEditingId(item.id);
     setFormData({
       name: item.name,
@@ -273,9 +293,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     const currentSub =
       item.remainingSubUnits !== undefined
         ? Number(item.remainingSubUnits)
-        : Number((currentItemQty * pkgSize).toFixed(2));
-    const newSub = Math.max(0, Number((currentSub + deltaPackages * pkgSize).toFixed(2)));
-    const newQty = Number((newSub / pkgSize).toFixed(2));
+        : Number((currentItemQty * pkgSize).toFixed(4));
+    const newSub = Math.max(0, Number((currentSub + deltaPackages * pkgSize).toFixed(4)));
+    const newQty = Number((newSub / pkgSize).toFixed(4));
 
     const { updatedAt: _unused, ...itemWithoutUpdatedAt } = item;
     onSaveItem(
@@ -351,57 +371,25 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         </div>
       </div>
 
-      {/* Main Toolbar */}
+      {/* Main Toolbar with Clean Dropdown Filter */}
       <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 space-y-3.5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          <div className="grid grid-cols-2 sm:flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-            <button
-              type="button"
-              onClick={() => setFilterMode('all')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                filterMode === 'all'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+            <select
+              value={filterMode}
+              onChange={(e) => setFilterMode(e.target.value as 'all' | 'clinic' | 'lab' | 'low')}
+              aria-label="تصفية المخزن"
+              className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3.5 py-2 pl-8 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
             >
-              الكل ({inventory.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterMode('clinic')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                filterMode === 'clinic'
-                  ? 'bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              مخزن العيادة ({clinicItemsCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterMode('lab')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                filterMode === 'lab'
-                  ? 'bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              مخزن المعمل ({labItemsCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterMode('low')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-                filterMode === 'low'
-                  ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              النواقص ({lowStockItems.length})
-            </button>
+              <option value="all">تصفية المخزن: الكل ({inventory.length})</option>
+              <option value="clinic">مخزن العيادة ({clinicItemsCount})</option>
+              <option value="lab">مخزن المعمل ({labItemsCount})</option>
+              <option value="low">النواقص فقط ({lowStockItems.length})</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          <div className="grid grid-cols-2 sm:flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               disabled={isAuditing}
@@ -436,8 +424,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             const uUnit = item.usageUnit || item.unit || 'قطعة';
             const subUnits =
               Number.isFinite(Number(item.remainingSubUnits)) && Number(item.remainingSubUnits) >= 0
-                ? Number(item.remainingSubUnits)
-                : +(Number(item.qty || 0) * pkgSize).toFixed(2);
+                ? +Number(item.remainingSubUnits).toFixed(4)
+                : +(Number(item.qty || 0) * pkgSize).toFixed(4);
+            const linkedSrvNames = getLinkedServicesForMaterial(item);
 
             return (
               <div
@@ -460,6 +449,12 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         {isLab ? 'مخزن المعمل' : 'مخزن العيادة'}
                       </span>
                     </div>
+                    {linkedSrvNames.length > 0 && (
+                      <div className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 mt-1">
+                        <Link2 className="w-3 h-3 shrink-0" />
+                        <span>مربوط بـ: {linkedSrvNames.join(' + ')}</span>
+                      </div>
+                    )}
                     {item.notes && (
                       <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-words">
                         {item.notes}
@@ -507,53 +502,96 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     {(Number(item.qty) * Number(item.unitPrice)).toLocaleString()} {defaultCurrency}
                   </span>
 
-                  <div className="inline-flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      dir="ltr"
-                      title={`خصم 1 ${item.unit}`}
-                      onClick={() => handleQuickAdjust(item, -1)}
-                      className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg hover:bg-amber-100/70 transition-colors"
-                    >
-                      <Minus className="w-3 h-3" />
-                      <span>1</span>
-                    </button>
-                    <button
-                      type="button"
-                      dir="ltr"
-                      title={`إضافة 1 ${item.unit}`}
-                      onClick={() => handleQuickAdjust(item, 1)}
-                      className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg hover:bg-emerald-100/70 transition-colors"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>1</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(item)}
-                      className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {confirmDeleteId === item.id ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onDeleteItem(item.id);
-                          setConfirmDeleteId(null);
-                        }}
-                        className="px-2 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
-                      >
-                        تأكيد؟
-                      </button>
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteItem(item.id);
+                            setConfirmDeleteId(null);
+                          }}
+                          className="px-2.5 py-1 text-xs font-bold text-white bg-rose-600 rounded-lg"
+                        >
+                          تأكيد الحذف
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-2 py-1 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 rounded-lg"
+                        >
+                          إلغاء
+                        </button>
+                      </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(item.id)}
-                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenItemMenuId((prev) => (prev === item.id ? null : item.id))
+                          }
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500 transition-colors"
+                        >
+                          <span>إجراءات الصنف</span>
+                          <MoreVertical className="w-3.5 h-3.5 text-slate-500" />
+                        </button>
+
+                        {openItemMenuId === item.id && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-30"
+                              onClick={() => setOpenItemMenuId(null)}
+                            />
+                            <div className="absolute left-0 bottom-full mb-1.5 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl py-1.5 z-40 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenItemMenuId(null);
+                                  openEditModal(item);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>تعديل الصنف والربط</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenItemMenuId(null);
+                                  handleQuickAdjust(item, 1);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>تزويد 1 {item.unit} (+1)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenItemMenuId(null);
+                                  handleQuickAdjust(item, -1);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                                <span>خصم 1 {item.unit} (-1)</span>
+                              </button>
+                              <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenItemMenuId(null);
+                                  setConfirmDeleteId(item.id);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-right font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>حذف الصنف</span>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -586,13 +624,20 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 const subUnits =
                   Number.isFinite(Number(item.remainingSubUnits)) &&
                   Number(item.remainingSubUnits) >= 0
-                    ? Number(item.remainingSubUnits)
-                    : +(Number(item.qty || 0) * pkgSize).toFixed(2);
+                    ? +Number(item.remainingSubUnits).toFixed(4)
+                    : +(Number(item.qty || 0) * pkgSize).toFixed(4);
+                const linkedSrvNames = getLinkedServicesForMaterial(item);
 
                 return (
                   <tr key={item.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
                     <td className="py-3 px-3">
                       <div className="font-bold text-slate-900 dark:text-slate-100">{item.name}</div>
+                      {linkedSrvNames.length > 0 && (
+                        <div className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                          <Link2 className="w-3 h-3" />
+                          <span>مربوط بـ: {linkedSrvNames.join(' + ')}</span>
+                        </div>
+                      )}
                       {item.notes && <div className="text-xs text-slate-500">{item.notes}</div>}
                     </td>
                     <td className="py-3 px-3">
@@ -639,35 +684,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       )}
                     </td>
                     <td className="py-3 px-3 text-left">
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          dir="ltr"
-                          title={`خصم 1 ${item.unit}`}
-                          onClick={() => handleQuickAdjust(item, -1)}
-                          className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg hover:bg-amber-100/70 transition-colors"
-                        >
-                          <Minus className="w-3 h-3" />
-                          <span>1</span>
-                        </button>
-                        <button
-                          type="button"
-                          dir="ltr"
-                          title={`تزويد 1 ${item.unit}`}
-                          onClick={() => handleQuickAdjust(item, 1)}
-                          className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg hover:bg-emerald-100/70 transition-colors"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>1</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(item)}
-                          className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        {confirmDeleteId === item.id ? (
+                      {confirmDeleteId === item.id ? (
+                        <div className="inline-flex items-center gap-1">
                           <button
                             type="button"
                             onClick={() => {
@@ -678,16 +696,84 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                           >
                             تأكيد؟
                           </button>
-                        ) : (
                           <button
                             type="button"
-                            onClick={() => setConfirmDeleteId(item.id)}
-                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-2 py-1 text-xs font-bold text-slate-600 bg-slate-200 rounded-lg"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            إلغاء
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="relative inline-block">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenItemMenuId((prev) => (prev === item.id ? null : item.id))
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-sky-500"
+                          >
+                            <span>إجراءات</span>
+                            <MoreVertical className="w-3.5 h-3.5" />
+                          </button>
+
+                          {openItemMenuId === item.id && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-30"
+                                onClick={() => setOpenItemMenuId(null)}
+                              />
+                              <div className="absolute left-0 top-full mt-1 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl py-1.5 z-40 text-xs text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenItemMenuId(null);
+                                    openEditModal(item);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-sky-600 dark:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>تعديل الصنف والربط</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenItemMenuId(null);
+                                    handleQuickAdjust(item, 1);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>تزويد 1 {item.unit} (+1)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenItemMenuId(null);
+                                    handleQuickAdjust(item, -1);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-amber-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                  <span>خصم 1 {item.unit} (-1)</span>
+                                </button>
+                                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenItemMenuId(null);
+                                    setConfirmDeleteId(item.id);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>حذف الصنف</span>
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
@@ -892,6 +978,29 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     placeholder="0"
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm font-mono tabular-nums font-bold"
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  ربط تلقائي بخدمة علاجية (لخصم المادة عند اختيار الخدمة)
+                </label>
+                <div className="relative">
+                  <select
+                    value={formData.linkedService}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, linkedService: e.target.value }))
+                    }
+                    className="w-full appearance-none rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 pl-8 text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="">— بدون ربط مباشر (أو يدار من وصفات الخدمات) —</option>
+                    {services.map((srv) => (
+                      <option key={srv.id} value={srv.name}>
+                        {srv.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
 

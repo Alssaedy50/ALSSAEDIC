@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  ChevronDown,
   Loader2,
   PlusCircle,
   Sparkles,
@@ -285,37 +286,47 @@ export const FinanceDashboard: React.FC<FinanceDashboardProps> = ({
         </section>
       ) : (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
-              {CURRENCIES.map((curr) => (
-                <button
-                  key={curr}
-                  type="button"
-                  onClick={() => setSelectedCurrency(curr)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${
-                    selectedCurrency === curr
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {curr}
-                </button>
-              ))}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
+            <div className="relative min-w-[190px] flex-1 sm:flex-initial">
+              <select
+                value={selectedCurrency}
+                onChange={(e) => setSelectedCurrency(e.target.value)}
+                aria-label="العملة المعروضة"
+                className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3.5 py-2 pl-8 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              >
+                {CURRENCIES.map((curr) => (
+                  <option key={curr} value={curr}>
+                    العملة المعروضة: {curr}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
-            <button
-              type="button"
-              disabled={isGeneratingReport}
-              onClick={handleGenerateFinancialReport}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-lg"
-            >
-              {isGeneratingReport ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              <span>تقرير مالي</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsExpenseModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
+              >
+                <PlusCircle className="w-4 h-4 text-rose-500" />
+                <span>تسجيل مصروف</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isGeneratingReport}
+                onClick={handleGenerateFinancialReport}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-60 rounded-xl transition-colors"
+              >
+                {isGeneratingReport ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                <span>تقرير مالي</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

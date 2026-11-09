@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   Building2,
   CheckCircle2,
+  ChevronDown,
   Cpu,
   Crown,
   Database,
@@ -871,11 +872,38 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
-      {/* Top Segmented Switcher (الهوية | الخدمات | الفريق | النسخ | [للمطور فقط: الذكاء AI]) */}
+      {/* Mobile Dropdown Switcher + Desktop Segmented Bar */}
+      <div className="sm:hidden">
+        <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+          قسم الإعدادات المعروض:
+        </label>
+        <div className="relative">
+          <select
+            value={subTab}
+            onChange={(e) => {
+              const nextTab = e.target.value as typeof subTab;
+              setSubTab(nextTab);
+              try {
+                localStorage.setItem('docai_settings_subtab_v1', nextTab);
+              } catch {}
+            }}
+            aria-label="قسم الإعدادات"
+            className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 pl-9 text-xs font-bold text-slate-900 dark:text-slate-100 shadow-xs focus:outline-none focus:border-sky-500"
+          >
+            <option value="identity">1. الهوية وبيانات العيادة</option>
+            <option value="services">2. الخدمات ووصفات المواد ({formState.services.length})</option>
+            <option value="team">3. فريق العمل والصلاحيات</option>
+            <option value="backup">4. النسخ الاحتياطي وتليجرام</option>
+            {isPlatformDev && <option value="ai">5. إدارة الذكاء الاصطناعي والباقات (للمطور)</option>}
+          </select>
+          <ChevronDown className="w-4 h-4 text-sky-600 dark:text-sky-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+      </div>
+
       <div
-        className={`grid grid-cols-2 ${
+        className={`hidden sm:grid ${
           isPlatformDev ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
-        } gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] sm:text-xs`}
+        } gap-1 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs`}
       >
         <button
           type="button"
@@ -883,7 +911,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             setSubTab('identity');
             try { localStorage.setItem('docai_settings_subtab_v1', 'identity'); } catch {}
           }}
-          className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate ${
+          className={`py-2 px-2 rounded-lg font-bold transition-colors truncate ${
             subTab === 'identity'
               ? 'bg-sky-600 text-white shadow-xs'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -897,7 +925,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             setSubTab('services');
             try { localStorage.setItem('docai_settings_subtab_v1', 'services'); } catch {}
           }}
-          className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate ${
+          className={`py-2 px-2 rounded-lg font-bold transition-colors truncate ${
             subTab === 'services'
               ? 'bg-sky-600 text-white shadow-xs'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -911,7 +939,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             setSubTab('team');
             try { localStorage.setItem('docai_settings_subtab_v1', 'team'); } catch {}
           }}
-          className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate ${
+          className={`py-2 px-2 rounded-lg font-bold transition-colors truncate ${
             subTab === 'team'
               ? 'bg-sky-600 text-white shadow-xs'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -925,13 +953,13 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             setSubTab('backup');
             try { localStorage.setItem('docai_settings_subtab_v1', 'backup'); } catch {}
           }}
-          className={`py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate ${
+          className={`py-2 px-2 rounded-lg font-bold transition-colors truncate ${
             subTab === 'backup'
               ? 'bg-sky-600 text-white shadow-xs'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
           }`}
         >
-          النسخ
+          النسخ الاحتياطي
         </button>
         {isPlatformDev && (
           <button
@@ -940,14 +968,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               setSubTab('ai');
               try { localStorage.setItem('docai_settings_subtab_v1', 'ai'); } catch {}
             }}
-            className={`col-span-2 sm:col-span-1 py-2 px-1 sm:px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
+            className={`py-2 px-2 rounded-lg font-bold transition-colors truncate flex items-center justify-center gap-1 ${
               subTab === 'ai'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 shrink-0" />
-            <span>الذكاء</span>
+            <span>الذكاء والباقات</span>
           </button>
         )}
       </div>
@@ -2319,84 +2347,69 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {[1, 2, 3, 4].map((count) => (
-                        <button
-                          key={count}
-                          type="button"
-                          onClick={() => setEditingServiceTotalSessions(count)}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                            editingServiceTotalSessions === count
-                              ? 'bg-amber-600 text-white shadow-xs'
-                              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:bg-amber-100/50'
-                          }`}
-                        >
-                          {count === 1 ? 'جلسة واحدة' : `${count} جلسات`}
-                        </button>
-                      ))}
-
-                      <div className="flex items-center gap-1 mr-1">
-                        <SmartNumberInput
-                          min={1}
-                          allowDecimal={false}
-                          emptyFallbackValue={1}
-                          placeholder="1"
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="relative min-w-[160px]">
+                        <select
                           value={editingServiceTotalSessions}
-                          onValueChange={(val) =>
-                            setEditingServiceTotalSessions(Math.max(1, Math.round(val) || 1))
+                          onChange={(e) =>
+                            setEditingServiceTotalSessions(Math.max(1, Number(e.target.value) || 1))
                           }
-                          className="w-14 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs font-mono font-bold text-center"
-                        />
-                        <span className="text-[11px] font-bold text-slate-500">جلسة</span>
+                          aria-label="عدد جلسات الخدمة"
+                          className="w-full appearance-none rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-3 py-2 pl-8 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
+                        >
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((count) => (
+                            <option key={count} value={count}>
+                              {count === 1
+                                ? 'جلسة واحدة (1)'
+                                : count === 2
+                                  ? 'جلستان (2)'
+                                  : `${count} جلسات`}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-amber-600 dark:text-amber-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* 2. Session Filter Tabs */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800">
+                {/* 2. Session Filter Dropdown & Add Material Button */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
+                  <div className="relative min-w-[210px] flex-1 sm:flex-initial">
+                    <select
+                      value={activeSessionFilter === 'all' ? 'all' : String(activeSessionFilter)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setActiveSessionFilter(val === 'all' ? 'all' : Number(val));
+                      }}
+                      aria-label="تصفية الجلسات"
+                      className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 pl-8 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                    >
+                      <option value="all">
+                        عرض المواد: الكل ({editingRecipeRules.length} مادة)
+                      </option>
+                      {Array.from({ length: totalSessions }, (_, i) => i + 1).map((sNum) => {
+                        const countInSession = editingRecipeRules.filter(
+                          (r) => r.sessionNumber === 'all' || r.sessionNumber === sNum
+                        ).length;
+                        return (
+                          <option key={sNum} value={sNum}>
+                            مواد الجلسة {sNum} ({countInSession})
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+
                   <button
                     type="button"
-                    onClick={() => setActiveSessionFilter('all')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                      activeSessionFilter === 'all'
-                        ? 'bg-sky-600 text-white shadow-xs'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                    }`}
+                    onClick={handleAddMaterialRuleRow}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition-colors shrink-0"
                   >
-                    الكل (الإجمالي الكلي)
+                    <Plus className="w-4 h-4" />
+                    <span>إضافة مادة للخدمة</span>
                   </button>
-
-                  {Array.from({ length: totalSessions }, (_, i) => i + 1).map((sNum) => {
-                    const countInSession = editingRecipeRules.filter(
-                      (r) => r.sessionNumber === 'all' || r.sessionNumber === sNum
-                    ).length;
-                    return (
-                      <button
-                        key={sNum}
-                        type="button"
-                        onClick={() => setActiveSessionFilter(sNum)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
-                          activeSessionFilter === sNum
-                            ? 'bg-sky-600 text-white shadow-xs'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                        }`}
-                      >
-                        <span>الجلسة {sNum}</span>
-                        {countInSession > 0 && (
-                          <span
-                            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                              activeSessionFilter === sNum
-                                ? 'bg-sky-800 text-white'
-                                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                            }`}
-                          >
-                            {countInSession}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
                 </div>
 
                 {/* 3. Materials Rules List */}
