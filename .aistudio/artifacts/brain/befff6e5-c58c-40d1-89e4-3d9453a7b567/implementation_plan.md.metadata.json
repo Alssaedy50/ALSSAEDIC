@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan for refactoring Vouchers (\"السندات\") mobile RTL UI/UX: removing bottom navigation bar, redesigning voucher cards into compact single-row patient items, and adding a dedicated client details and actions modal.",
-  "updatedAt":  "2026-11-07T03:25:55.136592431Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

@@ -1054,7 +1054,25 @@ function buildClinicCloudPayload(
   return payload;
 }
 
+const RETIRED_GROQ_MODELS = new Set([
+  'mixtral-8x7b-32768',
+  'gemma-7b-it',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+  'llama-3.2-90b-vision-preview',
+  'llama-3.2-11b-vision-preview',
+  'llama3-70b-8192',
+  'llama3-8b-8192',
+]);
+
 function sanitizeAiConfigPayload(cfg: Partial<AIProviderConfig>): AIProviderConfig {
+  const rawGroqText = sanitizeStr(cfg.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel, 120, DEFAULT_AI_CONFIG.groqTextModel);
+  const rawGroqVision = sanitizeStr(cfg.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel, 120, DEFAULT_AI_CONFIG.groqVisionModel);
+  const rawDataEntry = sanitizeStr(cfg.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel, 120, DEFAULT_AI_CONFIG.dataEntryModel);
+  const rawTts = sanitizeStr(cfg.ttsModel || DEFAULT_AI_CONFIG.ttsModel, 100, DEFAULT_AI_CONFIG.ttsModel);
+
   return {
     geminiApiKey: sanitizeStr(cfg.geminiApiKey || '', 300, ''),
     geminiModel: sanitizeStr(cfg.geminiModel || DEFAULT_AI_CONFIG.geminiModel, 100, DEFAULT_AI_CONFIG.geminiModel),
@@ -1064,25 +1082,26 @@ function sanitizeAiConfigPayload(cfg: Partial<AIProviderConfig>): AIProviderConf
       DEFAULT_AI_CONFIG.geminiVisionModel || 'gemini-2.5-flash'
     ),
     enableWebGrounding: cfg.enableWebGrounding !== false,
-    groqApiKey: sanitizeStr(cfg.groqApiKey || '', 300, ''),
-    groqTextModel: sanitizeStr(cfg.groqTextModel || DEFAULT_AI_CONFIG.groqTextModel, 120, DEFAULT_AI_CONFIG.groqTextModel),
-    groqVisionModel: sanitizeStr(cfg.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel, 120, DEFAULT_AI_CONFIG.groqVisionModel),
+    groqApiKey: sanitizeStr(cfg.groqApiKey || DEFAULT_AI_CONFIG.groqApiKey || '', 300, DEFAULT_AI_CONFIG.groqApiKey || ''),
+    groqTextModel: RETIRED_GROQ_MODELS.has(rawGroqText) ? 'qwen/qwen3.8-27b' : rawGroqText,
+    groqVisionModel: RETIRED_GROQ_MODELS.has(rawGroqVision) ? 'qwen/qwen3.8-27b' : rawGroqVision,
     groqWhisperModel: sanitizeStr(cfg.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel, 100, DEFAULT_AI_CONFIG.groqWhisperModel),
     openrouterApiKey: sanitizeStr(cfg.openrouterApiKey || '', 300, ''),
     openrouterModel: sanitizeStr(cfg.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel, 120, DEFAULT_AI_CONFIG.openrouterModel),
     openrouterVisionModel: sanitizeStr(
-      cfg.openrouterVisionModel || DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.0-flash-exp:free',
+      cfg.openrouterVisionModel || DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.5-flash',
       120,
-      DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.0-flash-exp:free'
+      DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.5-flash'
     ),
-    sttEngine: cfg.sttEngine === 'groq' ? 'groq' : 'browser',
-    ttsModel: sanitizeStr(cfg.ttsModel || DEFAULT_AI_CONFIG.ttsModel, 100, DEFAULT_AI_CONFIG.ttsModel),
-    dataEntryModel: sanitizeStr(
-      cfg.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel,
-      120,
-      DEFAULT_AI_CONFIG.dataEntryModel
-    ),
-    customPriority: ['gemini', 'groq', 'openrouter'],
+    sttEngine: cfg.sttEngine === 'browser' ? 'browser' : 'groq',
+    ttsModel:
+      rawTts === 'playai-tts-arabic'
+        ? 'canopylabs/orpheus-arabic-saudi'
+        : rawTts === 'playai-tts'
+          ? 'canopylabs/orpheus-v1-english'
+          : rawTts,
+    dataEntryModel: RETIRED_GROQ_MODELS.has(rawDataEntry) ? 'openai/gpt-oss-120b' : rawDataEntry,
+    customPriority: ['groq', 'gemini', 'openrouter'],
   };
 }
 

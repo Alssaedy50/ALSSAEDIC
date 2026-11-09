@@ -1858,16 +1858,21 @@ export default function App() {
               onSetMessages={(msgs) => setChatMessages(msgs)}
               onClearMessages={() => setChatMessages([])}
               onApproveReceiptEntry={(recData) => {
-                const maxNo = receipts.reduce((max, r) => Math.max(max, Number(r.receiptNo) || 0), 0);
-                const nextReceiptNo = maxNo + 1;
+                const cleanPatient = (recData.patientName || '').trim();
                 const totalAmount = Math.max(0, Number(recData.totalAmount) || 0);
                 const paidAmount = Math.max(0, Number(recData.paidAmount) || 0);
+                if (cleanPatient.length < 2 || totalAmount <= 0 || paidAmount > totalAmount) {
+                  notify('بيانات السند غير مكتملة أو غير صالحة للحفظ', 'warning');
+                  return;
+                }
+                const maxNo = receipts.reduce((max, r) => Math.max(max, Number(r.receiptNo) || 0), 0);
+                const nextReceiptNo = maxNo + 1;
                 const remainingAmount = Math.max(0, +(totalAmount - paidAmount).toFixed(2));
                 const currency = recData.currency || settings.identity.defaultCurrency;
                 handleSaveReceipt({
                   receiptNo: nextReceiptNo,
                   date: new Date().toISOString().slice(0, 10),
-                  patientName: recData.patientName.trim(),
+                  patientName: cleanPatient,
                   patientPhone: (recData.patientPhone || '').trim(),
                   services:
                     Array.isArray(recData.services) && recData.services.length > 0
@@ -1880,7 +1885,7 @@ export default function App() {
                   currency,
                   paymentMethod: recData.paymentMethod || 'نقداً',
                   amountWords: numberToArabicWords(paidAmount, String(currency)),
-                  notes: (recData.notes || 'إدخال مباشر عبر المساعد الذكي').trim(),
+                  notes: (recData.notes || 'إدخال معتمد عبر المساعد').trim(),
                   accountantSig: '',
                   receiverSig: '',
                   paperFormat: 'a5',
@@ -1888,12 +1893,26 @@ export default function App() {
                 });
               }}
               onApproveInventoryEntry={(invData) => {
-                const targetName = invData.name.trim();
+                const targetName = (invData.name || '').trim();
+                const qty = Math.max(0, Number(invData.qty) || 0);
+                if (targetName.length < 2 || qty <= 0) {
+                  notify('بيانات الصنف أو الكمية غير صالحة للحفظ', 'warning');
+                  return;
+                }
                 const existing = inventory.find(
-                  (item) => item.name.trim().toLowerCase() === targetName.toLowerCase()
+                  (item) =>
+                    item.id === invData.matchedItemId ||
+                    item.name.trim().toLowerCase() === targetName.toLowerCase()
                 );
-                const qty = Math.max(0.01, Number(invData.qty) || 1);
-                if (invData.operation === 'consume' && existing) {
+                if (invData.operation === 'consume') {
+                  if (!existing) {
+                    notify(`الصنف (${targetName}) غير مسجل في المخزون للسحب منه`, 'error');
+                    return;
+                  }
+                  if (qty > Number(existing.qty)) {
+                    notify(`الكمية المطلوبة (${qty}) تتجاوز المتوفر (${existing.qty})`, 'error');
+                    return;
+                  }
                   handleQuickConsumeInventory(existing.id, qty);
                 } else if (invData.operation === 'restock' && existing) {
                   handleQuickRestockInventory(existing.id, qty, Boolean(invData.recordAsExpense));
@@ -1914,7 +1933,7 @@ export default function App() {
                       unitPrice,
                       totalCost: +(nextQty * unitPrice).toFixed(2),
                       linkedService: invData.linkedService || existing?.linkedService || '',
-                      notes: (invData.notes || existing?.notes || 'إدخال مباشر عبر المساعد الذكي').trim(),
+                      notes: (invData.notes || existing?.notes || 'إدخال معتمد عبر المساعد').trim(),
                     },
                     Boolean(invData.recordAsExpense)
                   );

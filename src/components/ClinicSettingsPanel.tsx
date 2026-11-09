@@ -711,12 +711,14 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   const handleTestProvider = async (provider: 'gemini' | 'groq' | 'openrouter') => {
     setTestingProvider(provider);
     try {
-      const res = await testAIProviderConnection(provider, aiConfig);
+      const workingCopy: AIProviderConfig = { ...aiConfig };
+      saveAIProviderConfig(workingCopy);
+      const res = await testAIProviderConnection(provider, workingCopy);
       setTestResults((prev) => ({
         ...prev,
         [provider]: res,
       }));
-      setAiConfig(loadAIProviderConfig());
+      setAiConfig({ ...workingCopy });
       if (res.ok) {
         const countLabel = res.activeModelsCount ? ` (${res.activeModelsCount} نموذج جاهز)` : '';
         notify(
@@ -744,10 +746,12 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
   const handleTestAllProvidersDynamic = async () => {
     setTestingProvider('all');
     try {
+      const workingCopy: AIProviderConfig = { ...aiConfig };
+      saveAIProviderConfig(workingCopy);
       const providersToTest: ('groq' | 'gemini' | 'openrouter')[] = [];
-      if (aiConfig.groqApiKey.trim()) providersToTest.push('groq');
-      if (aiConfig.geminiApiKey.trim()) providersToTest.push('gemini');
-      if (aiConfig.openrouterApiKey.trim()) providersToTest.push('openrouter');
+      if (workingCopy.groqApiKey.trim()) providersToTest.push('groq');
+      if (workingCopy.geminiApiKey.trim()) providersToTest.push('gemini');
+      if (workingCopy.openrouterApiKey.trim()) providersToTest.push('openrouter');
 
       if (providersToTest.length === 0) {
         notify('يرجى إدخال مفتاح واحد على الأقل (Groq أو Gemini أو OpenRouter) لبدء الفحص الديناميكي', 'warning');
@@ -756,7 +760,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
       let successCount = 0;
       for (const p of providersToTest) {
-        const res = await testAIProviderConnection(p, aiConfig);
+        const res = await testAIProviderConnection(p, workingCopy);
         setTestResults((prev) => ({ ...prev, [p]: res }));
         if (res.ok) successCount++;
       }
@@ -1513,7 +1517,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             </div>
           </section>
 
-          {/* PROVIDER 1: Groq Cloud (14 Text Models + 4 Vision Models + 3 Audio Models) */}
+          {/* PROVIDER 1: Groq Cloud */}
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
             <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
@@ -1523,9 +1527,6 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 <div>
                   <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                     <span>Groq Cloud</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                      {GROQ_TEXT_MODELS.length} نموذج جاهز
-                    </span>
                   </h3>
                   <a
                     href="https://console.groq.com/keys"
@@ -1547,7 +1548,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     }`}
                   >
                     {testResults['groq'].ok
-                      ? `✓ نشط (${testResults['groq'].activeModelsCount || GROQ_TEXT_MODELS.length} نموذج · ${testResults['groq'].latencyMs}ms)`
+                      ? `✓ نشط (${testResults['groq'].latencyMs}ms)`
                       : '✗ فشل'}
                   </span>
                 )}
@@ -1562,7 +1563,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   ) : (
                     <Key className="w-3 h-3" />
                   )}
-                  <span>فحص ديناميكي</span>
+                  <span>فحص</span>
                 </button>
               </div>
             </div>
@@ -1595,7 +1596,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    نموذج النصوص الأساسي ({GROQ_TEXT_MODELS.length} بالتبديل التلقائي)
+                    نموذج النصوص
                   </label>
                   <select
                     value={aiConfig.groqTextModel}
@@ -1612,7 +1613,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    نموذج تحليل الصور ({GROQ_VISION_MODELS.length} نماذج رؤية)
+                    نموذج الصور
                   </label>
                   <select
                     value={aiConfig.groqVisionModel}
@@ -1629,7 +1630,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    نموذج تفريغ الصوت ({GROQ_WHISPER_MODELS.length} نماذج)
+                    نموذج الصوت
                   </label>
                   <select
                     value={aiConfig.groqWhisperModel}
@@ -1647,7 +1648,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             </div>
           </section>
 
-          {/* PROVIDER 2: Google Gemini (12 Text Models + 4 Vision Models) */}
+          {/* PROVIDER 2: Google Gemini */}
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
             <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
@@ -1657,9 +1658,6 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 <div>
                   <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                     <span>Google Gemini</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400">
-                      {GEMINI_CANDIDATE_MODELS.length} نموذج جاهز
-                    </span>
                   </h3>
                   <a
                     href="https://aistudio.google.com/app/apikey"
@@ -1681,7 +1679,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     }`}
                   >
                     {testResults['gemini'].ok
-                      ? `✓ نشط (${testResults['gemini'].activeModelsCount || GEMINI_CANDIDATE_MODELS.length} نموذج · ${testResults['gemini'].latencyMs}ms)`
+                      ? `✓ نشط (${testResults['gemini'].latencyMs}ms)`
                       : '✗ فشل'}
                   </span>
                 )}
@@ -1696,7 +1694,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   ) : (
                     <Key className="w-3 h-3" />
                   )}
-                  <span>فحص ديناميكي</span>
+                  <span>فحص</span>
                 </button>
               </div>
             </div>
@@ -1728,7 +1726,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  نموذج النصوص ({GEMINI_CANDIDATE_MODELS.length} بالتبديل التلقائي)
+                  نموذج النصوص
                 </label>
                 <select
                   value={aiConfig.geminiModel}
@@ -1745,7 +1743,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  نموذج تحليل الصور ({GEMINI_VISION_MODELS.length} نماذج رؤية)
+                  نموذج الصور
                 </label>
                 <select
                   value={aiConfig.geminiVisionModel || 'gemini-2.5-flash'}
@@ -1775,7 +1773,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             </label>
           </section>
 
-          {/* PROVIDER 3: OpenRouter (15 Free/Fast Models + 5 Vision Models) */}
+          {/* PROVIDER 3: OpenRouter */}
           <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3.5">
             <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
@@ -1785,9 +1783,6 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                 <div>
                   <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                     <span>OpenRouter</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400">
-                      {OPENROUTER_MODELS.length} نموذج مجاني/سريع
-                    </span>
                   </h3>
                   <a
                     href="https://openrouter.ai/keys"
@@ -1809,7 +1804,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                     }`}
                   >
                     {testResults['openrouter'].ok
-                      ? `✓ نشط (${testResults['openrouter'].activeModelsCount || OPENROUTER_MODELS.length} نموذج · ${testResults['openrouter'].latencyMs}ms)`
+                      ? `✓ نشط (${testResults['openrouter'].latencyMs}ms)`
                       : '✗ فشل'}
                   </span>
                 )}
@@ -1824,7 +1819,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   ) : (
                     <Key className="w-3 h-3" />
                   )}
-                  <span>فحص ديناميكي</span>
+                  <span>فحص</span>
                 </button>
               </div>
             </div>
@@ -1856,7 +1851,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  نموذج النصوص ({OPENROUTER_MODELS.length} بالتبديل التلقائي)
+                  نموذج النصوص
                 </label>
                 <select
                   value={aiConfig.openrouterModel}
@@ -1873,7 +1868,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  نموذج تحليل الصور ({OPENROUTER_VISION_MODELS.length} نماذج رؤية)
+                  نموذج الصور
                 </label>
                 <select
                   value={aiConfig.openrouterVisionModel || 'google/gemini-2.5-flash'}
@@ -1895,17 +1890,17 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
             <div className="flex items-center gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
               <Cpu className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
-                تخصيص نماذج القراءة الصوتية والإدخال المباشر للسندات والمخزون
+                نماذج الإدخال والصوت
               </h3>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  نموذج الإدخال المباشر للسندات والمخزون
+                  نموذج الإدخال المباشر
                 </label>
                 <select
-                  value={aiConfig.dataEntryModel || 'llama-3.3-70b-versatile'}
+                  value={aiConfig.dataEntryModel || 'openai/gpt-oss-120b'}
                   onChange={(e) => handleAiFieldChange('dataEntryModel', e.target.value)}
                   className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/5 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
@@ -1919,10 +1914,10 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  نموذج القراءة الصوتية للردود (TTS)
+                  نموذج قراءة الردود
                 </label>
                 <select
-                  value={aiConfig.ttsModel || 'playai-tts-arabic'}
+                  value={aiConfig.ttsModel || 'canopylabs/orpheus-arabic-saudi'}
                   onChange={(e) => handleAiFieldChange('ttsModel', e.target.value)}
                   className="w-full rounded-lg border border-sky-500/40 bg-sky-500/5 dark:bg-slate-950 px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
@@ -1951,7 +1946,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   className="text-amber-600"
                 />
                 <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  تفريغ الصوت عبر Groq Whisper
+                  تفريغ Groq Whisper
                 </span>
               </label>
 
@@ -1970,7 +1965,7 @@ export const ClinicSettingsPanel: React.FC<ClinicSettingsPanelProps> = ({
                   className="text-sky-600"
                 />
                 <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  الإملاء الصوتي المباشر للمتصفح
+                  إملاء المتصفح
                 </span>
               </label>
             </div>

@@ -588,7 +588,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              مفتاح Google Gemini API Key
+                              مفتاح Gemini
                             </label>
                             <input
                               type={showInlineKeys ? 'text' : 'password'}
@@ -604,7 +604,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              نموذج Gemini الافتراضي
+                              نموذج Gemini
                             </label>
                             <select
                               value={clinicAiDraft.geminiModel}
@@ -623,7 +623,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              مفتاح Groq Cloud API Key
+                              مفتاح Groq
                             </label>
                             <input
                               type={showInlineKeys ? 'text' : 'password'}
@@ -639,7 +639,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              نموذج Groq للنصوص
+                              نموذج Groq
                             </label>
                             <select
                               value={clinicAiDraft.groqTextModel}
@@ -658,7 +658,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              مفتاح OpenRouter API Key
+                              مفتاح OpenRouter
                             </label>
                             <input
                               type={showInlineKeys ? 'text' : 'password'}
@@ -674,7 +674,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              نموذج OpenRouter الافتراضي
+                              نموذج OpenRouter
                             </label>
                             <select
                               value={clinicAiDraft.openrouterModel}
@@ -693,7 +693,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              نموذج الرؤية (Groq Vision)
+                              نموذج الصور
                             </label>
                             <select
                               value={clinicAiDraft.groqVisionModel}
@@ -712,7 +712,7 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              محرك التسجيل الصوتي (Voice STT)
+                              تسجيل الصوت
                             </label>
                             <select
                               value={clinicAiDraft.sttEngine}
@@ -724,17 +724,17 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                               }
                               className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
                             >
-                              <option value="browser">المتصفح المباشر (Web Speech)</option>
-                              <option value="groq">Groq Whisper ({GROQ_WHISPER_MODELS[0]})</option>
+                              <option value="browser">إملاء المتصفح</option>
+                              <option value="groq">Groq Whisper</option>
                             </select>
                           </div>
 
                           <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              نموذج القراءة الصوتية (TTS)
+                              نموذج قراءة الردود
                             </label>
                             <select
-                              value={clinicAiDraft.ttsModel || 'playai-tts-arabic'}
+                              value={clinicAiDraft.ttsModel || 'canopylabs/orpheus-arabic-saudi'}
                               onChange={(e) =>
                                 setClinicAiDraft((prev) => ({
                                   ...prev,
@@ -751,12 +751,12 @@ export const WorkspaceTeamPanel: React.FC<WorkspaceTeamPanelProps> = ({
                             </select>
                           </div>
 
-                          <div className="sm:col-span-2">
+                          <div>
                             <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                              نموذج الإدخال المباشر للسندات والمخزون
+                              نموذج الإدخال المباشر
                             </label>
                             <select
-                              value={clinicAiDraft.dataEntryModel || 'llama-3.3-70b-versatile'}
+                              value={clinicAiDraft.dataEntryModel || 'openai/gpt-oss-120b'}
                               onChange={(e) =>
                                 setClinicAiDraft((prev) => ({
                                   ...prev,

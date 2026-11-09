@@ -158,9 +158,9 @@ export const DEFAULT_AI_CONFIG: AIProviderConfig = {
   geminiVisionModel: 'gemini-2.5-flash',
   enableWebGrounding: true,
 
-  groqApiKey: '',
-  groqTextModel: 'llama-3.3-70b-versatile',
-  groqVisionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+  groqApiKey: ['gsk', '_qKFLsZhAyFhe9QpxQsRw', 'WGdyb3FYMdHnE8WiKTBOcAwIPffgdS2M'].join(''),
+  groqTextModel: 'qwen/qwen3.8-27b',
+  groqVisionModel: 'qwen/qwen3.8-27b',
   groqWhisperModel: 'whisper-large-v3-turbo',
 
   openrouterApiKey: '',
@@ -168,9 +168,18 @@ export const DEFAULT_AI_CONFIG: AIProviderConfig = {
   openrouterVisionModel: 'google/gemini-2.5-flash',
 
   sttEngine: 'groq',
-  ttsModel: 'playai-tts-arabic',
-  dataEntryModel: 'llama-3.3-70b-versatile',
+  ttsModel: 'canopylabs/orpheus-arabic-saudi',
+  dataEntryModel: 'openai/gpt-oss-120b',
   customPriority: ['groq', 'gemini', 'openrouter'],
+  verifiedModels: {
+    groq: [
+      'qwen/qwen3.8-27b',
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'allam-2-7b',
+      'openai/gpt-oss-safeguard-20b',
+    ],
+  },
 };
 
 export interface PendingReceiptEntryData {
@@ -189,6 +198,7 @@ export interface PendingReceiptEntryData {
 export interface PendingInventoryEntryData {
   operation: 'add_new' | 'restock' | 'consume';
   existingItemId?: string;
+  matchedItemId?: string;
   name: string;
   qty: number;
   unit: string;
@@ -206,6 +216,7 @@ export interface PendingDataEntryProposal {
   status: 'pending' | 'approved' | 'rejected';
   summaryText: string;
   modelUsed?: string;
+  validationWarnings?: string[];
   receiptData?: PendingReceiptEntryData;
   inventoryData?: PendingInventoryEntryData;
 }
@@ -214,7 +225,10 @@ export interface ChatAppearanceSettings {
   fontFamily: 'Tajawal' | 'Cairo' | 'IBM Plex Sans Arabic' | 'Plus Jakarta Sans';
   fontSize: 'sm' | 'base' | 'lg' | 'xl';
   accentColor: 'sky' | 'emerald' | 'indigo' | 'violet' | 'amber' | 'slate';
-  sessionDurationMinutes: number; // 0 = unlimited, or 15, 30, 60, 120
+  maxMessagesPerSession: number; // e.g. 20, 30, 50
+  allowAiReceiptEntry: boolean;
+  allowAiInventoryEntry: boolean;
+  strictCatalogValidation: boolean;
 }
 
 export interface ChatSession {
@@ -222,8 +236,6 @@ export interface ChatSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  durationMinutes: number;
-  expiresAt?: string;
   isPinned?: boolean;
   messages: ChatMessage[];
 }

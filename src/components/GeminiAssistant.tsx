@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Bookmark,
   Bot,
   Check,
   CheckCircle2,
-  Clock,
   Copy,
   Crown,
   ExternalLink,
@@ -23,6 +23,8 @@ import {
   PanelRightOpen,
   Save,
   Send,
+  ShieldAlert,
+  ShieldCheck,
   SlidersHorizontal,
   Square,
   Trash2,
@@ -50,6 +52,7 @@ import {
 import { isPlatformDeveloperUser } from '../data/defaultData';
 import { auth } from '../firebase';
 import {
+  isDestructiveSystemIntent,
   isDirectDataEntryIntent,
   loadAIProviderConfig,
   parseDirectDataEntryProposal,
@@ -63,7 +66,6 @@ import {
   buildCleanSpeechTranscript,
   deduplicateSpeechText,
 } from '../utils/speechTranscript';
-import { numberToArabicWords } from '../utils/arabicTafqeet';
 
 interface GeminiAssistantProps {
   settings: ClinicSettings;
@@ -90,7 +92,10 @@ const DEFAULT_CHAT_APPEARANCE: ChatAppearanceSettings = {
   fontFamily: 'Tajawal',
   fontSize: 'base',
   accentColor: 'sky',
-  sessionDurationMinutes: 30,
+  maxMessagesPerSession: 30,
+  allowAiReceiptEntry: true,
+  allowAiInventoryEntry: true,
+  strictCatalogValidation: true,
 };
 
 const QUICK_PROMPTS = [
@@ -205,10 +210,22 @@ function loadSavedAppearance(): ChatAppearanceSettings {
       fontFamily: parsed.fontFamily || DEFAULT_CHAT_APPEARANCE.fontFamily,
       fontSize: parsed.fontSize || DEFAULT_CHAT_APPEARANCE.fontSize,
       accentColor: parsed.accentColor || DEFAULT_CHAT_APPEARANCE.accentColor,
-      sessionDurationMinutes:
-        typeof parsed.sessionDurationMinutes === 'number'
-          ? parsed.sessionDurationMinutes
-          : DEFAULT_CHAT_APPEARANCE.sessionDurationMinutes,
+      maxMessagesPerSession:
+        typeof parsed.maxMessagesPerSession === 'number' && parsed.maxMessagesPerSession >= 10
+          ? parsed.maxMessagesPerSession
+          : DEFAULT_CHAT_APPEARANCE.maxMessagesPerSession,
+      allowAiReceiptEntry:
+        typeof parsed.allowAiReceiptEntry === 'boolean'
+          ? parsed.allowAiReceiptEntry
+          : DEFAULT_CHAT_APPEARANCE.allowAiReceiptEntry,
+      allowAiInventoryEntry:
+        typeof parsed.allowAiInventoryEntry === 'boolean'
+          ? parsed.allowAiInventoryEntry
+          : DEFAULT_CHAT_APPEARANCE.allowAiInventoryEntry,
+      strictCatalogValidation:
+        typeof parsed.strictCatalogValidation === 'boolean'
+          ? parsed.strictCatalogValidation
+          : DEFAULT_CHAT_APPEARANCE.strictCatalogValidation,
     };
   } catch {
     return DEFAULT_CHAT_APPEARANCE;
@@ -271,14 +288,17 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     >
   >({});
 
-  // Chat Sidebar Drawer + Sessions History + Appearance & Session Duration State
+  // Chat Sidebar Drawer + Sessions History + Appearance & Governance State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'history' | 'settings'>('history');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSavedChatSessions());
   const [activeSessionId, setActiveSessionId] = useState<string>(() => 'sess_' + Date.now());
   const [appearance, setAppearance] = useState<ChatAppearanceSettings>(() => loadSavedAppearance());
-  const [sessionStartMs, setSessionStartMs] = useState<number>(() => Date.now());
-  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+
+  const latestMessagesRef = useRef<ChatMessage[]>(messages);
+  const latestSessionIdRef = useRef<string>(activeSessionId);
+  latestMessagesRef.current = messages;
+  latestSessionIdRef.current = activeSessionId;
 
   useEffect(() => {
     if (settings.aiConfig) {
@@ -287,7 +307,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     }
   }, [settings.aiConfig]);
 
-  // Persist appearance settings
+  // Persist appearance & governance settings
   useEffect(() => {
     try {
       localStorage.setItem(CHAT_APPEARANCE_STORAGE_KEY, JSON.stringify(appearance));
@@ -300,14 +320,51 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
   const persistSessionsList = (nextList: ChatSession[]) => {
     setSessions(nextList);
     try {
-      // Avoid storing huge base64 images in localStorage if quota is tight
       const compactList = nextList.slice(0, 35).map((s) => ({
         ...s,
-        messages: s.messages.slice(-40),
+        messages: s.messages.slice(-50),
       }));
       localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify(compactList));
     } catch {
       // Ignore quota errors
+    }
+  };
+
+  // Helper to flush current conversation to localStorage synchronously (used on exit/unmount/archive)
+  const flushCurrentSessionToStorage = (msgsToSave: ChatMessage[], sessId: string) => {
+    if (!msgsToSave || msgsToSave.length === 0) return;
+    try {
+      const firstUserMsg = msgsToSave.find((m) => m.role === 'user');
+      const derivedTitle = firstUserMsg
+        ? firstUserMsg.text.slice(0, 42)
+        : `محادثة ${new Date().toLocaleDateString('ar-YE')}`;
+      const nowIso = new Date().toISOString();
+      const currentSaved = loadSavedChatSessions();
+      const existingIdx = currentSaved.findIndex((s) => s.id === sessId);
+      let updated: ChatSession[];
+      if (existingIdx > -1) {
+        updated = [...currentSaved];
+        updated[existingIdx] = {
+          ...updated[existingIdx],
+          title: updated[existingIdx].title || derivedTitle,
+          updatedAt: nowIso,
+          messages: msgsToSave.slice(-50),
+        };
+      } else {
+        updated = [
+          {
+            id: sessId,
+            title: derivedTitle,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            messages: msgsToSave.slice(-50),
+          },
+          ...currentSaved,
+        ];
+      }
+      localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify(updated.slice(0, 35)));
+    } catch {
+      // Ignore storage errors
     }
   };
 
@@ -329,7 +386,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           ...updated[existingIdx],
           title: updated[existingIdx].title || derivedTitle,
           updatedAt: nowIso,
-          durationMinutes: appearance.sessionDurationMinutes,
           messages,
         };
       } else {
@@ -338,7 +394,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           title: derivedTitle,
           createdAt: nowIso,
           updatedAt: nowIso,
-          durationMinutes: appearance.sessionDurationMinutes,
           messages,
         };
         updated = [newSession, ...prev];
@@ -353,50 +408,45 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       }
       return updated;
     });
-  }, [messages, activeSessionId, appearance.sessionDurationMinutes]);
+  }, [messages, activeSessionId]);
 
-  // Single Conversation Duration Countdown Timer
+  // Save conversation automatically when exiting the app / closing tab / unmounting
   useEffect(() => {
-    if (!appearance.sessionDurationMinutes || appearance.sessionDurationMinutes <= 0) {
-      setRemainingSeconds(null);
-      return;
-    }
-
-    const totalDurationSec = appearance.sessionDurationMinutes * 60;
-    const updateTimer = () => {
-      const elapsedSec = Math.floor((Date.now() - sessionStartMs) / 1000);
-      const rem = Math.max(0, totalDurationSec - elapsedSec);
-      setRemainingSeconds(rem);
-
-      if (rem === 0 && messages.length > 0) {
-        // Auto-archive current conversation and start a fresh session
-        const nextId = 'sess_' + Date.now();
-        setActiveSessionId(nextId);
-        setSessionStartMs(Date.now());
-        onClearMessages();
-        notify(
-          `انتهت مدة المحادثة الواحدة (${appearance.sessionDurationMinutes} دقيقة). تم حفظ المحادثة في السجل وبدء جلسة جديدة.`,
-          'info'
-        );
+    const handleExitSave = () => {
+      if (latestMessagesRef.current.length > 0) {
+        flushCurrentSessionToStorage(latestMessagesRef.current, latestSessionIdRef.current);
       }
     };
+    window.addEventListener('beforeunload', handleExitSave);
+    window.addEventListener('pagehide', handleExitSave);
+    return () => {
+      handleExitSave();
+      window.removeEventListener('beforeunload', handleExitSave);
+      window.removeEventListener('pagehide', handleExitSave);
+    };
+  }, []);
 
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [appearance.sessionDurationMinutes, sessionStartMs, messages.length]);
-
-  const formatCountdown = (sec: number | null) => {
-    if (sec === null) return 'مفتوحة';
-    const mins = Math.floor(sec / 60);
-    const remSec = sec % 60;
-    return `${String(mins).padStart(2, '0')}:${String(remSec).padStart(2, '0')}`;
-  };
+  // Auto-archive and start a fresh session when conversation reaches maxMessagesPerSession
+  useEffect(() => {
+    const maxMsgs = appearance.maxMessagesPerSession || 30;
+    if (!isSending && messages.length >= maxMsgs) {
+      flushCurrentSessionToStorage(messages, activeSessionId);
+      const nextId = 'sess_' + Date.now();
+      setActiveSessionId(nextId);
+      onClearMessages();
+      notify(
+        `تم حفظ المحادثة تلقائياً لوصولها إلى (${maxMsgs}) رسالة وفتح محادثة جديدة.`,
+        'info'
+      );
+    }
+  }, [messages.length, isSending, appearance.maxMessagesPerSession, activeSessionId]);
 
   const handleStartNewSession = () => {
+    if (messages.length > 0) {
+      flushCurrentSessionToStorage(messages, activeSessionId);
+    }
     const nextId = 'sess_' + Date.now();
     setActiveSessionId(nextId);
-    setSessionStartMs(Date.now());
     onClearMessages();
     setIsSidebarOpen(false);
     notify('تم بدء محادثة جديدة', 'info');
@@ -418,7 +468,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       title: existing?.title || title,
       createdAt: existing?.createdAt || nowIso,
       updatedAt: nowIso,
-      durationMinutes: appearance.sessionDurationMinutes,
       isPinned: true,
       messages,
     };
@@ -427,12 +476,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       ...sessions.filter((s) => s.id !== activeSessionId),
     ];
     persistSessionsList(nextList);
-    notify('تم حفظ وتثبيت المحادثة في السجل بنجاح ✓', 'success');
+    notify('تم حفظ وتثبيت المحادثة في السجل ✓', 'success');
   };
 
   const handleSelectSession = (session: ChatSession) => {
     setActiveSessionId(session.id);
-    setSessionStartMs(Date.now());
     if (onSetMessages) {
       onSetMessages(session.messages);
     } else {
@@ -447,7 +495,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     persistSessionsList(nextList);
     if (sessionId === activeSessionId) {
       setActiveSessionId('sess_' + Date.now());
-      setSessionStartMs(Date.now());
       onClearMessages();
     }
     notify('تم حذف المحادثة من السجل', 'info');
@@ -902,28 +949,97 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     if (proposal.type === 'receipt') {
       const data = draft?.receiptData || proposal.receiptData;
       if (!data) return;
+      const cleanName = String(data.patientName || '').trim();
+      if (cleanName.length < 2) {
+        notify('يرجى إدخال اسم المريض الصحيح قبل اعتماد السند', 'warning');
+        return;
+      }
+      if (!data.services || data.services.length === 0) {
+        notify('يرجى تحديد الخدمة العلاجية قبل اعتماد السند', 'warning');
+        return;
+      }
+      const total = Number(data.totalAmount) || 0;
+      const paid = Number(data.paidAmount) || 0;
+      if (total <= 0) {
+        notify('يرجى تحديد المبلغ الإجمالي للسند (أكبر من صفر)', 'warning');
+        return;
+      }
+      if (paid < 0 || paid > total) {
+        notify('المبلغ المدفوع يجب أن يكون بين 0 والإجمالي', 'warning');
+        return;
+      }
+
       if (onApproveReceiptEntry) {
-        onApproveReceiptEntry(data);
+        onApproveReceiptEntry({
+          ...data,
+          patientName: cleanName,
+          totalAmount: total,
+          paidAmount: paid,
+          remainingAmount: Math.max(0, +(total - paid).toFixed(2)),
+        });
         setProposalDrafts((prev) => ({
           ...prev,
           [proposal.id]: {
             ...prev[proposal.id],
             status: 'approved',
-            receiptData: data,
+            receiptData: {
+              ...data,
+              patientName: cleanName,
+              totalAmount: total,
+              paidAmount: paid,
+              remainingAmount: Math.max(0, +(total - paid).toFixed(2)),
+            },
           },
         }));
       }
     } else if (proposal.type === 'inventory') {
       const data = draft?.inventoryData || proposal.inventoryData;
       if (!data) return;
+      const cleanItemName = String(data.name || '').trim();
+      if (cleanItemName.length < 2) {
+        notify('يرجى إدخال اسم الصنف الصحيح قبل اعتماد العملية', 'warning');
+        return;
+      }
+      const qty = Number(data.qty) || 0;
+      if (qty <= 0) {
+        notify('الكمية يجب أن تكون أكبر من صفر', 'warning');
+        return;
+      }
+      if (data.operation === 'consume') {
+        const matched = inventory.find(
+          (i) =>
+            i.id === data.matchedItemId ||
+            i.name.trim().toLowerCase() === cleanItemName.toLowerCase()
+        );
+        if (!matched) {
+          notify(`الصنف (${cleanItemName}) غير موجود في المخزون للسحب منه`, 'error');
+          return;
+        }
+        if (qty > Number(matched.qty)) {
+          notify(
+            `الكمية المطلوب سحبها (${qty}) تتجاوز الرصيد المتوفر (${matched.qty} ${matched.unit})`,
+            'error'
+          );
+          return;
+        }
+      }
+
       if (onApproveInventoryEntry) {
-        onApproveInventoryEntry(data);
+        onApproveInventoryEntry({
+          ...data,
+          name: cleanItemName,
+          qty,
+        });
         setProposalDrafts((prev) => ({
           ...prev,
           [proposal.id]: {
             ...prev[proposal.id],
             status: 'approved',
-            inventoryData: data,
+            inventoryData: {
+              ...data,
+              name: cleanItemName,
+              qty,
+            },
           },
         }));
       }
@@ -974,14 +1090,34 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     abortControllerRef.current = controller;
 
     try {
-      // Check if Direct Data Entry (Receipt or Inventory) is requested
+      // 1. Strict Anti-Tampering & Anti-Deletion Guard
+      if (isDestructiveSystemIntent(userMsg.text)) {
+        const blockMsg: ChatMessage = {
+          id: 'msg_block_' + Date.now(),
+          role: 'assistant',
+          text: '⛔ تنبيه حماية النظام: يمنع على المساعد الذكي حذف أي سندات أو أصناف مخزون أو مصروفات أو تعديل بيانات النظام الداخلية. جميع عمليات الحذف والتعديل الحساسة تتم يدوياً فقط من قبل الإدارة.',
+          timestamp: new Date().toLocaleTimeString('ar-YE', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        };
+        onAddMessage(blockMsg);
+        return;
+      }
+
+      // 2. Check if Direct Data Entry (Receipt or Inventory) is requested and permitted
       const forcedEntryType =
-        directEntryMode === 'receipt'
+        directEntryMode === 'receipt' && appearance.allowAiReceiptEntry
           ? 'receipt'
-          : directEntryMode === 'inventory'
+          : directEntryMode === 'inventory' && appearance.allowAiInventoryEntry
             ? 'inventory'
             : undefined;
-      const detectedIntent = forcedEntryType || isDirectDataEntryIntent(userMsg.text);
+      const detectedIntent =
+        forcedEntryType ||
+        isDirectDataEntryIntent(userMsg.text, {
+          allowReceipt: appearance.allowAiReceiptEntry,
+          allowInventory: appearance.allowAiInventoryEntry,
+        });
 
       if (detectedIntent) {
         const proposal = await parseDirectDataEntryProposal(
@@ -989,7 +1125,12 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           settings,
           inventory,
           sentAttachment,
-          detectedIntent
+          detectedIntent,
+          {
+            strictCatalogValidation: appearance.strictCatalogValidation,
+            allowReceipt: appearance.allowAiReceiptEntry,
+            allowInventory: appearance.allowAiInventoryEntry,
+          }
         );
 
         if (proposal && !userInitiatedAbortRef.current) {
@@ -1081,7 +1222,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         {
           prompt: userMsg.text,
           clinicContext,
-          history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
+          history: messages.slice(-4).map((m) => ({ role: m.role, text: m.text })),
           attachment: sentAttachment?.mimeType.startsWith('image/') ? sentAttachment : null,
           taskType: 'chat',
         },
@@ -1189,6 +1330,13 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       const rec = draftState?.receiptData || proposal.receiptData;
       if (!rec) return null;
 
+      const isPatientValid = String(rec.patientName || '').trim().length >= 2;
+      const isTotalValid = (Number(rec.totalAmount) || 0) > 0;
+      const isPaidValid =
+        (Number(rec.paidAmount) || 0) >= 0 &&
+        (Number(rec.paidAmount) || 0) <= (Number(rec.totalAmount) || 0);
+      const isReceiptReadyToApprove = isPatientValid && isTotalValid && isPaidValid;
+
       const updateRecField = <K extends keyof PendingReceiptEntryData>(
         field: K,
         val: PendingReceiptEntryData[K]
@@ -1220,8 +1368,14 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-1.5 font-black text-emerald-700 dark:text-emerald-400">
               <FilePlus2 className="w-4 h-4 shrink-0" />
-              <span>بطاقة اعتماد إدخال سند قبض مباشر</span>
+              <span>مراجعة واعتماد سند قبض</span>
             </div>
+            {currentStatus === 'pending' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[10px]">
+                <ShieldCheck className="w-3 h-3" />
+                <span>بانتظار موافقتك</span>
+              </span>
+            )}
             {currentStatus === 'approved' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-[11px]">
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1235,47 +1389,109 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             )}
           </div>
 
+          {proposal.validationWarnings && proposal.validationWarnings.length > 0 && currentStatus === 'pending' && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 space-y-1 text-[11px] font-bold text-amber-800 dark:text-amber-200">
+              {proposal.validationWarnings.map((w, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>{w}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">اسم المريض</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                اسم المريض *
+              </label>
               <input
                 type="text"
+                placeholder="أدخل اسم المريض..."
                 disabled={currentStatus !== 'pending'}
                 value={rec.patientName}
                 onChange={(e) => updateRecField('patientName', e.target.value)}
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">الخدمة العلاجية</label>
-              <input
-                type="text"
-                disabled={currentStatus !== 'pending'}
-                value={rec.services.join(' ، ')}
-                onChange={(e) =>
-                  updateRecField(
-                    'services',
-                    e.target.value
-                      .split(/[،,]/)
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  )
-                }
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 ${
+                  !isPatientValid && currentStatus === 'pending'
+                    ? 'border-rose-500'
+                    : 'border-slate-200 dark:border-slate-800'
+                }`}
               />
             </div>
 
             <div>
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                الإجمالي ({rec.currency})
+                الخدمة العلاجية (من قائمة العيادة)
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  disabled={currentStatus !== 'pending'}
+                  value={rec.services.join(' ، ')}
+                  onChange={(e) =>
+                    updateRecField(
+                      'services',
+                      e.target.value
+                        .split(/[،,]/)
+                        .map((s) => s.trim())
+                        .filter(Boolean)
+                    )
+                  }
+                  className="flex-1 min-w-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                />
+                {currentStatus === 'pending' && settings.services.length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const srv = settings.services.find((s) => s.id === e.target.value);
+                      if (srv) {
+                        setProposalDrafts((prev) => {
+                          const base = prev[proposal.id]?.receiptData || rec;
+                          const price = Number(srv.price) || 0;
+                          return {
+                            ...prev,
+                            [proposal.id]: {
+                              status: currentStatus,
+                              receiptData: {
+                                ...base,
+                                services: [srv.name],
+                                totalAmount: price,
+                                paidAmount: price,
+                                remainingAmount: 0,
+                              },
+                            },
+                          };
+                        });
+                      }
+                    }}
+                    className="w-24 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-1.5 py-1 text-[10px] font-bold text-slate-700 dark:text-slate-200"
+                    title="اختيار من خدمات العيادة المعتمدة"
+                  >
+                    <option value="">اختر خدمة...</option>
+                    {settings.services.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.price})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                الإجمالي ({rec.currency}) *
               </label>
               <input
                 type="number"
                 disabled={currentStatus !== 'pending'}
                 value={rec.totalAmount}
                 onChange={(e) => updateRecField('totalAmount', Number(e.target.value) || 0)}
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100"
+                className={`w-full rounded-lg border bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono tabular-nums font-bold text-slate-900 dark:text-slate-100 ${
+                  !isTotalValid && currentStatus === 'pending'
+                    ? 'border-rose-500'
+                    : 'border-slate-200 dark:border-slate-800'
+                }`}
               />
             </div>
 
@@ -1304,8 +1520,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               </button>
               <button
                 type="button"
+                disabled={!isReceiptReadyToApprove}
                 onClick={() => handleConfirmProposal(proposal)}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-xs shadow-xs transition-colors"
               >
                 <Check className="w-3.5 h-3.5" />
                 <span>اعتماد وحفظ السند</span>
@@ -1319,6 +1536,18 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
     if (proposal.type === 'inventory') {
       const inv = draftState?.inventoryData || proposal.inventoryData;
       if (!inv) return null;
+
+      const cleanItemName = String(inv.name || '').trim();
+      const matchedStockItem = inventory.find(
+        (i) =>
+          i.id === inv.matchedItemId ||
+          i.name.trim().toLowerCase() === cleanItemName.toLowerCase()
+      );
+      const isConsumeInvalid =
+        inv.operation === 'consume' &&
+        (!matchedStockItem || (Number(inv.qty) || 0) > Number(matchedStockItem.qty));
+      const isInvReadyToApprove =
+        cleanItemName.length >= 2 && (Number(inv.qty) || 0) >= 1 && !isConsumeInvalid;
 
       const updateInvField = <K extends keyof PendingInventoryEntryData>(
         field: K,
@@ -1346,8 +1575,14 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
           <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-1.5 font-black text-amber-700 dark:text-amber-400">
               <PackagePlus className="w-4 h-4 shrink-0" />
-              <span>بطاقة اعتماد عملية المخزون المباشرة</span>
+              <span>مراجعة واعتماد حركة مخزون</span>
             </div>
+            {currentStatus === 'pending' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[10px]">
+                <ShieldCheck className="w-3 h-3" />
+                <span>بانتظار موافقتك</span>
+              </span>
+            )}
             {currentStatus === 'approved' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-[11px]">
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1361,6 +1596,17 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
             )}
           </div>
 
+          {proposal.validationWarnings && proposal.validationWarnings.length > 0 && currentStatus === 'pending' && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 space-y-1 text-[11px] font-bold text-amber-800 dark:text-amber-200">
+              {proposal.validationWarnings.map((w, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>{w}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <div>
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">نوع العملية</label>
@@ -1372,26 +1618,33 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                 }
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
               >
-                <option value="add_new">إضافة صنف جديد للمخزون</option>
+                <option value="add_new">إضافة صنف جديد</option>
                 <option value="restock">توريد كمية إضافية</option>
-                <option value="consume">سحب / صرف كمية</option>
+                <option value="consume">صرف / سحب كمية</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">اسم الصنف</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                اسم الصنف * {matchedStockItem ? `(المتوفر: ${matchedStockItem.qty})` : ''}
+              </label>
               <input
                 type="text"
+                placeholder="أدخل اسم الصنف..."
                 disabled={currentStatus !== 'pending'}
                 value={inv.name}
                 onChange={(e) => updateInvField('name', e.target.value)}
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100"
+                className={`w-full rounded-lg border bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 ${
+                  cleanItemName.length < 2 && currentStatus === 'pending'
+                    ? 'border-rose-500'
+                    : 'border-slate-200 dark:border-slate-800'
+                }`}
               />
             </div>
 
             <div>
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                الكمية ({inv.unit})
+                الكمية ({inv.unit}) *
               </label>
               <input
                 type="number"
@@ -1427,8 +1680,9 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               </button>
               <button
                 type="button"
+                disabled={!isInvReadyToApprove}
                 onClick={() => handleConfirmProposal(proposal)}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-xs shadow-xs transition-colors"
               >
                 <Check className="w-3.5 h-3.5" />
                 <span>اعتماد وتحديث المخزون</span>
@@ -1449,66 +1703,54 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
       style={{ fontFamily: `"${appearance.fontFamily}", sans-serif` }}
       className={`relative flex-1 min-h-0 w-full h-full sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col overflow-hidden sm:shadow-xs ${activeFontFamilyClass}`}
     >
-      {/* Top Action Strip: Chat Sidebar Button + Session Timer + Direct Entry Mode + Quick Prompts */}
+      {/* Top Action Strip: Chat Sidebar Button + Direct Entry Mode + Quick Prompts */}
       <div className="shrink-0 px-3 sm:px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         <button
           type="button"
           onClick={() => setIsSidebarOpen((o) => !o)}
           className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-sky-500 rounded-xl transition-colors whitespace-nowrap shadow-2xs"
-          title="المحادثات السابقة وإعدادات العرض"
+          title="المحادثات والإعدادات"
         >
           <PanelRightOpen className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
           <span>المحادثات والإعدادات</span>
         </button>
 
-        {/* Session Duration Live Badge */}
-        {remainingSeconds !== null && (
+        {/* Direct Data Entry Quick Mode Buttons (Governed by Settings) */}
+        {appearance.allowAiReceiptEntry && (
           <button
             type="button"
-            onClick={() => {
-              setSidebarTab('settings');
-              setIsSidebarOpen(true);
-            }}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-mono tabular-nums font-bold text-sky-700 dark:text-sky-300 bg-sky-500/10 border border-sky-500/20 rounded-xl whitespace-nowrap"
-            title="مدة المحادثة الحالية (اضغط للتعديل)"
+            onClick={() =>
+              setDirectEntryMode((m) => (m === 'receipt' ? 'auto' : 'receipt'))
+            }
+            className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl border transition-colors whitespace-nowrap ${
+              directEntryMode === 'receipt'
+                ? 'bg-emerald-600 text-white border-emerald-500'
+                : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+            }`}
+            title="إدخال سند مع المراجعة والاعتماد"
           >
-            <Clock className="w-3 h-3 shrink-0" />
-            <span>{formatCountdown(remainingSeconds)}</span>
+            <FilePlus2 className="w-3.5 h-3.5 shrink-0" />
+            <span>إدخال سند</span>
           </button>
         )}
 
-        {/* Direct Data Entry Quick Mode Buttons */}
-        <button
-          type="button"
-          onClick={() =>
-            setDirectEntryMode((m) => (m === 'receipt' ? 'auto' : 'receipt'))
-          }
-          className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl border transition-colors whitespace-nowrap ${
-            directEntryMode === 'receipt'
-              ? 'bg-emerald-600 text-white border-emerald-500'
-              : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
-          }`}
-          title="تفعيل وضع الإدخال المباشر للسندات مع المراجعة والاعتماد"
-        >
-          <FilePlus2 className="w-3.5 h-3.5 shrink-0" />
-          <span>إدخال سند</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() =>
-            setDirectEntryMode((m) => (m === 'inventory' ? 'auto' : 'inventory'))
-          }
-          className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl border transition-colors whitespace-nowrap ${
-            directEntryMode === 'inventory'
-              ? 'bg-amber-600 text-white border-amber-500'
-              : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
-          }`}
-          title="تفعيل وضع الإدخال المباشر للمخزون مع المراجعة والاعتماد"
-        >
-          <PackagePlus className="w-3.5 h-3.5 shrink-0" />
-          <span>إدخال مخزون</span>
-        </button>
+        {appearance.allowAiInventoryEntry && (
+          <button
+            type="button"
+            onClick={() =>
+              setDirectEntryMode((m) => (m === 'inventory' ? 'auto' : 'inventory'))
+            }
+            className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl border transition-colors whitespace-nowrap ${
+              directEntryMode === 'inventory'
+                ? 'bg-amber-600 text-white border-amber-500'
+                : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+            }`}
+            title="إدخال مخزون مع المراجعة والاعتماد"
+          >
+            <PackagePlus className="w-3.5 h-3.5 shrink-0" />
+            <span>إدخال مخزون</span>
+          </button>
+        )}
 
         {isPlatformDev && onOpenSettings && (
           <button
@@ -1524,11 +1766,11 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         {messages.length > 0 && (
           <button
             type="button"
-            onClick={onClearMessages}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-xl transition-colors whitespace-nowrap"
+            onClick={handleStartNewSession}
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-sky-600 dark:text-sky-400 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 rounded-xl transition-colors whitespace-nowrap"
           >
-            <Trash2 className="w-3.5 h-3.5 shrink-0" />
-            <span>مسح</span>
+            <MessageSquarePlus className="w-3.5 h-3.5 shrink-0" />
+            <span>محادثة جديدة</span>
           </button>
         )}
 
@@ -1545,7 +1787,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
         ))}
       </div>
 
-      {/* Collapsible Chat Sidebar Drawer (Conversations History + Appearance & Session Duration Settings) */}
+      {/* Collapsible Chat Sidebar Drawer (Conversations History + Appearance & Governance Settings) */}
       {isSidebarOpen && (
         <div className="absolute inset-0 z-30 flex">
           <div
@@ -1658,8 +1900,94 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto p-3.5 space-y-4 text-xs">
-                {/* Font Family */}
+                {/* Strict AI Data Entry & System Protection Governance */}
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-slate-950 p-3 space-y-2.5">
+                  <div className="font-black text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                    <span>ضوابط الإدخال وحماية النظام</span>
+                  </div>
+
+                  <label className="flex items-center justify-between gap-2 cursor-pointer pt-1">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      إدخال السندات بموافقة المستخدم
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={appearance.allowAiReceiptEntry}
+                      onChange={(e) =>
+                        setAppearance((prev) => ({
+                          ...prev,
+                          allowAiReceiptEntry: e.target.checked,
+                        }))
+                      }
+                      className="w-4 h-4 rounded text-emerald-600"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-2 cursor-pointer">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      إدخال المخزون بموافقة المستخدم
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={appearance.allowAiInventoryEntry}
+                      onChange={(e) =>
+                        setAppearance((prev) => ({
+                          ...prev,
+                          allowAiInventoryEntry: e.target.checked,
+                        }))
+                      }
+                      className="w-4 h-4 rounded text-emerald-600"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-2 cursor-pointer">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      مطابقة تسعيرة وخدمات العيادة
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={appearance.strictCatalogValidation}
+                      onChange={(e) =>
+                        setAppearance((prev) => ({
+                          ...prev,
+                          strictCatalogValidation: e.target.checked,
+                        }))
+                      }
+                      className="w-4 h-4 rounded text-emerald-600"
+                    />
+                  </label>
+
+                  <div className="pt-1.5 border-t border-emerald-500/20 text-[10px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>منع الحذف أو التعديل التلقائي للنظام مفعل دائماً</span>
+                  </div>
+                </div>
+
+                {/* Auto-Save Session Message Threshold */}
                 <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block">
+                    حفظ وفتح محادثة جديدة تلقائياً عند:
+                  </label>
+                  <select
+                    value={appearance.maxMessagesPerSession}
+                    onChange={(e) =>
+                      setAppearance((prev) => ({
+                        ...prev,
+                        maxMessagesPerSession: Number(e.target.value) || 30,
+                      }))
+                    }
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value={20}>20 رسالة</option>
+                    <option value={30}>30 رسالة</option>
+                    <option value={50}>50 رسالة</option>
+                    <option value={100}>100 رسالة</option>
+                  </select>
+                </div>
+
+                {/* Font Family */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
                   <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <Type className="w-3.5 h-3.5 text-sky-500" />
                     <span>نوع الخط</span>
@@ -1674,10 +2002,10 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                     }
                     className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 font-bold text-slate-900 dark:text-slate-100"
                   >
-                    <option value="Tajawal">خط تجوال (Tajawal)</option>
-                    <option value="Cairo">خط القاهرة (Cairo)</option>
-                    <option value="IBM Plex Sans Arabic">خط IBM Plex Sans Arabic</option>
-                    <option value="Plus Jakarta Sans">خط Plus Jakarta Sans</option>
+                    <option value="Tajawal">Tajawal</option>
+                    <option value="Cairo">Cairo</option>
+                    <option value="IBM Plex Sans Arabic">IBM Plex Arabic</option>
+                    <option value="Plus Jakarta Sans">Plus Jakarta</option>
                   </select>
                 </div>
 
@@ -1692,7 +2020,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                         { id: 'sm', label: 'صغير' },
                         { id: 'base', label: 'متوسط' },
                         { id: 'lg', label: 'كبير' },
-                        { id: 'xl', label: 'كبير جداً' },
+                        { id: 'xl', label: 'أكبر' },
                       ] as const
                     ).map((sz) => (
                       <button
@@ -1717,7 +2045,7 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                 <div className="space-y-1.5">
                   <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <Palette className="w-3.5 h-3.5 text-sky-500" />
-                    <span>ألوان المحادثة</span>
+                    <span>لون المحادثة</span>
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     {(
@@ -1749,32 +2077,6 @@ export const GeminiAssistant: React.FC<GeminiAssistantProps> = ({
                       );
                     })}
                   </div>
-                </div>
-
-                {/* Single Conversation Duration */}
-                <div className="space-y-1.5 pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-amber-500" />
-                    <span>مدة المحادثة الواحدة</span>
-                  </label>
-                  <select
-                    value={appearance.sessionDurationMinutes}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setAppearance((prev) => ({
-                        ...prev,
-                        sessionDurationMinutes: val,
-                      }));
-                      setSessionStartMs(Date.now());
-                    }}
-                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 font-bold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value={15}>15 دقيقة</option>
-                    <option value={30}>30 دقيقة</option>
-                    <option value={60}>60 دقيقة (ساعة)</option>
-                    <option value={120}>120 دقيقة (ساعتان)</option>
-                    <option value={0}>مفتوحة بدون حد زمني</option>
-                  </select>
                 </div>
               </div>
             )}

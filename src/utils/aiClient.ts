@@ -31,6 +31,11 @@ export const GEMINI_CANDIDATE_MODELS = [
 ] as const;
 
 export const GROQ_TEXT_MODELS = [
+  'qwen/qwen3.8-27b',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'allam-2-7b',
+  'openai/gpt-oss-safeguard-20b',
   'llama-3.3-70b-versatile',
   'meta-llama/llama-4-maverick-17b-128e-instruct',
   'meta-llama/llama-4-scout-17b-16e-instruct',
@@ -39,16 +44,13 @@ export const GROQ_TEXT_MODELS = [
   'qwen-qwq-32b',
   'mistral-saba-24b',
   'compound-beta',
-  'compound-beta-mini',
   'llama-3.1-8b-instant',
   'gemma2-9b-it',
-  'allam-2-7b',
-  'llama3-70b-8192',
-  'llama3-8b-8192',
 ] as const;
 
-// Dedicated Vision Models (At least 3-4 models per provider reserved for image analysis)
+// Dedicated Vision Models (At least 4 models per provider reserved for image analysis)
 export const GROQ_VISION_MODELS = [
+  'qwen/qwen3.8-27b',
   'meta-llama/llama-4-scout-17b-16e-instruct',
   'meta-llama/llama-4-maverick-17b-128e-instruct',
   'llama-3.2-90b-vision-preview',
@@ -79,17 +81,17 @@ export const GROQ_WHISPER_MODELS = [
 
 // Dedicated Audio Reading (TTS) Models
 export const AI_TTS_MODELS = [
-  'playai-tts-arabic',
-  'playai-tts',
+  'canopylabs/orpheus-arabic-saudi',
+  'canopylabs/orpheus-v1-english',
   'gemini-2.5-flash-preview-tts',
   'browser-ar-tts',
 ] as const;
 
 // Dedicated High-Precision Models for Direct Data Entry (Receipts & Inventory)
 export const DIRECT_DATA_ENTRY_MODELS = [
-  'llama-3.3-70b-versatile',
-  'meta-llama/llama-4-maverick-17b-128e-instruct',
-  'qwen/qwen3-32b',
+  'openai/gpt-oss-120b',
+  'qwen/qwen3.8-27b',
+  'openai/gpt-oss-20b',
   'gemini-2.5-flash',
   'gemini-3-flash-preview',
   'gemini-2.5-pro',
@@ -116,66 +118,70 @@ export const OPENROUTER_MODELS = [
 ] as const;
 
 export const MODEL_DISPLAY_LABELS: Record<string, string> = {
-  // Gemini (12 models)
-  'gemini-2.5-flash': 'Gemini 2.5 Flash (الأسرع والأقوى - موصى به)',
-  'gemini-3-flash-preview': 'Gemini 3 Flash Preview (الجيل الثالث السريع)',
-  'gemini-3.1-pro-preview': 'Gemini 3.1 Pro Preview (تحليل معمق)',
-  'gemini-2.5-pro': 'Gemini 2.5 Pro (دقة فائقة للبيانات)',
-  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash Lite (خفيف وفوري)',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite (استجابة لحظية)',
-  'gemini-flash-latest': 'Gemini Flash Latest (تحديث تلقائي)',
+  // Gemini
+  'gemini-2.5-flash': 'Gemini 2.5 Flash',
+  'gemini-3-flash-preview': 'Gemini 3 Flash',
+  'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',
+  'gemini-2.5-pro': 'Gemini 2.5 Pro',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Lite',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Lite',
+  'gemini-flash-latest': 'Gemini Flash',
   'gemini-2.0-flash': 'Gemini 2.0 Flash',
-  'gemini-2.0-flash-lite': 'Gemini 2.0 Flash Lite',
+  'gemini-2.0-flash-lite': 'Gemini 2.0 Lite',
   'gemini-1.5-pro': 'Gemini 1.5 Pro',
   'gemini-1.5-flash': 'Gemini 1.5 Flash',
-  'gemini-1.5-flash-8b': 'Gemini 1.5 Flash 8B',
+  'gemini-1.5-flash-8b': 'Gemini 1.5 8B',
 
-  // Groq (14 Text + 4 Vision + 3 Audio)
-  'llama-3.3-70b-versatile': 'Groq Llama 3.3 70B Versatile (الأقوى والأسرع - موصى به)',
-  'meta-llama/llama-4-maverick-17b-128e-instruct': 'Groq Llama 4 Maverick 17B (الجيل الرابع - نصوص وصور)',
-  'meta-llama/llama-4-scout-17b-16e-instruct': 'Groq Llama 4 Scout 17B (فائق السرعة - نصوص وصور)',
-  'qwen/qwen3-32b': 'Groq Qwen 3 32B (ممتاز للعربية والحسابات)',
-  'deepseek-r1-distill-llama-70b': 'Groq DeepSeek R1 70B (استنتاج وتحليل عميق)',
-  'qwen-qwq-32b': 'Groq Qwen QwQ 32B (منطق ومعالجة بيانات)',
-  'mistral-saba-24b': 'Groq Mistral Saba 24B (مخصص للغة العربية)',
-  'compound-beta': 'Groq Compound Beta (نموذج مركب ذكي)',
-  'compound-beta-mini': 'Groq Compound Beta Mini (مركب سريع)',
-  'llama-3.1-8b-instant': 'Groq Llama 3.1 8B Instant (استجابة لحظية)',
-  'gemma2-9b-it': 'Groq Gemma 2 9B IT (كفاءة واستقرار)',
-  'allam-2-7b': 'Groq ALLaM 2 7B (النموذج العربي المتخصص)',
-  'llama3-70b-8192': 'Groq Llama 3 70B',
-  'llama3-8b-8192': 'Groq Llama 3 8B',
-  'llama-3.2-90b-vision-preview': 'Groq Llama 3.2 90B Vision (تحليل صور دقيق)',
-  'llama-3.2-11b-vision-preview': 'Groq Llama 3.2 11B Vision (تحليل صور سريع)',
+  // Groq
+  'qwen/qwen3.8-27b': 'Qwen 3.8 27B',
+  'openai/gpt-oss-120b': 'GPT-OSS 120B',
+  'openai/gpt-oss-20b': 'GPT-OSS 20B',
+  'allam-2-7b': 'ALLaM 2 7B (عربي)',
+  'openai/gpt-oss-safeguard-20b': 'GPT-OSS Safe 20B',
+  'llama-3.3-70b-versatile': 'Llama 3.3 70B',
+  'meta-llama/llama-4-maverick-17b-128e-instruct': 'Llama 4 Maverick',
+  'meta-llama/llama-4-scout-17b-16e-instruct': 'Llama 4 Scout',
+  'qwen/qwen3-32b': 'Qwen 3 32B',
+  'deepseek-r1-distill-llama-70b': 'DeepSeek R1 70B',
+  'qwen-qwq-32b': 'Qwen QwQ 32B',
+  'mistral-saba-24b': 'Mistral Saba 24B',
+  'compound-beta': 'Compound Beta',
+  'compound-beta-mini': 'Compound Mini',
+  'llama-3.1-8b-instant': 'Llama 3.1 8B',
+  'gemma2-9b-it': 'Gemma 2 9B',
+  'llama-3.2-90b-vision-preview': 'Llama 3.2 90B Vision',
+  'llama-3.2-11b-vision-preview': 'Llama 3.2 11B Vision',
 
   // Audio & TTS
-  'whisper-large-v3-turbo': 'Groq Whisper Large v3 Turbo (تفريغ صوتي فائق السرعة)',
-  'whisper-large-v3': 'Groq Whisper Large v3 (أعلى دقة صوتية للعربية)',
-  'distil-whisper-large-v3-en': 'Groq Distil Whisper v3',
-  'playai-tts-arabic': 'Groq PlayAI Arabic TTS (قارئ صوتي عربي ذكي)',
-  'playai-tts': 'Groq PlayAI Multilingual TTS (قارئ صوتي متعدد اللغات)',
-  'gemini-2.5-flash-preview-tts': 'Gemini 2.5 Flash Audio TTS (قارئ جوجل الصوتي)',
-  'browser-ar-tts': 'محرك النطق الصوتي الفوري للمتصفح (بدون إنترنت)',
+  'whisper-large-v3-turbo': 'Whisper v3 Turbo',
+  'whisper-large-v3': 'Whisper v3 Large',
+  'distil-whisper-large-v3-en': 'Distil Whisper v3',
+  'canopylabs/orpheus-arabic-saudi': 'Orpheus عربي',
+  'canopylabs/orpheus-v1-english': 'Orpheus V1',
+  'playai-tts-arabic': 'Orpheus عربي',
+  'playai-tts': 'Orpheus V1',
+  'gemini-2.5-flash-preview-tts': 'Gemini 2.5 TTS',
+  'browser-ar-tts': 'قارئ المتصفح',
 
-  // OpenRouter (15 models)
-  'google/gemini-2.5-flash': 'OpenRouter Gemini 2.5 Flash (موصى به)',
-  'deepseek/deepseek-chat-v3-0324:free': 'OpenRouter DeepSeek V3 0324 (مجاني وسريع)',
-  'deepseek/deepseek-r1:free': 'OpenRouter DeepSeek R1 (مجاني - تحليل عميق)',
-  'meta-llama/llama-3.3-70b-instruct:free': 'OpenRouter Llama 3.3 70B (مجاني)',
-  'meta-llama/llama-4-maverick:free': 'OpenRouter Llama 4 Maverick (مجاني - نصوص وصور)',
-  'meta-llama/llama-4-scout:free': 'OpenRouter Llama 4 Scout (مجاني - نصوص وصور)',
-  'qwen/qwen3-235b-a22b:free': 'OpenRouter Qwen 3 235B (مجاني - عملاق)',
-  'qwen/qwen3-32b:free': 'OpenRouter Qwen 3 32B (مجاني)',
-  'google/gemini-2.0-flash-exp:free': 'OpenRouter Gemini 2.0 Flash (مجاني)',
-  'mistralai/mistral-small-3.1-24b-instruct:free': 'OpenRouter Mistral Small 3.1 24B (مجاني)',
-  'google/gemma-3-27b-it:free': 'OpenRouter Gemma 3 27B (مجاني - نصوص وصور)',
-  'qwen/qwen-2.5-72b-instruct:free': 'OpenRouter Qwen 2.5 72B (مجاني)',
-  'qwen/qwen2.5-vl-72b-instruct:free': 'OpenRouter Qwen 2.5 VL 72B Vision (مجاني للصور)',
-  'deepseek/deepseek-chat': 'OpenRouter DeepSeek V3',
-  'meta-llama/llama-3.3-70b-instruct': 'OpenRouter Llama 3.3 70B',
-  'openrouter/free': 'OpenRouter Free Router (توجيه مجاني تلقائي)',
-  'openrouter/auto': 'OpenRouter Auto Router (توجيه ذكي تلقائي)',
-  'local-clinical-engine': 'المحرك السريري المدمج (خادم العيادة)',
+  // OpenRouter
+  'google/gemini-2.5-flash': 'OR Gemini 2.5 Flash',
+  'deepseek/deepseek-chat-v3-0324:free': 'OR DeepSeek V3',
+  'deepseek/deepseek-r1:free': 'OR DeepSeek R1',
+  'meta-llama/llama-3.3-70b-instruct:free': 'OR Llama 3.3 70B',
+  'meta-llama/llama-4-maverick:free': 'OR Llama 4 Maverick',
+  'meta-llama/llama-4-scout:free': 'OR Llama 4 Scout',
+  'qwen/qwen3-235b-a22b:free': 'OR Qwen 3 235B',
+  'qwen/qwen3-32b:free': 'OR Qwen 3 32B',
+  'google/gemini-2.0-flash-exp:free': 'OR Gemini 2.0 Flash',
+  'mistralai/mistral-small-3.1-24b-instruct:free': 'OR Mistral 3.1 24B',
+  'google/gemma-3-27b-it:free': 'OR Gemma 3 27B',
+  'qwen/qwen-2.5-72b-instruct:free': 'OR Qwen 2.5 72B',
+  'qwen/qwen2.5-vl-72b-instruct:free': 'OR Qwen 2.5 VL',
+  'deepseek/deepseek-chat': 'OR DeepSeek Chat',
+  'meta-llama/llama-3.3-70b-instruct': 'OR Llama 3.3 70B',
+  'openrouter/free': 'OR تلقائي مجاني',
+  'openrouter/auto': 'OR تلقائي ذكي',
+  'local-clinical-engine': 'المحرك المحلي',
 };
 
 export function sanitizeApiKeyInput(rawKey?: string | null): string {
@@ -187,7 +193,7 @@ export function sanitizeApiKeyInput(rawKey?: string | null): string {
 
 export function formatModelDisplayLabel(modelName?: string | null): string {
   const clean = String(modelName || '').trim();
-  if (!clean) return 'Gemini 2.5 Flash';
+  if (!clean) return 'Qwen 3.8 27B';
   return MODEL_DISPLAY_LABELS[clean] || clean;
 }
 
@@ -199,18 +205,31 @@ export function sanitizeGeminiModel(model?: string | null): string {
   return m;
 }
 
+const LEGACY_GROQ_MODELS = new Set([
+  'mixtral-8x7b-32768',
+  'gemma-7b-it',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+  'llama-3.2-90b-vision-preview',
+  'llama-3.2-11b-vision-preview',
+  'llama3-70b-8192',
+  'llama3-8b-8192',
+]);
+
 export function sanitizeGroqTextModel(model?: string | null): string {
   const m = String(model || '').trim();
-  if (!m || m === 'mixtral-8x7b-32768' || m === 'gemma-7b-it') {
-    return 'llama-3.3-70b-versatile';
+  if (!m || LEGACY_GROQ_MODELS.has(m)) {
+    return 'qwen/qwen3.8-27b';
   }
   return m;
 }
 
 export function sanitizeGroqVisionModel(model?: string | null): string {
   const m = String(model || '').trim();
-  if (!m) {
-    return 'meta-llama/llama-4-scout-17b-16e-instruct';
+  if (!m || LEGACY_GROQ_MODELS.has(m)) {
+    return 'qwen/qwen3.8-27b';
   }
   return m;
 }
@@ -237,13 +256,26 @@ export function loadAIProviderConfig(): AIProviderConfig {
     const groqVisionModel = sanitizeGroqVisionModel(parsed.groqVisionModel || DEFAULT_AI_CONFIG.groqVisionModel);
     const openrouterModel = sanitizeOpenRouterModel(parsed.openrouterModel || DEFAULT_AI_CONFIG.openrouterModel);
 
+    const rawTts = String(parsed.ttsModel || DEFAULT_AI_CONFIG.ttsModel || 'canopylabs/orpheus-arabic-saudi').trim();
+    const ttsModel =
+      rawTts === 'playai-tts-arabic'
+        ? 'canopylabs/orpheus-arabic-saudi'
+        : rawTts === 'playai-tts'
+          ? 'canopylabs/orpheus-v1-english'
+          : rawTts;
+
+    const rawDataEntry = String(parsed.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel || 'openai/gpt-oss-120b').trim();
+    const dataEntryModel = LEGACY_GROQ_MODELS.has(rawDataEntry)
+      ? 'openai/gpt-oss-120b'
+      : rawDataEntry;
+
     const config: AIProviderConfig = {
       geminiApiKey: sanitizeApiKeyInput(parsed.geminiApiKey),
       geminiModel,
       geminiVisionModel: String(parsed.geminiVisionModel || DEFAULT_AI_CONFIG.geminiVisionModel || 'gemini-2.5-flash').trim(),
       enableWebGrounding: parsed.enableWebGrounding !== false,
 
-      groqApiKey: sanitizeApiKeyInput(parsed.groqApiKey),
+      groqApiKey: sanitizeApiKeyInput(parsed.groqApiKey) || DEFAULT_AI_CONFIG.groqApiKey,
       groqTextModel,
       groqVisionModel,
       groqWhisperModel: String(parsed.groqWhisperModel || DEFAULT_AI_CONFIG.groqWhisperModel).trim(),
@@ -253,8 +285,8 @@ export function loadAIProviderConfig(): AIProviderConfig {
       openrouterVisionModel: String(parsed.openrouterVisionModel || DEFAULT_AI_CONFIG.openrouterVisionModel || 'google/gemini-2.5-flash').trim(),
 
       sttEngine: parsed.sttEngine === 'browser' ? 'browser' : 'groq',
-      ttsModel: String(parsed.ttsModel || DEFAULT_AI_CONFIG.ttsModel || 'playai-tts-arabic').trim(),
-      dataEntryModel: String(parsed.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel || 'llama-3.3-70b-versatile').trim(),
+      ttsModel,
+      dataEntryModel,
       customPriority:
         Array.isArray(parsed.customPriority) && parsed.customPriority.length > 0
           ? parsed.customPriority
@@ -280,8 +312,8 @@ export function saveAIProviderConfig(config: AIProviderConfig): void {
         groqTextModel: sanitizeGroqTextModel(config.groqTextModel),
         groqVisionModel: sanitizeGroqVisionModel(config.groqVisionModel),
         openrouterModel: sanitizeOpenRouterModel(config.openrouterModel),
-        ttsModel: String(config.ttsModel || DEFAULT_AI_CONFIG.ttsModel || 'playai-tts-arabic').trim(),
-        dataEntryModel: String(config.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel || 'llama-3.3-70b-versatile').trim(),
+        ttsModel: String(config.ttsModel || DEFAULT_AI_CONFIG.ttsModel || 'canopylabs/orpheus-arabic-saudi').trim(),
+        dataEntryModel: String(config.dataEntryModel || DEFAULT_AI_CONFIG.dataEntryModel || 'openai/gpt-oss-120b').trim(),
       };
       window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(sanitized));
     }
@@ -975,7 +1007,140 @@ async function callGeminiDirect(
   throw new Error(`Gemini API Error (${lastStatus}): ${lastErrorText.slice(0, 180)}`);
 }
 
-// 2. Groq Cloud Direct (14 Ranked Text Models + 4 Dedicated Vision Models with Instant Auto-Failover)
+interface DiscoveredGroqCatalog {
+  endpointOk: boolean;
+  authInvalid: boolean;
+  allIds: string[];
+  textModels: string[];
+  visionModels: string[];
+  audioSttModels: string[];
+  audioTtsModels: string[];
+}
+
+const groqCatalogMemoryCache = new Map<
+  string,
+  { timestamp: number; catalog: DiscoveredGroqCatalog }
+>();
+const GROQ_CATALOG_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export async function discoverLiveGroqModels(
+  apiKey: string,
+  forceRefresh = false
+): Promise<DiscoveredGroqCatalog> {
+  const cleanKey = sanitizeApiKeyInput(apiKey);
+  const emptyResult: DiscoveredGroqCatalog = {
+    endpointOk: false,
+    authInvalid: false,
+    allIds: [],
+    textModels: [],
+    visionModels: [],
+    audioSttModels: [],
+    audioTtsModels: [],
+  };
+  if (!cleanKey) return emptyResult;
+
+  if (!forceRefresh) {
+    const cached = groqCatalogMemoryCache.get(cleanKey);
+    if (cached && Date.now() - cached.timestamp < GROQ_CATALOG_TTL_MS) {
+      return cached.catalog;
+    }
+  }
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${cleanKey}`,
+      },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      return { ...emptyResult, authInvalid: true };
+    }
+
+    if (!res.ok) return emptyResult;
+
+    const json = await res.json();
+    const dataArr: Array<Record<string, unknown>> = Array.isArray(json?.data) ? json.data : [];
+    const activeItems = dataArr.filter(
+      (item) => typeof item?.id === 'string' && item.active !== false
+    );
+
+    const allIds = activeItems.map((item) => String(item.id));
+    const rawText: string[] = [];
+    const rawVision: string[] = [];
+    const rawStt: string[] = [];
+    const rawTts: string[] = [];
+
+    for (const item of activeItems) {
+      const id = String(item.id);
+      const lower = id.toLowerCase();
+      const inMods = Array.isArray(item.input_modalities)
+        ? item.input_modalities.map((m) => String(m).toLowerCase())
+        : [];
+      const outMods = Array.isArray(item.output_modalities)
+        ? item.output_modalities.map((m) => String(m).toLowerCase())
+        : [];
+
+      if (inMods.includes('audio') || outMods.includes('transcription') || lower.includes('whisper')) {
+        rawStt.push(id);
+        continue;
+      }
+      if (outMods.includes('speech') || lower.includes('orpheus') || lower.includes('tts')) {
+        rawTts.push(id);
+        continue;
+      }
+      if (lower.includes('prompt-guard')) {
+        continue;
+      }
+      if (inMods.includes('image') || lower.includes('vision') || lower.includes('qwen3.8')) {
+        rawVision.push(id);
+      }
+      if (outMods.length === 0 || outMods.includes('text')) {
+        rawText.push(id);
+      }
+    }
+
+    const preferredOrder = [
+      'qwen/qwen3.8-27b',
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'allam-2-7b',
+      'openai/gpt-oss-safeguard-20b',
+      ...GROQ_TEXT_MODELS,
+    ];
+
+    const rankedText = Array.from(
+      new Set([
+        ...preferredOrder.filter((m) => rawText.includes(m)),
+        ...rawText,
+      ])
+    );
+
+    const rankedVision = Array.from(
+      new Set([
+        ...['qwen/qwen3.8-27b', ...GROQ_VISION_MODELS].filter((m) => rawVision.includes(m)),
+        ...rawVision,
+      ])
+    );
+
+    const catalog: DiscoveredGroqCatalog = {
+      endpointOk: true,
+      authInvalid: false,
+      allIds,
+      textModels: rankedText,
+      visionModels: rankedVision,
+      audioSttModels: rawStt,
+      audioTtsModels: rawTts,
+    };
+    groqCatalogMemoryCache.set(cleanKey, { timestamp: Date.now(), catalog });
+    return catalog;
+  } catch {
+    return emptyResult;
+  }
+}
+
+// 2. Groq Cloud Direct (Single-Hop Fast Inference + Dynamic On-404 Recovery)
 async function callGroqDirect(
   payload: AssistantRequestPayload,
   config: AIProviderConfig,
@@ -985,19 +1150,27 @@ async function callGroqDirect(
   const apiKey = sanitizeApiKeyInput(config.groqApiKey);
   if (!apiKey) throw new Error('مفتاح Groq Cloud API غير مدخل.');
 
-  const verifiedList = config.verifiedModels?.groq || [];
-  const candidateModels = hasImage
+  const cachedVerified = (config.verifiedModels?.groq || []).filter(
+    (m) => !LEGACY_GROQ_MODELS.has(m)
+  );
+
+  let candidateModels = hasImage
     ? Array.from(
         new Set([
           sanitizeGroqVisionModel(config.groqVisionModel),
-          ...GROQ_VISION_MODELS,
+          'qwen/qwen3.8-27b',
+          ...GROQ_VISION_MODELS.filter((m) => !LEGACY_GROQ_MODELS.has(m)),
         ])
       )
     : Array.from(
         new Set([
           sanitizeGroqTextModel(config.groqTextModel),
-          ...verifiedList,
-          ...GROQ_TEXT_MODELS,
+          ...cachedVerified,
+          'qwen/qwen3.8-27b',
+          'openai/gpt-oss-120b',
+          'openai/gpt-oss-20b',
+          'allam-2-7b',
+          'openai/gpt-oss-safeguard-20b',
         ])
       );
 
@@ -1007,7 +1180,7 @@ async function callGroqDirect(
   ];
 
   if (Array.isArray(payload.history)) {
-    for (const h of payload.history.slice(-6)) {
+    for (const h of payload.history.slice(-4)) {
       if (h.text && h.text.trim()) {
         messages.push({
           role: h.role === 'assistant' ? 'assistant' : 'user',
@@ -1038,8 +1211,10 @@ async function callGroqDirect(
   let lastStatus = 0;
   let lastErrorText = '';
   let attemptIdx = 0;
+  let didRefreshCatalogOn404 = false;
 
-  for (const targetModel of candidateModels) {
+  for (let i = 0; i < candidateModels.length; i++) {
+    const targetModel = candidateModels[i];
     if (signal?.aborted) {
       throw new DOMException('Aborted by user', 'AbortError');
     }
@@ -1053,8 +1228,8 @@ async function callGroqDirect(
       body: JSON.stringify({
         model: targetModel,
         messages,
-        temperature: 0.3,
-        max_tokens: 2048,
+        temperature: 0.25,
+        max_tokens: 1024,
       }),
       signal,
     });
@@ -1062,7 +1237,6 @@ async function callGroqDirect(
     if (res.ok) {
       const data = await res.json();
       let reply = String(data?.choices?.[0]?.message?.content || '').trim();
-      // Strip <think>...</think> reasoning blocks if returned by DeepSeek R1 / QwQ models
       reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
       if (reply) {
         if (!hasImage && targetModel !== config.groqTextModel) {
@@ -1085,6 +1259,16 @@ async function callGroqDirect(
       lastErrorText = await res.text().catch(() => '');
       attemptIdx++;
       if (res.status === 401) break;
+      if (res.status === 404 && !didRefreshCatalogOn404) {
+        didRefreshCatalogOn404 = true;
+        const discovered = await discoverLiveGroqModels(apiKey, true);
+        if (discovered.endpointOk) {
+          const freshList = hasImage ? discovered.visionModels : discovered.textModels;
+          if (freshList.length > 0) {
+            candidateModels = [...candidateModels.slice(0, i + 1), ...freshList.filter((m) => !candidateModels.slice(0, i + 1).includes(m))];
+          }
+        }
+      }
     }
   }
 
@@ -1252,7 +1436,7 @@ export async function transcribeAudioWithGroqWhisper(
   throw new Error(`Groq Whisper Error: ${lastErr}`);
 }
 
-// 4B. Dedicated Audio / TTS Reading Dispatcher (Groq PlayAI Arabic TTS / Gemini TTS / Browser Speech Fallback)
+// 4B. Dedicated Audio / TTS Reading Dispatcher (Groq Orpheus Arabic Saudi TTS / Gemini TTS / Browser Speech Fallback)
 let activeAudioElement: HTMLAudioElement | null = null;
 
 export function stopActiveAISpeech(): void {
@@ -1293,19 +1477,30 @@ export async function speakTextWithAIModel(
     return;
   }
 
-  const ttsModel = config.ttsModel || 'playai-tts-arabic';
+  const ttsModel = config.ttsModel || 'canopylabs/orpheus-arabic-saudi';
   const groqKey = sanitizeApiKeyInput(config.groqApiKey);
 
-  // 1. Try Groq PlayAI Arabic / Multilingual TTS if selected and key exists
-  if ((ttsModel === 'playai-tts-arabic' || ttsModel === 'playai-tts') && groqKey) {
+  // 1. Try Groq Orpheus Arabic Saudi / V1 TTS if selected and key exists
+  if (
+    (ttsModel === 'canopylabs/orpheus-arabic-saudi' ||
+      ttsModel === 'canopylabs/orpheus-v1-english' ||
+      ttsModel === 'playai-tts-arabic' ||
+      ttsModel === 'playai-tts') &&
+    groqKey
+  ) {
     const modelsToTry =
-      ttsModel === 'playai-tts-arabic'
-        ? ['playai-tts-arabic', 'playai-tts']
-        : ['playai-tts', 'playai-tts-arabic'];
+      ttsModel === 'canopylabs/orpheus-v1-english' || ttsModel === 'playai-tts'
+        ? [
+            { model: 'canopylabs/orpheus-v1-english', voice: 'tara' },
+            { model: 'canopylabs/orpheus-arabic-saudi', voice: 'fahad' },
+          ]
+        : [
+            { model: 'canopylabs/orpheus-arabic-saudi', voice: 'fahad' },
+            { model: 'canopylabs/orpheus-v1-english', voice: 'tara' },
+          ];
 
-    for (const m of modelsToTry) {
+    for (const item of modelsToTry) {
       try {
-        const voice = m === 'playai-tts-arabic' ? 'Nasser-PlayAI' : 'Arista-PlayAI';
         const res = await fetch('https://api.groq.com/openai/v1/audio/speech', {
           method: 'POST',
           headers: {
@@ -1313,9 +1508,9 @@ export async function speakTextWithAIModel(
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: m,
+            model: item.model,
             input: cleanText.slice(0, 600),
-            voice,
+            voice: item.voice,
             response_format: 'wav',
           }),
         });
@@ -1440,11 +1635,15 @@ export async function testAIProviderConnection(
 
       const rankedPool = Array.from(
         new Set([
-          sanitizeGeminiModel(config.geminiModel),
-          ...GEMINI_CANDIDATE_MODELS.filter(
-            (m) => discoveredGeminiModels.length === 0 || discoveredGeminiModels.includes(m)
-          ),
-          ...GEMINI_CANDIDATE_MODELS,
+          ...(discoveredGeminiModels.length > 0
+            ? [
+                ...(discoveredGeminiModels.includes(sanitizeGeminiModel(config.geminiModel))
+                  ? [sanitizeGeminiModel(config.geminiModel)]
+                  : []),
+                ...GEMINI_CANDIDATE_MODELS.filter((m) => discoveredGeminiModels.includes(m)),
+                ...discoveredGeminiModels,
+              ]
+            : [sanitizeGeminiModel(config.geminiModel), ...GEMINI_CANDIDATE_MODELS]),
         ])
       ).slice(0, 15);
 
@@ -1496,7 +1695,6 @@ export async function testAIProviderConnection(
         }
       }
 
-      // If /models list succeeded even though quota was temporarily rate-limited on generateContent
       if (discoveredGeminiModels.length > 0 && lastStatus === 429) {
         const verifiedPool = rankedPool.slice(0, 15);
         config.verifiedModels = {
@@ -1528,66 +1726,48 @@ export async function testAIProviderConnection(
         return { ok: false, latencyMs: 0, error: 'يرجى إدخال مفتاح Groq API أولاً' };
       }
 
-      // Step A: Dynamically query https://api.groq.com/openai/v1/models to validate the key & discover all active models
-      let liveGroqModelIds: string[] = [];
-      let modelsEndpointOk = false;
-      try {
-        const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-        });
-
-        if (modelsRes.status === 401 || modelsRes.status === 403) {
-          return {
-            ok: false,
-            latencyMs: Date.now() - start,
-            error: 'مفتاح Groq API غير صالح أو منتهي الصلاحية (تأكد من نسخه كاملاً ويبدأ بـ gsk_)',
-          };
-        }
-
-        if (modelsRes.ok) {
-          modelsEndpointOk = true;
-          const modelsJson = await modelsRes.json();
-          const dataArr = Array.isArray(modelsJson?.data) ? modelsJson.data : [];
-          liveGroqModelIds = dataArr
-            .filter((item: Record<string, unknown>) => typeof item?.id === 'string' && item.active !== false)
-            .map((item: Record<string, unknown>) => String(item.id));
-        }
-      } catch {
-        // Fallback to direct chat completions probing if /models fetch had network issue
+      // Step A: Dynamically query https://api.groq.com/openai/v1/models and classify active modalities
+      const discovered = await discoverLiveGroqModels(apiKey);
+      if (discovered.authInvalid) {
+        return {
+          ok: false,
+          latencyMs: Date.now() - start,
+          error: 'مفتاح Groq API غير صالح أو منتهي الصلاحية (تأكد من نسخه كاملاً ويبدأ بـ gsk_)',
+        };
       }
 
-      // Build dynamic 12-15 ranked models pool (Strongest & Fastest first)
-      const nonChatKeywords = ['whisper', 'tts', 'guard', 'safeguard', 'orpheus'];
-      const liveChatModels = liveGroqModelIds.filter(
-        (id) => !nonChatKeywords.some((kw) => id.toLowerCase().includes(kw))
-      );
+      // Strictly use discovered active text models when /models succeeds so we NEVER probe a 404 model
+      const cleanSelectedText = sanitizeGroqTextModel(config.groqTextModel);
+      const prioritizedLivePool =
+        discovered.endpointOk && discovered.textModels.length > 0
+          ? Array.from(
+              new Set([
+                ...(discovered.textModels.includes(cleanSelectedText) ? [cleanSelectedText] : []),
+                ...discovered.textModels,
+              ])
+            ).slice(0, 15)
+          : Array.from(new Set([cleanSelectedText, ...GROQ_TEXT_MODELS])).slice(0, 15);
 
-      const prioritizedLivePool = Array.from(
-        new Set([
-          sanitizeGroqTextModel(config.groqTextModel),
-          ...GROQ_TEXT_MODELS.filter(
-            (m) => liveChatModels.length === 0 || liveChatModels.includes(m)
-          ),
-          ...liveChatModels,
-          ...GROQ_TEXT_MODELS,
-        ])
-      ).slice(0, 15);
+      // Auto-sync best available Vision, Whisper STT, and TTS models from live account catalog
+      if (discovered.visionModels.length > 0) {
+        if (!discovered.visionModels.includes(config.groqVisionModel)) {
+          config.groqVisionModel = discovered.visionModels[0];
+        }
+      } else {
+        config.groqVisionModel = sanitizeGroqVisionModel(config.groqVisionModel);
+      }
 
-      // Also auto-verify best available Vision model from live account models
-      const availableVision = GROQ_VISION_MODELS.filter(
-        (m) => liveGroqModelIds.length === 0 || liveGroqModelIds.includes(m)
-      );
-      if (availableVision.length > 0 && !availableVision.includes(config.groqVisionModel as never)) {
-        config.groqVisionModel = availableVision[0];
+      if (
+        discovered.audioSttModels.length > 0 &&
+        !discovered.audioSttModels.includes(config.groqWhisperModel)
+      ) {
+        config.groqWhisperModel = discovered.audioSttModels[0];
       }
 
       let lastStatus = 0;
       let lastErrText = '';
 
-      // Probe top candidates to verify live generation speed & set fastest active model
+      // Probe top active candidates to measure real completion speed & lock in fastest working model
       for (const candidate of prioritizedLivePool.slice(0, 6)) {
         try {
           const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -1619,7 +1799,7 @@ export async function testAIProviderConnection(
               ok: true,
               latencyMs: Date.now() - start,
               testedModel: candidate,
-              activeModelsCount: finalPool.length,
+              activeModelsCount: discovered.allIds.length || finalPool.length,
               activeModels: finalPool,
             };
           }
@@ -1638,8 +1818,8 @@ export async function testAIProviderConnection(
         }
       }
 
-      // If /models succeeded (valid key + active models discovered), mark success even if one model was rate-limited
-      if (modelsEndpointOk && prioritizedLivePool.length > 0) {
+      // If /models succeeded (valid key + active models discovered), mark success even if rate-limited
+      if (discovered.endpointOk && prioritizedLivePool.length > 0) {
         config.groqTextModel = prioritizedLivePool[0];
         config.verifiedModels = {
           ...(config.verifiedModels || {}),
@@ -1651,7 +1831,7 @@ export async function testAIProviderConnection(
           ok: true,
           latencyMs: Date.now() - start,
           testedModel: prioritizedLivePool[0],
-          activeModelsCount: prioritizedLivePool.length,
+          activeModelsCount: discovered.allIds.length || prioritizedLivePool.length,
           activeModels: prioritizedLivePool,
         };
       }
@@ -1956,21 +2136,42 @@ export async function parseSmartReceiptWithFallback(
   return null;
 }
 
-// ==================== 6. DEDICATED DIRECT DATA-ENTRY MODEL PARSER (RECEIPTS & INVENTORY) ====================
-export function isDirectDataEntryIntent(promptText: string): 'receipt' | 'inventory' | null {
+// ==================== 6. STRICT DIRECT DATA-ENTRY GOVERNANCE & FAST PARSER ====================
+export function isDestructiveSystemIntent(promptText: string): boolean {
+  const norm = String(promptText || '').trim();
+  if (!norm) return false;
+  return /(احذف سند|حذف سند|امسح سند|مسح سند|إلغاء سند|الغاء سند|احذف مريض|حذف مريض|احذف من المخزون|حذف صنف|امسح المخزون|تصفير السندات|تصفير الحسابات|حذف كل البيانات|مسح كل البيانات|تغيير إعدادات النظام)/i.test(
+    norm
+  );
+}
+
+export function isDirectDataEntryIntent(
+  promptText: string,
+  options?: { allowReceipt?: boolean; allowInventory?: boolean }
+): 'receipt' | 'inventory' | null {
   const norm = String(promptText || '').trim();
   if (!norm) return null;
 
-  // Avoid triggering data entry if user is asking for a report/summary/list
-  if (/(كشف|تقرير|ملخص|كم عدد|اعرض|استعلام|بحث عن|ما هي|قائمة)/i.test(norm) && !/(سجل|أضف|اضف|ادخل|أدخل|اصدر|أصدر|انشئ|أنشئ|توريد|خصم من المخزون)/i.test(norm)) {
+  // Never trigger data entry on destructive/deletion commands or read-only report queries
+  if (isDestructiveSystemIntent(norm)) return null;
+  if (
+    /(كشف|تقرير|ملخص|كم عدد|اعرض|استعلام|بحث عن|ما هي|قائمة|هل يوجد|كيف)/i.test(norm) &&
+    !/^(سجل|أضف|اضف|ادخل|أدخل|اصدر|أصدر|انشئ|أنشئ|توريد|تزويد|خصم من المخزون|صرف من المخزون)/i.test(norm)
+  ) {
     return null;
   }
 
-  const receiptActionRegex = /(سجل سند|أضف سند|اضف سند|إصدار سند|اصدر سند|أصدر سند|انشئ سند|أنشئ سند|سند قبض|سند جديد|ادخل سند|أدخل سند|فاتورة للمريض|سند للمريض)/i;
-  const inventoryActionRegex = /(أضف للمخزون|اضف للمخزون|إضافة للمخزون|اضافة للمخزون|أضف صنف|اضف صنف|ادخل في المخزون|أدخل في المخزون|توريد مخزون|تزويد مخزون|سحب من المخزون|خصم من المخزون|تحديث مخزون|صنف جديد)/i;
+  const receiptActionRegex =
+    /^(سجل سند|أضف سند|اضف سند|إصدار سند|اصدر سند|أصدر سند|انشئ سند|أنشئ سند|سند قبض للمريض|سند جديد للمريض|ادخل سند|أدخل سند|فاتورة للمريض|سند للمريض)/i;
+  const inventoryActionRegex =
+    /^(أضف للمخزون|اضف للمخزون|إضافة للمخزون|اضافة للمخزون|أضف صنف|اضف صنف|ادخل في المخزون|أدخل في المخزون|توريد مخزون|تزويد مخزون|سحب من المخزون|خصم من المخزون|صرف من المخزون)/i;
 
-  if (inventoryActionRegex.test(norm)) return 'inventory';
-  if (receiptActionRegex.test(norm)) return 'receipt';
+  if (options?.allowInventory !== false && inventoryActionRegex.test(norm)) {
+    return 'inventory';
+  }
+  if (options?.allowReceipt !== false && receiptActionRegex.test(norm)) {
+    return 'receipt';
+  }
 
   return null;
 }
@@ -1980,13 +2181,27 @@ export async function parseDirectDataEntryProposal(
   settings: ClinicSettings,
   inventory: InventoryItem[],
   attachment?: { name: string; mimeType: string; base64Data: string } | null,
-  forcedType?: 'receipt' | 'inventory'
+  forcedType?: 'receipt' | 'inventory',
+  governanceOptions?: {
+    allowReceipt?: boolean;
+    allowInventory?: boolean;
+    strictCatalogValidation?: boolean;
+  }
 ): Promise<PendingDataEntryProposal | null> {
-  const detectedType = forcedType || isDirectDataEntryIntent(promptText);
+  const detectedType =
+    forcedType ||
+    isDirectDataEntryIntent(promptText, {
+      allowReceipt: governanceOptions?.allowReceipt,
+      allowInventory: governanceOptions?.allowInventory,
+    });
   if (!detectedType) return null;
 
+  if (detectedType === 'receipt' && governanceOptions?.allowReceipt === false) return null;
+  if (detectedType === 'inventory' && governanceOptions?.allowInventory === false) return null;
+
+  const strictValidation = governanceOptions?.strictCatalogValidation !== false;
   const config = loadAIProviderConfig();
-  const preferredModel = config.dataEntryModel || 'llama-3.3-70b-versatile';
+  const preferredModel = sanitizeGroqTextModel(config.dataEntryModel || 'openai/gpt-oss-120b');
   const defaultCurrency = settings.identity.defaultCurrency || 'ريال يمني';
 
   const servicesCatalogStr = settings.services
@@ -1998,107 +2213,139 @@ export async function parseDirectDataEntryProposal(
 
   const extractionPrompt =
     detectedType === 'receipt'
-      ? `أنت النموذج المسؤول عن الإدخال المباشر للسندات المالية في العيادة.
-حلل طلب المستخدم التالي واستخرج بيانات سند القبض بدقة تامة بصيغة JSON فقط بدون أي نص إضافي:
-طلب المستخدم: "${promptText}"
-الخدمات المتاحة وأسعارها: ${servicesCatalogStr}
-العملة الافتراضية: ${defaultCurrency}
-
-أعد كائن JSON فقط يحتوي على الحقول التالية:
-{
-  "type": "receipt",
-  "patientName": "اسم المريض",
-  "patientPhone": "رقم الهاتف إن وجد أو فارغ",
-  "services": ["اسم الخدمة 1"],
-  "toothFDI": "رقم السن إن وجد أو فارغ",
-  "totalAmount": 0,
-  "paidAmount": 0,
-  "currency": "${defaultCurrency}",
-  "paymentMethod": "نقداً",
-  "notes": "ملاحظات السند"
-}`
-      : `أنت النموذج المسؤول عن الإدخال المباشر للمخزون الطبي في العيادة.
-حلل طلب المستخدم التالي واستخرج بيانات عملية المخزون بدقة تامة بصيغة JSON فقط بدون أي نص إضافي:
-طلب المستخدم: "${promptText}"
-الأصناف الموجودة حالياً في المخزون: ${inventoryCatalogStr || 'لا توجد أصناف بعد'}
-
-أعد كائن JSON فقط يحتوي على الحقول التالية:
-{
-  "type": "inventory",
-  "operation": "add_new أو restock أو consume",
-  "name": "اسم الصنف الطبي",
-  "qty": 1,
-  "unit": "علبة / قطعة / كرتون / أمبولة",
-  "minQty": 5,
-  "unitPrice": 0,
-  "linkedService": "",
-  "recordAsExpense": true,
-  "notes": "ملاحظات"
-}`;
+      ? `استخرج بيانات سند القبض من النص التالي بدقة صارمة بصيغة JSON فقط دون تأليف أي بيانات غير مذكورة:
+النص: "${promptText}"
+خدمات العيادة المعتمدة: ${servicesCatalogStr}
+العملة: ${defaultCurrency}
+قواعد صارمة: إذا لم يُذكر اسم المريض اجعل patientName نصاً فارغاً "". اختر الخدمة المطابقة من خدمات العيادة.
+JSON المطلوب فقط:
+{"type":"receipt","patientName":"","patientPhone":"","services":[],"toothFDI":"","totalAmount":0,"paidAmount":0,"currency":"${defaultCurrency}","paymentMethod":"نقداً","notes":""}`
+      : `استخرج بيانات عملية المخزون من النص التالي بدقة صارمة بصيغة JSON فقط دون تأليف أي بيانات غير مذكورة:
+النص: "${promptText}"
+أصناف المخزون الحالية: ${inventoryCatalogStr || 'لا توجد أصناف'}
+قواعد صارمة: operation إما "add_new" أو "restock" أو "consume". يُمنع الحذف نهائياً.
+JSON المطلوب فقط:
+{"type":"inventory","operation":"add_new","name":"","qty":1,"unit":"علبة","minQty":5,"unitPrice":0,"linkedService":"","recordAsExpense":true,"notes":""}`;
 
   let modelUsedLabel = formatModelDisplayLabel(preferredModel);
+  let rawJsonReply = '';
 
   try {
-    // Route through the dedicated Data Entry model first if API key is available
-    const tempConfig: AIProviderConfig = {
-      ...config,
-      groqTextModel: preferredModel.includes('gemini') || preferredModel.includes('/') ? config.groqTextModel : preferredModel,
-      geminiModel: preferredModel.startsWith('gemini') ? preferredModel : config.geminiModel,
-      openrouterModel: preferredModel.includes('/') && !preferredModel.startsWith('meta-llama/llama-4') ? preferredModel : config.openrouterModel,
-    };
-    saveAIProviderConfig(tempConfig);
+    const groqKey = sanitizeApiKeyInput(config.groqApiKey);
+    if (groqKey && !attachment?.base64Data) {
+      // Ultra-fast single-hop Groq extraction (~180ms)
+      const modelsToTry = Array.from(
+        new Set([preferredModel, 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'])
+      );
+      for (const m of modelsToTry) {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${groqKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: m,
+            messages: [{ role: 'user', content: extractionPrompt }],
+            temperature: 0.05,
+            max_tokens: 320,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const content = String(data?.choices?.[0]?.message?.content || '')
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            .trim();
+          if (content.includes('{')) {
+            rawJsonReply = content;
+            modelUsedLabel = formatModelDisplayLabel(m);
+            break;
+          }
+        }
+      }
+    }
 
-    const aiRes = await queryClinicAssistantDetailed({
-      prompt: extractionPrompt,
-      attachment,
-      taskType: 'chat',
-    });
+    if (!rawJsonReply) {
+      const aiRes = await queryClinicAssistantDetailed({
+        prompt: extractionPrompt,
+        attachment,
+        taskType: 'chat',
+      });
+      rawJsonReply = aiRes.reply;
+      modelUsedLabel = aiRes.modelLabel || modelUsedLabel;
+    }
 
-    // Restore user's config selection
-    saveAIProviderConfig(config);
-
-    modelUsedLabel = aiRes.modelLabel || modelUsedLabel;
-    const jsonMatch = aiRes.reply.match(/\{[\s\S]*\}/);
+    const jsonMatch = rawJsonReply.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const warnings: string[] = [];
+
       if (detectedType === 'receipt') {
         const rawServices = Array.isArray(parsed.services)
           ? parsed.services.map((s) => String(s).trim()).filter(Boolean)
           : [];
-        const matchedServices =
-          rawServices.length > 0
-            ? rawServices
-            : settings.services
-                .filter((s) => promptText.includes(s.name))
-                .map((s) => s.name);
+
+        // Strict catalog matching
+        const catalogMatched = settings.services
+          .filter(
+            (srv) =>
+              rawServices.some((rs) => rs.includes(srv.name) || srv.name.includes(rs)) ||
+              promptText.includes(srv.name)
+          )
+          .map((srv) => srv.name);
+
         const finalServices =
-          matchedServices.length > 0
-            ? matchedServices
-            : [settings.services[0]?.name || 'كشف واستشارة'];
+          catalogMatched.length > 0
+            ? catalogMatched
+            : !strictValidation && rawServices.length > 0
+              ? rawServices
+              : [settings.services[0]?.name || 'كشفية طبية'];
+
+        if (strictValidation && catalogMatched.length === 0 && rawServices.length > 0) {
+          warnings.push('تم ربط الخدمة بأقرب بند معتمد في قائمة خدمات العيادة لمنع إدخال مسميات غير مطابقة.');
+        }
 
         const catalogSum = finalServices.reduce((sum, sName) => {
           const found = settings.services.find((srv) => srv.name === sName);
           return sum + (found ? Number(found.price) || 0 : 0);
         }, 0);
 
-        const totalAmount = Number(parsed.totalAmount) > 0 ? Number(parsed.totalAmount) : catalogSum || 5000;
-        const paidAmount =
+        const parsedTotal = Math.max(0, Number(parsed.totalAmount) || 0);
+        const totalAmount = parsedTotal > 0 ? parsedTotal : catalogSum;
+        if (totalAmount <= 0) {
+          warnings.push('يرجى تحديد المبلغ الإجمالي للسند قبل الاعتماد.');
+        }
+
+        const rawPaid =
           parsed.paidAmount !== undefined && Number(parsed.paidAmount) >= 0
             ? Number(parsed.paidAmount)
             : totalAmount;
-        const remainingAmount = Math.max(0, totalAmount - paidAmount);
+        const paidAmount = Math.min(totalAmount, Math.max(0, rawPaid));
+        const remainingAmount = Math.max(0, +(totalAmount - paidAmount).toFixed(2));
+
+        let cleanPatientName = String(parsed.patientName || '').trim();
+        if (
+          cleanPatientName === 'اسم المريض' ||
+          cleanPatientName === 'مريض جديد' ||
+          cleanPatientName === 'غير محدد'
+        ) {
+          cleanPatientName = '';
+        }
+        if (cleanPatientName.length < 2) {
+          warnings.push('اسم المريض مطلوب — يرجى كتابة اسم المريض في البطاقة قبل الحفظ.');
+        }
 
         const receiptData: PendingReceiptEntryData = {
-          patientName: String(parsed.patientName || '').trim() || 'مريض جديد',
-          patientPhone: String(parsed.patientPhone || '').trim(),
+          patientName: cleanPatientName,
+          patientPhone: String(parsed.patientPhone || '').replace(/[^\d+]/g, '').slice(0, 20),
           services: finalServices,
-          toothFDI: String(parsed.toothFDI || '').trim(),
+          toothFDI: String(parsed.toothFDI || '').trim().slice(0, 20),
           totalAmount,
           paidAmount,
           remainingAmount,
           currency: String(parsed.currency || defaultCurrency).trim(),
           paymentMethod: String(parsed.paymentMethod || 'نقداً').trim(),
-          notes: String(parsed.notes || 'إدخال مباشر عبر المساعد الذكي').trim(),
+          notes: String(parsed.notes || 'إدخال مراجع عبر المساعد').trim().slice(0, 200),
         };
 
         return {
@@ -2106,14 +2353,20 @@ export async function parseDirectDataEntryProposal(
           type: 'receipt',
           status: 'pending',
           modelUsed: modelUsedLabel,
-          summaryText: `تم تجهيز مسودة سند قبض للمريض (${receiptData.patientName}) بمبلغ إجمالي ${receiptData.totalAmount.toLocaleString()} ${receiptData.currency}. يرجى مراجعة البيانات أدناه والموافقة عليها للحفظ:`,
+          validationWarnings: warnings.length > 0 ? warnings : undefined,
+          summaryText: `مسودة سند قبض جاهزة للمراجعة (${receiptData.patientName || 'يرجى إدخال اسم المريض'}) — لن يتم حفظ أي بيانات في النظام إلا بعد مراجعتك وموافقتك:`,
           receiptData,
         };
       } else {
-        const itemName = String(parsed.name || '').trim() || 'مستلزم طبي';
+        const rawItemName = String(parsed.name || '').trim();
         const existingItem = inventory.find(
-          (i) => i.name.trim() === itemName || itemName.includes(i.name.trim())
+          (i) =>
+            (rawItemName &&
+              (i.name.trim().toLowerCase() === rawItemName.toLowerCase() ||
+                rawItemName.includes(i.name.trim()))) ||
+            promptText.includes(i.name.trim())
         );
+
         const opRaw = String(parsed.operation || '').toLowerCase();
         const operation: 'add_new' | 'restock' | 'consume' =
           opRaw === 'consume' || /(سحب|خصم|صرف|استهلاك)/.test(promptText)
@@ -2122,110 +2375,62 @@ export async function parseDirectDataEntryProposal(
               ? 'restock'
               : 'add_new';
 
-        const qty = Math.max(1, Number(parsed.qty) || 1);
-        const unitPrice =
+        const qty = Math.min(10000, Math.max(1, Number(parsed.qty) || 1));
+        const unitPrice = Math.max(
+          0,
           Number(parsed.unitPrice) > 0
             ? Number(parsed.unitPrice)
-            : existingItem?.unitPrice || 0;
+            : existingItem?.unitPrice || 0
+        );
+
+        const finalName = existingItem ? existingItem.name : rawItemName;
+        if (!finalName || finalName.length < 2) {
+          warnings.push('يرجى تحديد اسم الصنف بدقة قبل الاعتماد.');
+        }
+        if (operation === 'consume' && !existingItem) {
+          warnings.push('تنبيه: هذا الصنف غير موجود حالياً في المخزون، لا يمكن صرف كمية منه.');
+        } else if (operation === 'consume' && existingItem && qty > existingItem.qty) {
+          warnings.push(
+            `تنبيه: الكمية المطلوب صرفها (${qty}) أكبر من الرصيد المتوفر حالياً (${existingItem.qty} ${existingItem.unit}).`
+          );
+        }
 
         const inventoryData: PendingInventoryEntryData = {
           operation,
           existingItemId: existingItem?.id,
-          name: existingItem ? existingItem.name : itemName,
+          name: finalName,
           qty,
           unit: String(parsed.unit || existingItem?.unit || 'علبة').trim(),
-          minQty: Number(parsed.minQty) || existingItem?.minQty || 5,
+          minQty: Math.max(1, Number(parsed.minQty) || existingItem?.minQty || 5),
           unitPrice,
           totalCost: +(qty * unitPrice).toFixed(2),
           linkedService: String(parsed.linkedService || existingItem?.linkedService || '').trim(),
           recordAsExpense: Boolean(parsed.recordAsExpense ?? (operation !== 'consume')),
-          notes: String(parsed.notes || 'إدخال مباشر عبر المساعد الذكي').trim(),
+          notes: String(parsed.notes || 'إدخال مراجع عبر المساعد').trim().slice(0, 200),
         };
 
         const opLabel =
           operation === 'consume'
-            ? 'خصم/صرف كمية من المخزون'
+            ? 'صرف من المخزون'
             : operation === 'restock'
-              ? 'توريد كمية إضافية للمخزون'
-              : 'إضافة صنف جديد للمخزون';
+              ? 'توريد للمخزون'
+              : 'إضافة صنف جديد';
 
         return {
           id: 'prop_inv_' + Date.now(),
           type: 'inventory',
           status: 'pending',
           modelUsed: modelUsedLabel,
-          summaryText: `تم تجهيز عملية المخزون (${opLabel}): الصنف "${inventoryData.name}" — الكمية: ${inventoryData.qty} ${inventoryData.unit}. يرجى مراجعة البيانات والموافقة عليها للحفظ:`,
+          validationWarnings: warnings.length > 0 ? warnings : undefined,
+          summaryText: `مسودة عملية مخزون (${opLabel}) جاهزة للمراجعة — لن يتم تعديل المخزون إلا بعد موافقتك:`,
           inventoryData,
         };
       }
     }
   } catch {
-    saveAIProviderConfig(config);
+    // Fallback to deterministic parser below
   }
 
-  // Deterministic Local Fallback Parser if offline or JSON wasn't matched
-  if (detectedType === 'receipt') {
-    const numbers = (promptText.match(/\d+/g) || []).map(Number);
-    const matchedServices = settings.services
-      .filter((s) => promptText.includes(s.name) || s.keywords.some((kw) => promptText.includes(kw)))
-      .map((s) => s.name);
-    const finalServices = matchedServices.length > 0 ? matchedServices : [settings.services[0]?.name || 'كشف واستشارة'];
-    const totalAmount = numbers.find((n) => n >= 500) || 10000;
-    const paidAmount = numbers.length >= 2 && numbers[1] <= totalAmount ? numbers[1] : totalAmount;
-    const nameMatch = promptText.match(/(?:للمريض|باسم|المريض)\s+([\u0600-\u06FF\s]{3,28})/);
-    const patientName = nameMatch ? nameMatch[1].trim() : 'مريض جديد';
-
-    const receiptData: PendingReceiptEntryData = {
-      patientName,
-      patientPhone: '',
-      services: finalServices,
-      toothFDI: '',
-      totalAmount,
-      paidAmount,
-      remainingAmount: Math.max(0, totalAmount - paidAmount),
-      currency: defaultCurrency,
-      paymentMethod: 'نقداً',
-      notes: 'إدخال مباشر عبر المساعد',
-    };
-
-    return {
-      id: 'prop_rec_' + Date.now(),
-      type: 'receipt',
-      status: 'pending',
-      modelUsed: modelUsedLabel,
-      summaryText: `تم تجهيز مسودة سند قبض للمريض (${receiptData.patientName}). يرجى مراجعة الحقول والموافقة عليها للحفظ:`,
-      receiptData,
-    };
-  } else {
-    const numbers = (promptText.match(/\d+/g) || []).map(Number);
-    const qty = numbers[0] || 1;
-    const unitPrice = numbers[1] || 0;
-    const cleanedName = promptText
-      .replace(/(أضف للمخزون|اضف للمخزون|أضف صنف|اضف صنف|توريد مخزون|سحب من المخزون|\d+)/g, '')
-      .trim()
-      .slice(0, 40) || 'صنف مستلزمات طبية';
-
-    const inventoryData: PendingInventoryEntryData = {
-      operation: /(سحب|خصم|صرف)/.test(promptText) ? 'consume' : 'add_new',
-      name: cleanedName,
-      qty,
-      unit: 'علبة',
-      minQty: 5,
-      unitPrice,
-      totalCost: qty * unitPrice,
-      linkedService: '',
-      recordAsExpense: true,
-      notes: 'إدخال مباشر عبر المساعد',
-    };
-
-    return {
-      id: 'prop_inv_' + Date.now(),
-      type: 'inventory',
-      status: 'pending',
-      modelUsed: modelUsedLabel,
-      summaryText: `تم تجهيز عملية المخزون للصنف (${inventoryData.name}). يرجى مراجعة البيانات والموافقة عليها للحفظ:`,
-      inventoryData,
-    };
-  }
+  return null;
 }
 
